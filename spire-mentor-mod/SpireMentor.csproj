@@ -23,13 +23,24 @@
   </PropertyGroup>
 
   <!--
-    Game install discovery. Override with -p:STS2_GAME_DIR="C:/path/to/Slay the Spire 2"
-    if it's not in the default Steam library. Verified on this machine:
-    C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2
+    Game install discovery, same order as scripts/import_game.py: STS2_GAME_DIR
+    (-p:STS2_GAME_DIR="C:/path/to/Slay the Spire 2" or the environment
+    variable), else the Steam library whose libraryfolders.vdf "apps" block
+    lists the game (app id 2868840; finds libraries on other drives), else the
+    main Steam library, else the default Steam path.
   -->
   <PropertyGroup>
-    <AutoSteamPath>$(registry:HKEY_CURRENT_USER\Software\Valve\Steam@SteamPath)\steamapps</AutoSteamPath>
-    <SteamLibraryPath Condition="Exists('$(AutoSteamPath)/common/Slay the Spire 2')">$(AutoSteamPath)</SteamLibraryPath>
+    <SteamRoot>$(registry:HKEY_CURRENT_USER\Software\Valve\Steam@SteamPath)</SteamRoot>
+    <SteamRoot Condition="'$(SteamRoot)' == ''">C:/Program Files (x86)/Steam</SteamRoot>
+    <SteamLibraryFoldersVdf>$(SteamRoot)/steamapps/libraryfolders.vdf</SteamLibraryFoldersVdf>
+    <!-- Keeps only the "path" of the library block whose apps list 2868840;
+         [^}]* stops the match leaving that block. No match leaves the file
+         text (with quotes) as the result, which the next line discards. -->
+    <Sts2SteamLibrary Condition="'$(STS2_GAME_DIR)' == '' and Exists('$(SteamLibraryFoldersVdf)')">$([System.Text.RegularExpressions.Regex]::Replace($([System.IO.File]::ReadAllText('$(SteamLibraryFoldersVdf)')), '(?s)^.*?"path"\s*"([^"]*)"[^}]*"apps"\s*\{[^}]*"2868840".*$', '$1').Replace('\\', '/'))</Sts2SteamLibrary>
+    <Sts2SteamLibrary Condition="$(Sts2SteamLibrary.Contains('&quot;'))"></Sts2SteamLibrary>
+    <SteamLibraryPath Condition="'$(Sts2SteamLibrary)' != '' and Exists('$(Sts2SteamLibrary)/steamapps/common/Slay the Spire 2')">$(Sts2SteamLibrary)/steamapps</SteamLibraryPath>
+    <AutoSteamPath>$(SteamRoot)/steamapps</AutoSteamPath>
+    <SteamLibraryPath Condition="'$(SteamLibraryPath)' == '' and Exists('$(AutoSteamPath)/common/Slay the Spire 2')">$(AutoSteamPath)</SteamLibraryPath>
     <SteamLibraryPath Condition="'$(SteamLibraryPath)' == ''">C:/Program Files (x86)/Steam/steamapps</SteamLibraryPath>
     <STS2_GAME_DIR Condition="'$(STS2_GAME_DIR)' == ''">$(SteamLibraryPath)/common/Slay the Spire 2</STS2_GAME_DIR>
     <Sts2DataDir>$(STS2_GAME_DIR)/data_sts2_windows_x86_64</Sts2DataDir>

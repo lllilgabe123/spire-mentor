@@ -36,13 +36,8 @@ $bridge = $PSScriptRoot
 $repo = Split-Path -Parent $bridge
 $pycli = Join-Path $repo "sts2-pycli"
 
-# --- locate the game (same precedence as SpireMentor.csproj) -------------------
-$gameDir = $env:STS2_GAME_DIR
-if (-not $gameDir) {
-    $steam = (Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -ErrorAction SilentlyContinue).SteamPath
-    if (-not $steam) { $steam = "C:/Program Files (x86)/Steam" }
-    $gameDir = Join-Path $steam "steamapps/common/Slay the Spire 2"
-}
+# --- locate the game (asks SpireMentor.csproj: STS2_GAME_DIR, else every Steam library)
+$gameDir = (dotnet msbuild (Join-Path $bridge "SpireMentor.csproj") -getProperty:STS2_GAME_DIR).Trim()
 $baseLibDir = Join-Path $gameDir "mods/BaseLib"
 if (-not (Test-Path (Join-Path $baseLibDir "BaseLib.dll"))) {
     throw "BaseLib not found at $baseLibDir -- install BaseLib into the game first " +

@@ -51,7 +51,9 @@ mod leaves the game 100% vanilla.
   `install-windows-deps.ps1`).
 - [Alchyr's BaseLib](https://github.com/Alchyr/BaseLib-StS2) (MIT, v3.4.1
   verified) — it provides the mod settings page, and the build **fails with a
-  clear error** if it is missing. Install it once: from the
+  clear error** if it is missing. The repo root's `install-windows-deps.ps1`
+  installs it (hash-checked) into `<game>/mods/BaseLib/`, finding the game
+  as the build does. By hand: from the
   [v3.4.1 release](https://github.com/Alchyr/BaseLib-StS2/releases) download
   `BaseLib.dll`, `BaseLib.pck` and `BaseLib.json` into
   `<game>/mods/BaseLib/` (create the folder; `<game>` is the folder holding
@@ -70,9 +72,11 @@ Coming from an older build? Delete `<game>/mods/SimBridge/` or
 `<game>/mods/SpireCoach/` first — the game would load both, and only one can
 listen on port 9002.
 
-`SpireMentor.csproj` locates the game through the Steam registry key, falling
-back to `C:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2`. If
-yours lives elsewhere:
+`SpireMentor.csproj` finds the game like `just import-game` does: in every
+Steam library listed in Steam's `libraryfolders.vdf` (other drives included),
+falling back to `C:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2`.
+`deploy.ps1` uses the same folder. To pick a specific install, set
+`STS2_GAME_DIR` (environment variable or MSBuild property):
 
 ```powershell
 dotnet build -p:STS2_GAME_DIR="D:/SteamLibrary/steamapps/common/Slay the Spire 2"

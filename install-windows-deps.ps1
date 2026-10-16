@@ -11,7 +11,9 @@
       * Rust engine (sts2-rs)     -> just, cargo-nextest   [always]
       * Python 3.13 via uv, wired up for the sts2-py PyO3 crate (PYO3_PYTHON
         + PATH) and for sts2-pycli                          [-SkipPython to omit]
-      * C# runner + the mod       -> .NET 9 SDK             [-SkipDotnet to omit]
+      * C# runner + the mod       -> .NET 9 SDK, BaseLib 3.4.1 into the game's
+                                     mods/ folder (found like the mod build finds
+                                     it)                    [-SkipDotnet to omit]
       * Web UIs                   -> Node.js LTS            [-SkipNode to omit]
       * Workbench with real art   -> ilspycmd 9.1, wasm-bindgen-cli (the version
          and sound                   sts2-rs/Cargo.lock pins), libwebp (cwebp),
@@ -31,7 +33,12 @@
     Without it, build the Rust engine with `--exclude sts2-py`.
 
 .PARAMETER SkipDotnet
-    Skip installing the .NET 9 SDK (needed only for the C# headless runner).
+    Skip installing the .NET 9 SDK (needed for the C# headless runner and the
+    mod) and BaseLib.
+
+.PARAMETER ReplaceBaseLib
+    Replace a BaseLib in <game>/mods/BaseLib/ whose version differs from the
+    pinned one. Without it, an existing different version is left alone.
 
 .PARAMETER SkipNode
     Skip installing Node.js LTS (needed only for the web frontends).
@@ -51,10 +58,20 @@ param(
     [switch]$SkipPython,
     [switch]$SkipDotnet,
     [switch]$SkipNode,
-    [switch]$SkipWorkbench
+    [switch]$SkipWorkbench,
+    [switch]$ReplaceBaseLib
 )
 
 $ErrorActionPreference = 'Stop'
+
+# BaseLib release the mod is verified against (spire-mentor-mod/README.md) and
+# the SHA-256 digests GitHub publishes for its assets.
+$BaseLibVersion = '3.4.1'
+$BaseLibFiles = [ordered]@{
+    'BaseLib.dll'  = '1AA989F46C7FD983BDBBCBF2C4FEC890F28099092889421EA71E7F54914335D5'
+    'BaseLib.pck'  = '62F35D4E9D3576E20533A62D8097ABA5646CB5AB95CEA6AE77E6DA86E5461E19'
+    'BaseLib.json' = '2A0B965097AC331CAE1C13828699534809420CD99FECE363D6104AE2548B2BE4'
+}
 
 if ($RustOnly) { $SkipDotnet = $true; $SkipNode = $true; $SkipWorkbench = $true }
 
@@ -199,7 +216,53 @@ if (-not $SkipDotnet) {
     if ($hasSdk) { Ok ".NET 9 SDK already installed"; $skipped += '.NET 9 SDK' }
     else { Install-Winget 'Microsoft.DotNet.SDK.9' 'dotnet' '.NET 9 SDK' }
     Info "The C# runner also needs the game DLLs: 'just import-game' stages them from your install."
-} else { $skipped += '.NET 9 SDK' }
+
+    # BaseLib (Alchyr, MIT): the mod's settings-UI dependency, installed into
+    # <game>/mods/BaseLib/. Pinned to the version SpireMentor.csproj is verified
+    # against; the hashes are the release's published SHA-256 digests.
+    Step "Spire Mentor mod deps (BaseLib $BaseLibVersion)"
+    $gameDir = $null
+    if (Have 'dotnet') {
+        # The csproj owns game discovery (STS2_GAME_DIR, else every Steam library).
+        $csproj = Join-Path $PSScriptRoot 'spire-mentor-mod\SpireMentor.csproj'
+        try { $gameDir = (dotnet msbuild $csproj -getProperty:STS2_GAME_DIR 2>$null | Out-String).Trim() } catch {}
+    }
+    if (-not $gameDir -or -not (Test-Path (Join-Path $gameDir 'data_sts2_windows_x86_64'))) {
+        Warn "Slay the Spire 2 not found - skipping BaseLib. Install the game (or set STS2_GAME_DIR) and re-run."
+        $skipped += 'BaseLib'
+    } else {
+        $baseLibDir = Join-Path $gameDir 'mods\BaseLib'
+        $needed = $BaseLibFiles.Keys | Where-Object {
+            $f = Join-Path $baseLibDir $_
+            -not (Test-Path $f) -or (Get-FileHash $f -Algorithm SHA256).Hash -ne $BaseLibFiles[$_]
+        }
+        if (-not $needed) {
+            Ok "BaseLib $BaseLibVersion already installed ($baseLibDir)"; $skipped += 'BaseLib'
+        } elseif (($needed -contains 'BaseLib.dll') -and (Test-Path (Join-Path $baseLibDir 'BaseLib.dll')) -and -not $ReplaceBaseLib) {
+            # Another BaseLib version is there (perhaps for other mods): leave it.
+            Warn "A different BaseLib is installed in $baseLibDir; SpireMentor is verified against $BaseLibVersion."
+            Warn "  Re-run with -ReplaceBaseLib to replace it."
+            $skipped += 'BaseLib'
+        } else {
+            try {
+                New-Item -ItemType Directory -Force -Path $baseLibDir | Out-Null
+                foreach ($name in $needed) {
+                    $url = "https://github.com/Alchyr/BaseLib-StS2/releases/download/v$BaseLibVersion/$name"
+                    $tmp = Join-Path ([IO.Path]::GetTempPath()) "BaseLib-$BaseLibVersion-$name"
+                    Info "Downloading $url ..."
+                    Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
+                    $hash = (Get-FileHash $tmp -Algorithm SHA256).Hash
+                    if ($hash -ne $BaseLibFiles[$name]) {
+                        Remove-Item $tmp -Force
+                        throw "$name SHA-256 mismatch (got $hash)"
+                    }
+                    Move-Item $tmp (Join-Path $baseLibDir $name) -Force
+                }
+                Ok "BaseLib $BaseLibVersion installed into $baseLibDir"; $installed += "BaseLib $BaseLibVersion"
+            } catch { Warn "BaseLib install failed: $_"; $failed += 'BaseLib' }
+        }
+    }
+} else { $skipped += '.NET 9 SDK'; $skipped += 'BaseLib' }
 
 # ---------------------------------------------------------------------------
 if (-not $SkipNode) {
@@ -266,7 +329,7 @@ Write-Host @"
 Next steps (from the repo root, in a NEW terminal so the tools are on PATH):
   * Workbench:     just import-game        # finds the game through Steam; art + sound
                    just workbench-local    # http://127.0.0.1:4173
-  * The mod:       cd spire-mentor-mod; dotnet build   (needs BaseLib - spire-mentor-mod\README.md)
+  * The mod:       cd spire-mentor-mod; dotnet build   (builds + installs into the game's mods/)
   * Rust engine:   just rs-test
   The root justfile runs under PowerShell. The subproject justfiles are bash:
   run those from Git Bash.

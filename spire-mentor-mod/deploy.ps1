@@ -9,11 +9,16 @@
 #   ./deploy.ps1 -GameDir "D:/SteamLibrary/steamapps/common/Slay the Spire 2"
 
 param(
-    [string]$GameDir = "C:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2"
+    # Default: the game dir SpireMentor.csproj discovers (STS2_GAME_DIR, else
+    # every Steam library), so the build and this script never disagree.
+    [string]$GameDir = ""
 )
 
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $GameDir) {
+    $GameDir = (dotnet msbuild (Join-Path $scriptDir "SpireMentor.csproj") -getProperty:STS2_GAME_DIR).Trim()
+}
 $modsDir = Join-Path $GameDir "mods/SpireMentor"
 
 if (-not (Test-Path $GameDir)) {

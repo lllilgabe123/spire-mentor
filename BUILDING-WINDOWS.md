@@ -67,7 +67,8 @@ dotnet build            # builds the mod and installs it into <game>\mods\SpireM
 `import-game` needs no Developer Mode: it stages the game with a hard link and
 a directory junction where it cannot symlink. It needs no FMOD download either:
 the sound effects are rendered with the `fmod.dll` the game installs. It ends
-with an art coverage report (`uv run --no-project scripts/check_art.py`). The mod also needs BaseLib and,
+with an art coverage report (`uv run --no-project scripts/check_art.py`). The mod also needs BaseLib (`install-windows-deps.ps1` installs it into the
+game's `mods/` folder) and,
 for the in-game advisor, `cd sts2-pycli; uv sync` once (which builds the
 `sts2-py` crate below) — see
 [`spire-mentor-mod/README.md`](spire-mentor-mod/README.md).

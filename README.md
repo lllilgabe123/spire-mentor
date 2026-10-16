@@ -260,7 +260,8 @@ runtime the game ships; on Linux with the FMOD SDK — see
 
 **The mod.** Windows, the game at v0.107.1, the .NET 9 SDK and
 [BaseLib](https://github.com/Alchyr/BaseLib-StS2) v3.4.1 in
-`<game>/mods/BaseLib/`: `cd spire-mentor-mod && dotnet build` builds it and
+`<game>/mods/BaseLib/` (on Windows, `install-windows-deps.ps1` installs both):
+`cd spire-mentor-mod && dotnet build` builds it and
 installs it into the game's `mods/` folder; the in-game advisor also needs
 `cd sts2-pycli && uv sync` once. Details in
 [`spire-mentor-mod/README.md`](spire-mentor-mod/README.md).
