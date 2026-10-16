@@ -121,6 +121,11 @@ function revealKeyOf(state: CombatState | undefined, scope: string): string | nu
   return `${scope}:${r.kind}:${state?.floor ?? "?"}:${r.gold}:${r.relic?.name ?? "-"}`;
 }
 
+/** The connected live game's current position, as state-import text. Module
+ *  level so its identity is stable: the import dialog's fetch-on-open effect
+ *  depends on it. */
+const fetchLiveGameState = () => api.bridge.state().then((s) => JSON.stringify(s));
+
 function AppBody() {
   const [runs, setRuns] = useState<string[]>([]);
   // Follow mode: poll the loaded run file's size/mtime and reload on change,
@@ -258,6 +263,8 @@ function AppBody() {
   usePaletteChord(togglePalette);
   const [loadOpen, setLoadOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  // Opened via "Import from live game": the dialog fetches on open.
+  const [importFromLive, setImportFromLive] = useState(false);
   const [simlabBusy, setSimlabBusy] = useState(false);
   // What the last import could not reproduce; shown above the board until
   // dismissed. Empty for every non-imported run.
@@ -1393,12 +1400,18 @@ function AppBody() {
     setHintShown(true);
     await fetchHint();
   }
-  async function openSearchTree(config: import("./api").MctsConfig = searchConfig) {
+  // `fromBridge` is an argument, not read from state: `liveSearch` sets
+  // `searchFromBridge` and calls this in the same tick, before the update
+  // lands, so reading state here searched the workbench run instead of the game.
+  async function openSearchTree(
+    config: import("./api").MctsConfig = searchConfig,
+    fromBridge: boolean = searchFromBridge,
+  ) {
     setSearchConfig(config);
     setSearchOpen(true);
     setSearchBusy(true);
     try {
-      const tree = searchFromBridge
+      const tree = fromBridge
         ? await api.bridge.searchTree(config.sims)
         : mode === "play"
           ? await api.live.searchTree({ ...config })
@@ -1711,7 +1724,8 @@ function AppBody() {
     actions: {
       save: () => { void saveLive(); },
       load: () => { void openLoadDialog(); },
-      importState: () => setImportOpen(true),
+      importState: () => { setImportFromLive(false); setImportOpen(true); },
+      importLive: () => { setImportFromLive(true); setImportOpen(true); },
       endRun: () => { void endRun(); },
       analyze: () => { void openAnalysis(); },
       regretReview: () => openRegret(mode === "play"),
@@ -1721,7 +1735,7 @@ function AppBody() {
       recommend: () => { void recommend(); },
       playFromHere: () => { void playFromHere(); },
       bridgeTree: () => { void openBridgeTree(); },
-      liveSearch: () => { setSearchFromBridge(true); void openSearchTree(); },
+      liveSearch: () => { setSearchFromBridge(true); void openSearchTree(searchConfig, true); },
       bridgeSeek: () => { void bridgeSeekToViewedFloor(); },
     },
   });
@@ -2396,6 +2410,8 @@ function AppBody() {
         <ImportStateDialog
           onImported={afterImport}
           onClose={() => setImportOpen(false)}
+          liveGame={bridgeConnected ? fetchLiveGameState : undefined}
+          autoLive={importFromLive}
         />
       )}
       {treeOpen && (

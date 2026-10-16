@@ -557,7 +557,11 @@ two opt-ins, both off by default.
    only the replay of an advisor log, which the browser build cannot follow),
    and the Analyze menu grows **Game tree** and **Live search** while the
    advisor answers `connected`; **rewind to the viewed floor** stays a replay
-   command (it needs a viewed floor). The Tools entry shows the state
+   command (it needs a viewed floor). The Run menu grows **🎮 Import from
+   live game**, which opens the state import pre-filled from the control
+   plane's `GET /state` — the latest `advice_request` the mod sent, i.e.
+   exactly what Copy state would have put on the clipboard (the import
+   dialog also offers it as a button while connected). The Tools entry shows the state
    (`connected` / `unreachable`), and the dialog shows the probe error.
 3. **In Chrome**, allow the "access devices on your local network" prompt
    the first request raises. Firefox does not ask.

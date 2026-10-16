@@ -19,7 +19,7 @@ function ctx(over: Partial<CommandContext> = {}): CommandContext {
     viewedFloor: null,
     busy: {},
     actions: {
-      save: noop, load: noop, importState: noop, endRun: noop,
+      save: noop, load: noop, importState: noop, importLive: noop, endRun: noop,
       analyze: noop, regretReview: noop, runReview: noop, searchTree: noop,
       simlabFromHere: noop, recommend: noop, playFromHere: noop,
       bridgeTree: noop, liveSearch: noop, bridgeSeek: noop,
@@ -35,6 +35,13 @@ describe("buildCommands", () => {
     const run = buildCommands(ctx()).filter((c) => c.group === "run");
     expect(run.map((c) => c.id)).toEqual(["save", "load", "import-state", "end-run"]);
     expect(run[run.length - 1].danger).toBe(true);
+  });
+
+  it("offers Import from live game only while the game is connected", () => {
+    expect(byId(ctx())["import-live"]).toBeUndefined();
+    const on = buildCommands(ctx({ bridgeConnected: true })).filter((c) => c.group === "run");
+    expect(on.map((c) => c.id)).toEqual(["save", "load", "import-state", "import-live", "end-run"]);
+    expect(byId(ctx({ bridgeConnected: true, stateImport: false }))["import-live"]).toBeUndefined();
   });
 
   it("hides the play-only run commands in replay, and the replay-only ones in play", () => {

@@ -159,6 +159,51 @@ class TestReadEndpoints:
         assert _get(control, "/status")["connected"] is True
 
 
+#: A Copy-state-shaped decision message for the /state tests.
+ADVICE_REQUEST: dict[str, Any] = {
+    **ENV,
+    "type": "advice_request",
+    "advice_for": "combat_action",
+    "state_id": 7,
+    "hand": [{"id": "STRIKE_IRONCLAD"}],
+}
+
+
+class TestState:
+    """GET /state: the latest advice_request, verbatim (what Copy state yields)."""
+
+    def test_404_before_any_decision(self, plane) -> None:
+        control, _, _ = plane
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _get(control, "/state")
+        assert exc.value.code == 404
+        assert json.loads(exc.value.read())["error"] == "no_state"
+
+    def test_serves_latest_advice_request_verbatim(self, plane) -> None:
+        control, _, _ = plane
+        control.note_message({**ADVICE_REQUEST, "state_id": 6})
+        control.note_message(ADVICE_REQUEST)
+        # Other message types do not replace the position.
+        control.note_message({**ENV, "type": "human_action", "action": "play_card"})
+        assert _get(control, "/state") == ADVICE_REQUEST
+
+    def test_stored_copy_is_isolated_from_later_mutation(self, plane) -> None:
+        control, _, _ = plane
+        msg = json.loads(json.dumps(ADVICE_REQUEST))
+        control.note_message(msg)
+        msg["hand"].append({"id": "DEFEND_IRONCLAD"})
+        assert _get(control, "/state") == ADVICE_REQUEST
+
+    @pytest.mark.parametrize("end", ["game_over", "run_complete"])
+    def test_cleared_at_run_end(self, plane, end: str) -> None:
+        control, _, _ = plane
+        control.note_message(ADVICE_REQUEST)
+        control.note_message({**ENV, "type": end})
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _get(control, "/state")
+        assert exc.value.code == 404
+
+
 class TestSeek:
     def test_room_entry_seek_round_trip_and_fork(self, plane) -> None:
         control, tree, client = plane

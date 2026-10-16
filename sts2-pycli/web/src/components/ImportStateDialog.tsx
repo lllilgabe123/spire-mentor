@@ -20,11 +20,19 @@ import type { ImportFidelity, ImportLane, ImportPreview } from "../api";
 export default function ImportStateDialog({
   onImported,
   onClose,
+  liveGame,
+  autoLive = false,
 }: {
   onImported: (fidelity: ImportFidelity) => void;
   onClose: () => void;
+  /** Fetches the connected live game's current position (the same message
+   *  Copy state yields); offered as a button when set. */
+  liveGame?: () => Promise<string>;
+  /** Fetch from `liveGame` as soon as the dialog opens. */
+  autoLive?: boolean;
 }) {
   const [text, setText] = useState("");
+  const [fetchingLive, setFetchingLive] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
@@ -75,6 +83,30 @@ export default function ImportStateDialog({
       setError("this browser will not read the clipboard here — paste with Ctrl+V");
     }
   }, []);
+
+  const fetchFromLiveGame = useCallback(async () => {
+    if (!liveGame) return;
+    setFetchingLive(true);
+    try {
+      setText(await liveGame());
+    } catch (e) {
+      // 404 = the advisor has seen no decision yet (or the run just ended).
+      const msg = (e as Error).message || "";
+      setError(/\b404\b|no_state/.test(msg)
+        ? "the live game has no position yet — it sends one at each combat turn or choice screen"
+        : `could not read the live game: ${msg}`);
+    } finally {
+      setFetchingLive(false);
+    }
+  }, [liveGame]);
+
+  // Once per open: a later re-fetch would overwrite what the user is reading.
+  const autoFetched = useRef(false);
+  useEffect(() => {
+    if (!autoLive || autoFetched.current || !liveGame) return;
+    autoFetched.current = true;
+    void fetchFromLiveGame();
+  }, [autoLive, liveGame, fetchFromLiveGame]);
 
   async function doImport() {
     if (!preview || busy) return;
@@ -152,7 +184,14 @@ export default function ImportStateDialog({
               style={{ padding: "4px 10px", border: "1px solid var(--border)", borderRadius: 4 }}>
               paste from clipboard
             </button>
-            {parsing && <span className="mono" style={{ color: "var(--muted)", fontSize: 12 }}>reading…</span>}
+            {liveGame && (
+              <button onClick={() => void fetchFromLiveGame()} disabled={busy || fetchingLive} className="mono"
+                title="the position the connected game is at right now (no copy-paste)"
+                style={{ padding: "4px 10px", border: "1px solid var(--border)", borderRadius: 4 }}>
+                {fetchingLive ? "reading the game…" : "🎮 from live game"}
+              </button>
+            )}
+            {parsing &&<span className="mono" style={{ color: "var(--muted)", fontSize: 12 }}>reading…</span>}
           </div>
 
           {error && (

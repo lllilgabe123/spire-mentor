@@ -12,6 +12,10 @@ Endpoints (all JSON):
     GET  /status       — {connected, character, seed, floor, act, log_path}
     GET  /tree         — LiveRunTree.timeline()  (BranchTree.tsx wire shape)
     GET  /snapshots    — the mod's snapshot list (list_snapshots round trip)
+    GET  /state        — the latest ``advice_request`` from the mod: the same
+                         message the mod's Copy state yields, so the
+                         workbench's state import takes it as is (404 until
+                         the first one, and again after game over)
     POST /restore      — {snapshot_id} or {node_id}; rewinds the live game
     POST /search_tree  — companion MCTS tree over the current combat board
 
@@ -29,6 +33,7 @@ can read a reply, exactly as before. Same-origin proxies are unaffected.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import threading
@@ -70,6 +75,7 @@ class ControlPlane:
         self._client: Any = None
         self._status: dict[str, Any] = {"connected": False}
         self._waiters: dict[str, _Waiter] = {}
+        self._last_state: dict[str, Any] | None = None
         self._server: ThreadingHTTPServer | None = None
         self.search_tree_fn: Any = None  # set by the advisor: (sims|None) -> dict
 
@@ -81,9 +87,17 @@ class ControlPlane:
             self._status["connected"] = client is not None
 
     def note_message(self, msg: dict[str, Any]) -> None:
-        """Track the latest run envelope for /status (any message type)."""
+        """Track the latest run envelope for /status (any message type), and
+        the latest decision position for /state."""
         rs = msg.get("run_state") or {}
+        mtype = msg.get("type")
+        # Copied: the advisor's handlers may annotate the message they get.
+        state = copy.deepcopy(msg) if mtype == "advice_request" else None
         with self._lock:
+            if state is not None:
+                self._last_state = state
+            elif mtype in ("game_over", "run_complete"):
+                self._last_state = None
             self._status.update(
                 {
                     "connected": True,
@@ -94,6 +108,11 @@ class ControlPlane:
                     "state_id": msg.get("state_id", self._status.get("state_id")),
                 }
             )
+
+    def last_state(self) -> dict[str, Any] | None:
+        """The latest ``advice_request`` (see /state), or None."""
+        with self._lock:
+            return self._last_state
 
     def set_log_path(self, path: str | None) -> None:
         with self._lock:
@@ -251,6 +270,19 @@ class ControlPlane:
                     self._send(200, plane.status())
                 elif path == "/tree":
                     self._send(200, plane.tree.timeline())
+                elif path == "/state":
+                    state = plane.last_state()
+                    if state is None:
+                        self._send(
+                            404,
+                            {
+                                "error": "no_state",
+                                "detail": "no decision from the game yet "
+                                "(the mod sends one at each combat turn or choice screen)",
+                            },
+                        )
+                    else:
+                        self._send(200, state)
                 elif path == "/snapshots":
                     reply = plane.list_snapshots()
                     if reply is None:

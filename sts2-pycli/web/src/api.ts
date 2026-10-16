@@ -1258,6 +1258,12 @@ export const api = {
           }[];
         }>,
       ),
+    /** The live game's latest decision position: the mod's Copy state
+     *  message, which the state import takes as is. 404 before the first. */
+    state: () =>
+      (bridgeBase() ? bridgeFetch("/state") : apiFetch("/api/bridge/state")).then(
+        json<Record<string, unknown>>,
+      ),
     seek: (nodeId?: number, snapshotId?: string) => {
       const init: RequestInit = {
         method: "POST",

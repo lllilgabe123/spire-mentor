@@ -42,6 +42,7 @@ export interface CommandActions {
   save: () => void;
   load: () => void;
   importState: () => void;
+  importLive: () => void;
   endRun: () => void;
   analyze: () => void;
   regretReview: () => void;
@@ -99,6 +100,11 @@ export function buildCommands(c: CommandContext): Command[] {
       out.push({ id: "import-state", group: "run", label: "📋 Import state",
         title: "paste a state copied out of the live game (SpireMentor: Copy state / Ctrl+Shift+C) and play it from here",
         run: a.importState });
+      if (c.bridgeConnected) {
+        out.push({ id: "import-live", group: "run", label: "🎮 Import from live game",
+          title: "load the position the connected game is at right now and play it from here (no copy-paste)",
+          run: a.importLive });
+      }
     }
     out.push({ id: "end-run", group: "run", label: "End run", title: "end the current run", danger: true,
       disabledReason: c.hasLive ? undefined : NO_RUN, run: a.endRun });

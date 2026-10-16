@@ -1525,6 +1525,12 @@ def create_app(
         """The mod's snapshot list for the current live run."""
         return _bridge_call("/snapshots", timeout=10.0)
 
+    @app.get("/api/bridge/state")
+    def bridge_state() -> dict[str, Any]:
+        """The live game's latest decision position (what Copy state yields),
+        for the state import; 404 before the game's first decision."""
+        return _bridge_call("/state", timeout=5.0)
+
     @app.post("/api/bridge/seek")
     def bridge_seek(req: BridgeSeekRequest) -> dict[str, Any]:
         """Rewind the LIVE game to a branch-tree node's save point."""
