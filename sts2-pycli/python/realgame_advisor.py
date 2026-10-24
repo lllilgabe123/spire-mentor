@@ -112,8 +112,12 @@ HONEST_SEARCH = {
 ADVISOR_CAPABILITIES = {"coach": 2}
 
 #: How the fight-advice note names the search mode; serve() switches it for
-#: --fight-sight clairvoyant.
+#: --fight-sight clairvoyant / knowndraws.
 FIGHT_SIGHT_LABEL = "beliefdraw"
+
+#: --fight-sight knowndraws: pin the whole draw pile (in draw order) as known
+#: top cards on the searched board (see serve()).
+KNOWN_DRAWS = False
 
 # Upper bound on root-parallel workers for the combat search. Beyond ~8 the
 # per-tree budget gets thin enough to cost decision quality faster than the
@@ -433,7 +437,14 @@ def compute_combat_advice(
     share = float(coop.get("teammate_share") or 0.0)
     real_wire = wire
     wire = realgame_foresight.scale_for_teammate(wire, share)
+    if KNOWN_DRAWS:
+        wire = dict(wire)
+        wire["deck"] = dict(wire["deck"])
+        wire["deck"]["pinned_top"] = list(range(len(wire["deck"].get("draw_pile") or [])))
     live = mirror.on_combat_board(wire, state) if mirror is not None else None
+    if KNOWN_DRAWS:
+        # The carried mirror board has no pins; search the pinned rebuild.
+        live = None
     if live is not None and live.state.pending_choice() is not None:
         # The world is asking for a COMBAT action, so it is not showing a
         # selection -- and a mirror parked on one answers a question nobody
@@ -1408,6 +1419,16 @@ def serve(args: argparse.Namespace) -> None:
         FIGHT_SIGHT_LABEL = "sees the future"
         cfg = RecommendConfig(sims=args.sims, threads=args.threads, hidden_info="clairvoyant")
     else:
+        if args.fight_sight == "knowndraws":
+            # Personal build: the deployed honest search, but the whole draw
+            # pile rides in as KNOWN top cards (`pinned_top`), so the search
+            # plans with your real draws while every other random outcome
+            # stays a chance node. Plain clairvoyance treats the rebuilt RNG
+            # cursors as truth; live they are not exact, and it planned
+            # against one wrong future (Kaiser Crab: 1% vs 21% honest, won).
+            global KNOWN_DRAWS
+            KNOWN_DRAWS = True
+            FIGHT_SIGHT_LABEL = "knows your draws"
         cfg = RecommendConfig(
             sims=args.sims,
             threads=args.threads,
@@ -2068,9 +2089,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--fight-sight",
-        choices=("honest", "clairvoyant"),
+        choices=("honest", "clairvoyant", "knowndraws"),
         default="honest",
-        help="honest: the deployed blindfolded fight search. clairvoyant: plan "
+        help="honest: the deployed blindfolded fight search. knowndraws: honest, "
+        "but the real draw order is known. clairvoyant: plan "
         "fights with the true draw order and RNG cursors the mod reads.",
     )
     parser.add_argument(

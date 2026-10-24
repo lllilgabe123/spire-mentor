@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run-AI A/B on the beta: the shipped Ironclad run AI, clairvoyant fights
-# (STS2_RUNAI_HONEST=0, like the live advisor), eval-cheap combat
+# Run-AI A/B on the beta: the shipped Ironclad run AI, honest fights
+# (deployed BeliefDraw; the live advisor knows draws only), eval-cheap combat
 # (1000/4000 sims), the same seeds in every arm. Arms:
 #   base     nothing changed
 #   caution  STS2_LOW_HP_CAUTION=1 (HP below half counts double, engine)
@@ -39,7 +39,8 @@ arm_env() {
 wait_idle
 echo "$(date +%T) game closed for 15 min; starting A/B ($ARMS x A$ASCS x $SEEDS seeds)" | tee -a "$OUT/progress.txt"
 cd "$PYCLI"
-export PYTHONPATH=python PYTHONUTF8=1 STS2_RUNAI_HONEST=0
+export PYTHONPATH=python PYTHONUTF8=1
+unset STS2_RUNAI_HONEST  # honest fights: closest sim match to the live "known draws" mode
 for asc in $ASCS; do
   for arm in $ARMS; do
     f="$OUT/${arm}_A${asc}.jsonl"

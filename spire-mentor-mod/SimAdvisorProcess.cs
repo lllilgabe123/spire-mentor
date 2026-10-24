@@ -106,7 +106,7 @@ internal static class SimAdvisorProcess
             string advisorArgs = $"--port {SimConfig.Instance.Port}";
             if (SpireMentorModConfig.ClairvoyantFights)
             {
-                advisorArgs += " --fight-sight clairvoyant";
+                advisorArgs += " --fight-sight knowndraws";
             }
             if (SimConfig.Instance.AdvisorAutoplay)
             {

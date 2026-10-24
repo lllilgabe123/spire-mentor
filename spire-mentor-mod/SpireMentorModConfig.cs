@@ -98,9 +98,9 @@ public sealed class SpireMentorModConfig : SimpleModConfig
 
     public static bool AdvisorAutoLaunch { get; set; } = true;
 
-    /// <summary>Plan fights with the true draw order and RNG cursors the mod
-    /// already reads, instead of the deployed blindfolded search (the
-    /// advisor's --fight-sight). Read when the advisor starts.</summary>
+    /// <summary>Plan fights knowing the true draw order the mod already reads
+    /// (advisor --fight-sight knowndraws); other randomness stays uncertain.
+    /// Read when the advisor starts.</summary>
     public static bool ClairvoyantFights { get; set; } = true;
 
     /// <summary>Switch the coach on by itself at launch (see
@@ -206,7 +206,7 @@ public sealed class SpireMentorModConfig : SimpleModConfig
 
         optionContainer.AddChild(CreateSectionHeader("Advisor backend"));
         AddRow(optionContainer, "Auto-launch Python advisor", nameof(AdvisorAutoLaunch), CreateRawTickboxControl);
-        AddRow(optionContainer, "See the future in fights (draw order)", nameof(ClairvoyantFights), CreateRawTickboxControl);
+        AddRow(optionContainer, "Know your draw order in fights", nameof(ClairvoyantFights), CreateRawTickboxControl);
         AddRow(optionContainer, "Advisor command (blank = default)", nameof(AdvisorCommand), CreateRawLineEditControl);
 
         // BaseLib disables this whole page during a run, so the keys are the
@@ -259,7 +259,7 @@ public sealed class SpireMentorModConfig : SimpleModConfig
             cfg.AddLiveRow(container, "Show win chance bar", nameof(ShowWinBar), cfg.CreateRawTickboxControl);
             cfg.AddLiveRow(container, "Reduce combat effects", nameof(ReduceEffects), cfg.CreateRawTickboxControl);
             cfg.AddLiveRow(advanced, "Auto-launch Python advisor", nameof(AdvisorAutoLaunch), cfg.CreateRawTickboxControl);
-            cfg.AddLiveRow(advanced, "See the future in fights (draw order)", nameof(ClairvoyantFights), cfg.CreateRawTickboxControl);
+            cfg.AddLiveRow(advanced, "Know your draw order in fights", nameof(ClairvoyantFights), cfg.CreateRawTickboxControl);
             cfg.AddLiveRow(advanced, "Advisor command (blank = default)", nameof(AdvisorCommand), cfg.CreateRawLineEditControl);
             cfg.AddLiveRow(advanced, "Workbench URL (blank = default)", nameof(WorkbenchUrl), cfg.CreateRawLineEditControl);
             cfg.AddLiveRow(advanced, "Browser workbench origin (blank = off)", nameof(BrowserWorkbenchOrigin), cfg.CreateRawLineEditControl);
