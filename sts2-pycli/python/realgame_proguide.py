@@ -163,6 +163,65 @@ def card_reward_lines(state: dict[str, Any], character: str) -> list[str]:
     return lines
 
 
+_EVENTS: dict[str, list[list[Any]]] | None = None
+
+
+def _events() -> dict[str, list[list[Any]]]:
+    """{normalized event: [[option, chosen, share, win, lift], ...]} or {}."""
+    global _EVENTS
+    if _EVENTS is None:
+        rows: dict[str, Any] = {}
+        d = _data_dir()
+        for path in (d / "events.json.gz", d / "codex_events_a10_wr50_v0111.json"):
+            try:
+                opener = gzip.open if path.suffix == ".gz" else open
+                with opener(path, "rt", encoding="utf-8") as f:
+                    rows = json.load(f)["events"]
+                break
+            except OSError:
+                continue
+        _EVENTS = {_event_key(k): v for k, v in rows.items()}
+    return _EVENTS
+
+
+def _event_key(name: str) -> str:
+    return re.sub(r"^the", "", re.sub(r"[^a-z0-9]", "", name.lower()))
+
+
+def event_lines(state: dict[str, Any]) -> list[str]:
+    """What top players pick at this event and how their runs went after.
+
+    ``lift`` is spire-codex's win rate after the choice minus what the same
+    players were expected to win from that floor (left out under 20 picks).
+    Options split by page (\"Reach Deeper· 1\", \"· 2\") are summed."""
+    rows = _events().get(_event_key(str(state.get("event_name") or "")))
+    if not rows:
+        return []
+    by_label: dict[str, list[float]] = {}
+    for opt, chosen, share, _win, lift in rows:
+        base = re.sub(r"·.*$", "", opt).strip().lower()
+        acc = by_label.setdefault(base, [0.0, 0.0, 0.0, 0.0])  # chosen, share, lift*chosen, chosen with lift
+        acc[0] += chosen
+        acc[1] += share
+        if lift is not None:
+            acc[2] += lift * chosen
+            acc[3] += chosen
+    parts = []
+    for o in state.get("options") or []:
+        label = str(o.get("label") or "")
+        acc = by_label.get(label.lower())
+        if not acc:
+            continue
+        bit = f"{label}: pros pick {acc[1]:.0f}%"
+        if acc[3]:
+            lift = acc[2] / acc[3]
+            bit += f", runs after it do {'better' if lift >= 0 else 'worse'} ({lift:+.0f})"
+        parts.append(bit)
+    if not parts:
+        return []
+    return ["Top players here: " + " | ".join(parts)]
+
+
 def rest_site_lines(state: dict[str, Any]) -> list[str]:
     p = state.get("player") or (state.get("run_state") or {})
     hp, max_hp = p.get("hp"), p.get("max_hp")

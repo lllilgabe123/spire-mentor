@@ -205,4 +205,4 @@ def forecast(sts2_rs: Any, cs: Any, wire: dict[str, Any], names: list[str]) -> d
     for i, moves in timeline.items():
         name = names[i] if i < len(names) and names[i] else (now["encounter"][i].get("kind") if i < len(now["encounter"]) else f"enemy {i}")
         lines.append(f"{name} next: " + ", then ".join(moves))
-    return {"lines": lines, "danger": danger}
+    return {"lines": lines, "danger": danger, "hp_after": hp1}

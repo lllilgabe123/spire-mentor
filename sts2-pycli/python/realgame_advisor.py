@@ -540,6 +540,7 @@ def _add_foresight(
     and each teammate's best turn (``teammate_tips``)."""
     import sts2_rs
 
+    fc = None
     try:
         names = [e.get("name") for e in state.get("enemies") or []]
         fc = realgame_foresight.forecast(sts2_rs, sts2_rs.state_from_dict(real_wire), real_wire, names)
@@ -547,6 +548,21 @@ def _add_foresight(
         advice["forecast_danger"] = fc["danger"]
     except Exception as exc:
         logger.warning("forecast failed: %s", exc)
+    # Potion hoarding (your won Defect run ended four hard fights at 7-19 HP
+    # with a potion still held; top beta players drink 60-99% of theirs).
+    try:
+        held = [p for p in state.get("potions") or [] if isinstance(p, dict) and not p.get("empty")]
+        room = str(state.get("room_type") or "")
+        p = state.get("player") or {}
+        after = (fc or {}).get("hp_after")
+        if held and room in ("Elite", "Boss") and after is not None and p.get("max_hp") and after < 0.4 * p["max_hp"]:
+            names = ", ".join(str(x.get("name") or x.get("id") or "potion") for x in held)
+            advice.setdefault("forecast_lines", []).append(
+                f"You're holding {names}. Top players drink their potions in fights like this; "
+                "don't finish a hard fight with them unused."
+            )
+    except Exception as exc:
+        logger.warning("potion reminder failed: %s", exc)
     if share > 0:
         advice["coop_note"] = (
             f"co-op: your teammate has done {share:.0%} of the damage this fight; advice plans with that"
@@ -973,6 +989,8 @@ def compute_screen_advice(
             advice["forecast_lines"] = realgame_proguide.card_reward_lines(state, character)
         elif advice_for == "rest_site":
             advice["forecast_lines"] = realgame_proguide.rest_site_lines(state)
+        elif advice_for == "event":
+            advice["forecast_lines"] = realgame_proguide.event_lines(state)
     except Exception as exc:
         logger.warning("pro guide failed: %s", exc)
 

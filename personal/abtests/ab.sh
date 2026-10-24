@@ -6,6 +6,7 @@
 #   caution  STS2_LOW_HP_CAUTION=1 (HP below half counts double, engine)
 #   pros     STS2_PRO_PRIOR=1 (card picks nudged by top beta players' Elo)
 #   smith50  STS2_SMITH_AT=0.5 (upgrade instead of heal at >= 50% HP)
+#   potions4 STS2_RUNAI_POTION_WEIGHT=4 (a held potion worth 4 HP, not 8: drink more)
 # Starts once Slay the Spire 2 has stayed closed for 15 minutes, backs off
 # (and redoes the arm) if the game starts, and restarts training when done.
 set -u
@@ -15,7 +16,7 @@ PYCLI="$LOCALAPPDATA/sm073/sts2-pycli"
 CKPT="$LOCALAPPDATA/sts2train/ironclad_champion_rebuilt.pt"
 SEEDS=${SEEDS:-250}
 ASCS=${ASCS:-"10 7 5"}
-ARMS=${ARMS:-"base caution pros smith50"}
+ARMS=${ARMS:-"base caution pros smith50 potions4"}
 mkdir -p "$OUT"
 # One copy at a time: a second start (e.g. a re-armed waiter) exits here.
 mkdir "$OUT/.lock" 2>/dev/null || { echo "another A/B is already running on $OUT"; exit 0; }
@@ -31,11 +32,12 @@ wait_idle() {
 }
 
 arm_env() {
-  unset STS2_LOW_HP_CAUTION STS2_PRO_PRIOR STS2_PRO_PRIOR_FILE STS2_SMITH_AT
+  unset STS2_LOW_HP_CAUTION STS2_PRO_PRIOR STS2_PRO_PRIOR_FILE STS2_SMITH_AT STS2_RUNAI_POTION_WEIGHT
   case "$1" in
     caution) export STS2_LOW_HP_CAUTION=1 ;;
     pros) export STS2_PRO_PRIOR=1 STS2_PRO_PRIOR_FILE='E:\SpireMentorTraining\data\codex_ironclad_a10_wr50_v0111.json' ;;
     smith50) export STS2_SMITH_AT=0.5 ;;
+    potions4) export STS2_RUNAI_POTION_WEIGHT=4 ;;
   esac
 }
 

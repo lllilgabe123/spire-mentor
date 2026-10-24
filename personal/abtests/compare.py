@@ -42,7 +42,7 @@ def mcnemar(b: int, c: int) -> float:
 
 def main() -> None:
     d = Path(sys.argv[1])
-    arms = sys.argv[2:] or ["base", "caution", "pros", "smith50"]
+    arms = sys.argv[2:] or ["base", "caution", "pros", "smith50", "potions4"]
     base, others = arms[0], arms[1:]
     ascs = sorted({int(p.stem.split("_A")[1]) for p in d.glob(f"{base}_A*.jsonl")}, reverse=True)
     for arm in others:
