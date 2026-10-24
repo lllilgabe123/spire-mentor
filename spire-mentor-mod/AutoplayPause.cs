@@ -119,5 +119,5 @@ internal static class AutoplayPause
 
     /// <summary>The line the player sees when autoplay hands back.</summary>
     public static string Toast(string what, string reason) =>
-        $"{what}: {reason} — your call. F7 to resume.";
+        $"{what}: {reason} — your call. Ctrl+Shift+P to resume auto mode.";
 }

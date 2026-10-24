@@ -352,7 +352,7 @@ Check("pretty event id", AutoplayPause.Pretty("CRYSTAL_SPHERE"), "Crystal Sphere
 Check("pretty advice_for", AutoplayPause.Pretty("card_bundle"), "Card Bundle");
 Check("pretty nothing", AutoplayPause.Pretty(null), "This decision");
 Check("toast", AutoplayPause.Toast("Crystal Sphere", "not covered by the AI (x)"),
-    "Crystal Sphere: not covered by the AI (x) — your call. F7 to resume.");
+    "Crystal Sphere: not covered by the AI (x) — your call. Ctrl+Shift+P to resume auto mode.");
 
 // EnemyTagText: the "#k" beside a same-named enemy, numbered as the advisor's
 // "→ Name #k" labels are (sts2-pycli/python/enemy_labels.py).
