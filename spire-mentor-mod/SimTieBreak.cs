@@ -125,7 +125,7 @@ internal static class SimTieBreak
         !hand[ci].DynamicVars.Values.Any(v => v is HpLossVar) &&
         (hand[ci].Type == CardType.Attack || Rank(o, hand) <= 2);
 
-    /// <summary>0 = Power card, 1 = self-buff, 2 = Vulnerable/Weak on enemies,
+    /// <summary>0 = Power card, 1 = self-buff or hand setup (Armaments, Enlightenment), 2 = Vulnerable/Weak on enemies,
     /// 3 = anything else, 4 = End turn (when tied, do something rather than
     /// nothing).</summary>
     private static int Rank(SimAdviceOption o, IReadOnlyList<CardModel> hand)
@@ -144,6 +144,15 @@ internal static class SimTieBreak
             return 0;
         }
         if (card.TargetType == TargetType.Self && HasPowerVar(card, SelfBuffs))
+        {
+            return 1;
+        }
+        // Hand setup: Armaments upgrades cards in hand, Enlightenment makes
+        // them cheaper -- both are worth more before the cards they improve
+        // are played. Armaments only counts while it has something to upgrade.
+        string id = card.Id.Entry;
+        if (id == "ENLIGHTENMENT" ||
+            (id == "ARMAMENTS" && hand.Any(c => !ReferenceEquals(c, card) && c.IsUpgradable)))
         {
             return 1;
         }
