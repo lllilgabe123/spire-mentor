@@ -103,7 +103,7 @@ class TestUncoveredSurfacesHandBack:
 
     @pytest.mark.parametrize(
         ("advice_for", "state"),
-        [("treasure", _relics("treasure")), ("card_bundle", _bundles())],
+        [("card_bundle", _bundles())],
     )
     def test_a_borrowed_head_hands_back_despite_ranking(
         self, advice_for: str, state: dict[str, Any]
@@ -155,3 +155,10 @@ def test_an_advisor_error_hands_back(monkeypatch: pytest.MonkeyPatch) -> None:
     (reply,) = client.sent
     assert "advisor error" in reply["advice"]["note"]
     assert reply["advice"]["hand_back"]
+
+
+def test_a_chest_relic_is_played_not_handed_back() -> None:
+    # Personal build: the boss-relic head's chest pick is taken in auto mode.
+    advice = ra.compute_screen_advice(_relics("treasure"), "treasure", _StubPolicies(_StubPolicy([0.2, 0.8])))
+    assert advice["best"]["index"] == 1
+    assert "hand_back" not in advice

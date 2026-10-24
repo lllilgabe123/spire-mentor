@@ -641,7 +641,9 @@ _SURFACE_STANDINS = {
 #: trained head (GH #379); the mod keeps no list of its own, so the pause goes
 #: away with it.
 _HAND_BACK_SURFACES = {
-    "treasure": "the chest relic pick has no trained policy",
+    # Personal build: no "treasure" entry. A chest relic is ranked by the
+    # boss-relic head (_SURFACE_STANDINS, announced in the note), and auto
+    # mode takes its pick instead of stopping at every chest.
     "card_bundle": "card bundles have no trained policy",
 }
 
@@ -949,9 +951,7 @@ def compute_screen_advice(
         note += " · scored as a deck pick; this copy only lasts the fight"
 
     advice = {"note": note, "options": options, "best": best}
-    # A chest with a single relic is not a pick (solo chests offer one): taking
-    # it needs no policy, so autoplay should not stop there.
-    if advice_for in _HAND_BACK_SURFACES and not (advice_for == "treasure" and len(options) <= 1):
+    if advice_for in _HAND_BACK_SURFACES:
         advice["hand_back"] = _HAND_BACK_SURFACES[advice_for]
 
     if advice_for == "map_select":
