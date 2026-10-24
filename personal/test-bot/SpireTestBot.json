@@ -1,0 +1,12 @@
+{
+  "id": "SpireTestBot",
+  "name": "Spire Test Bot",
+  "author": "local",
+  "description": "Test helper for local multiplayer tests. Does nothing unless the game is started with -spiretestbot.",
+  "version": "0.1.0",
+  "has_pck": false,
+  "has_dll": true,
+  "dependencies": [],
+  "affects_gameplay": false,
+  "min_game_version": "0.111.0"
+}

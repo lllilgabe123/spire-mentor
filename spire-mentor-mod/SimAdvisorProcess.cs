@@ -104,6 +104,10 @@ internal static class SimAdvisorProcess
             // their historical CWD-relative logs/realgame_advisor (the F7
             // harness and climb tooling read from there).
             string advisorArgs = $"--port {SimConfig.Instance.Port}";
+            if (SpireMentorModConfig.ClairvoyantFights)
+            {
+                advisorArgs += " --fight-sight clairvoyant";
+            }
             if (SimConfig.Instance.AdvisorAutoplay)
             {
                 // Unattended lane (climb / F7 harness): never auto-spawn the

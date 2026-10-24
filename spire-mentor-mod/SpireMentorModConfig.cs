@@ -98,6 +98,11 @@ public sealed class SpireMentorModConfig : SimpleModConfig
 
     public static bool AdvisorAutoLaunch { get; set; } = true;
 
+    /// <summary>Plan fights with the true draw order and RNG cursors the mod
+    /// already reads, instead of the deployed blindfolded search (the
+    /// advisor's --fight-sight). Read when the advisor starts.</summary>
+    public static bool ClairvoyantFights { get; set; } = true;
+
     /// <summary>Switch the coach on by itself at launch (see
     /// MainFile.CoachOnWhenReadyAsync), so enabling the mod in the game's mod
     /// list is the only step. Only from Off and only on Windows: Autopilot
@@ -181,10 +186,10 @@ public sealed class SpireMentorModConfig : SimpleModConfig
             "each card, a ranked list of moves, a win-chance bar and the route it likes on the\n" +
             "map. Coach shows nothing before you act -- press F5 to peek at its next pick -- and\n" +
             "afterwards a small note says where your turn or choice differed from its own.\n" +
-            "F8 turns it on / off; the toolbar's Hints / Coach button switches style.\n" +
+            "Insert turns it on / off; the toolbar's Hints / Coach button switches style.\n" +
             "It switches on when the game starts (untick\n" +
-            "that below if you would rather press F8), and it never plays for you unless you\n" +
-            "ask it to (F7).");
+            "that below if you would rather press Insert), and it never plays for you unless you\n" +
+            "ask it to (Ctrl+Shift+P).");
         AddRow(optionContainer, "Advisor mode (AI coach)", nameof(AdvisorMode), CreateRawTickboxControl);
         AddRow(optionContainer, "Turn the coach on when the game starts", nameof(CoachOnAtLaunch), CreateRawTickboxControl);
         AddRow(optionContainer, "Start in Coach style (untick: Hints)", nameof(StartInCoachStyle), CreateRawTickboxControl);
@@ -201,19 +206,20 @@ public sealed class SpireMentorModConfig : SimpleModConfig
 
         optionContainer.AddChild(CreateSectionHeader("Advisor backend"));
         AddRow(optionContainer, "Auto-launch Python advisor", nameof(AdvisorAutoLaunch), CreateRawTickboxControl);
+        AddRow(optionContainer, "See the future in fights (draw order)", nameof(ClairvoyantFights), CreateRawTickboxControl);
         AddRow(optionContainer, "Advisor command (blank = default)", nameof(AdvisorCommand), CreateRawLineEditControl);
 
         // BaseLib disables this whole page during a run, so the keys are the
         // only mid-run control there is -- and they were documented nowhere a
         // player would look. F1 shows the same list in-game.
-        optionContainer.AddChild(CreateSectionHeader("Keys (press F1 in game for this list)"));
+        optionContainer.AddChild(CreateSectionHeader("Keys (press Home in game for this list)"));
         AddNote(optionContainer,
-            "F8   AI on / off (from autopilot: take the controls back)\n" +
+            "Insert   AI on / off (from autopilot: take the controls back)\n" +
             "F5   Coach style: peek at the AI's next pick\n" +
-            "F6   let the AI take just this one decision\n" +
-            "F7   let the AI keep playing until you stop it\n" +
+            "Ctrl+Shift+N   let the AI take just this one decision\n" +
+            "Ctrl+Shift+P   let the AI keep playing until you stop it\n" +
             "F4   show / hide the HUD          F3   action log\n" +
-            "F9 / F10   game speed down / up   F1   help");
+            "F9 / F10   game speed down / up   Home   help");
 
         AddRestoreDefaultsButton(optionContainer);
         SetupFocusNeighbors(optionContainer);
@@ -253,6 +259,7 @@ public sealed class SpireMentorModConfig : SimpleModConfig
             cfg.AddLiveRow(container, "Show win chance bar", nameof(ShowWinBar), cfg.CreateRawTickboxControl);
             cfg.AddLiveRow(container, "Reduce combat effects", nameof(ReduceEffects), cfg.CreateRawTickboxControl);
             cfg.AddLiveRow(advanced, "Auto-launch Python advisor", nameof(AdvisorAutoLaunch), cfg.CreateRawTickboxControl);
+            cfg.AddLiveRow(advanced, "See the future in fights (draw order)", nameof(ClairvoyantFights), cfg.CreateRawTickboxControl);
             cfg.AddLiveRow(advanced, "Advisor command (blank = default)", nameof(AdvisorCommand), cfg.CreateRawLineEditControl);
             cfg.AddLiveRow(advanced, "Workbench URL (blank = default)", nameof(WorkbenchUrl), cfg.CreateRawLineEditControl);
             cfg.AddLiveRow(advanced, "Browser workbench origin (blank = off)", nameof(BrowserWorkbenchOrigin), cfg.CreateRawLineEditControl);

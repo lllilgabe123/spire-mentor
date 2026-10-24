@@ -1178,6 +1178,7 @@ internal sealed class SimAdvisor
             // advisor ignores it.
             state["combat_log"] = SimCombatLog.Drain();
             state["capabilities"] = ModCapabilities();
+            SimCoop.Attach(state);
 
             DropInflight();
 
@@ -1427,10 +1428,26 @@ internal sealed class SimAdvisor
                     }
                 }
 
+                if (isCombat)
+                {
+                    // Before anything reads Best: a near-tie moves the
+                    // recommendation to the power / self-buff card in it.
+                    SimTieBreak.Apply(advice, LocalContext.GetMe(RunManager.Instance.DebugOnlyGetState()));
+                }
+                else
+                {
+                    SimRouteRisk.Apply(advice, LocalContext.GetMe(RunManager.Instance.DebugOnlyGetState()));
+                    if (advice.Path.Count > 0)
+                    {
+                        // Map advice: name the rooms the route and the next choices hold.
+                        SimMapForesight.Apply(advice);
+                    }
+                }
                 _lastBestLabel = advice.Options.FirstOrDefault(o => o.IsBest)?.Label
                                  ?? advice.Options.FirstOrDefault()?.Label;
                 _lastBest = advice.Best;
                 _lastBestNote = advice.Note;
+                SimWatchdog.OnAdviceNote(advice.Note);
 
                 SimHud.Instance.SetAdvisorStatus(SimAdvisorStatus.Connected);
                 RunState? runState = RunManager.Instance.DebugOnlyGetState();
@@ -1530,6 +1547,11 @@ internal sealed class SimAdvisor
         {
             if (SimRuntime.Mode != SimMode.Advisor)
             {
+                return;
+            }
+            if (SimMultiplayer.Refuse("AI moves"))
+            {
+                SetAutoPlay(false);
                 return;
             }
             SimBestAction? best = _lastBest;
@@ -1968,7 +1990,7 @@ internal sealed class SimAdvisor
                        $"last {ChoiceWindow} choices; stopping instead of looping.");
             SimActionLog.Note(
                 $"stuck in a loop on {current.ScreenName} — the same choice came round {seen} times; " +
-                "finish this screen by hand (F7 again to resume)");
+                "finish this screen by hand (Ctrl+Shift+P again to resume)");
             SetAutoPlay(false);
             _recentScreenChoices.Clear();
             return;
@@ -2049,9 +2071,13 @@ internal sealed class SimAdvisor
     /// executed automatically until toggled off / mode leaves Advisor.</summary>
     public void ToggleAutoPlay()
     {
+        if (!_autoPlay && SimMultiplayer.Refuse("AI auto-play"))
+        {
+            return;
+        }
         SetAutoPlay(!_autoPlay);
-        Logger.Log($"[SimAdvisor] Auto-play {(_autoPlay ? "ON (F7 to stop)" : "off")}");
-        SimActionLog.Note($"Auto-play {(_autoPlay ? "ON (F7 to stop)" : "off")}");
+        Logger.Log($"[SimAdvisor] Auto-play {(_autoPlay ? "ON (Ctrl+Shift+P to stop)" : "off")}");
+        SimActionLog.Note($"Auto-play {(_autoPlay ? "ON (Ctrl+Shift+P to stop)" : "off")}");
         if (!_autoPlay)
         {
             return;
@@ -2077,6 +2103,17 @@ internal sealed class SimAdvisor
     /// <see cref="SimRuntime.AdvisorAutoplayArmed"/>, which gates the
     /// Wait/Anim speed patches for the unattended advisor-autoplay lane.
     /// Disarming immediately restores human-speed animation.</summary>
+    /// <summary>A multiplayer run started (SimMultiplayer): the AI must not
+    /// act on the shared game.</summary>
+    public void StopAutoPlayForMultiplayer()
+    {
+        if (_autoPlay)
+        {
+            SetAutoPlay(false);
+            Logger.Log("[SimAdvisor] Auto-play off: multiplayer run.");
+        }
+    }
+
     private void SetAutoPlay(bool value)
     {
         _autoPlay = value;
@@ -2157,7 +2194,7 @@ internal sealed class SimAdvisor
             {
                 return;
             }
-            // 0.6 s is the "human can read it and press F7 to veto" grace.
+            // 0.6 s is the "human can read it and press Ctrl+Shift+P to veto" grace.
             // Unattended, there is no reader; 0.15 s still decouples the
             // press from the advice render (same-frame execution was never
             // exercised) without paying half a second per decision.

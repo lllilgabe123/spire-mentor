@@ -52,6 +52,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import realgame_foresight
 import realgame_hand_select
 import runtime_paths
 from enemy_labels import enemy_label
@@ -107,6 +108,10 @@ HONEST_SEARCH = {
 #: autopsy: the mod sends ``combat_ended`` and its Advisor-mode ``game_over``
 #: only to an advisor at 2 or above.
 ADVISOR_CAPABILITIES = {"coach": 2}
+
+#: How the fight-advice note names the search mode; serve() switches it for
+#: --fight-sight clairvoyant.
+FIGHT_SIGHT_LABEL = "beliefdraw"
 
 # Upper bound on root-parallel workers for the combat search. Beyond ~8 the
 # per-tree budget gets thin enough to cost decision quality faster than the
@@ -340,7 +345,7 @@ def build_advice(
             }
         )
     best_action = _best_to_action(best, state)
-    note = f"MCTS {sims} sims · beliefdraw"
+    note = f"MCTS {sims} sims · {FIGHT_SIGHT_LABEL}"
     if vetoed:
         # Loud on purpose: every one of these is a live disagreement between
         # the mirror and the game, and this note is the only place it is
@@ -368,7 +373,11 @@ def build_advice(
 
 
 def compute_combat_advice(
-    state: dict[str, Any], cfg: RecommendConfig, sims: int, mirror: Any = None
+    state: dict[str, Any],
+    cfg: RecommendConfig,
+    sims: int,
+    mirror: Any = None,
+    foresight: bool = True,
 ) -> tuple[dict[str, Any], Any, RecommendConfig, list[dict[str, Any]]]:
     """One full search for one ``advice_request`` wrapping a combat board.
 
@@ -414,6 +423,14 @@ def compute_combat_advice(
         seed=call_cfg.seed,
         ascension=call_cfg.ascension,
     )
+    # Co-op (personal build): the mod sends the teammates' share of this
+    # fight's damage; the search plans against enemies scaled down by it
+    # (realgame_foresight.scale_for_teammate). `real_wire` keeps the true HP
+    # for the forecast.
+    coop = state.get("coop") or {}
+    share = float(coop.get("teammate_share") or 0.0)
+    real_wire = wire
+    wire = realgame_foresight.scale_for_teammate(wire, share)
     live = mirror.on_combat_board(wire, state) if mirror is not None else None
     if live is not None and live.state.pending_choice() is not None:
         # The world is asking for a COMBAT action, so it is not showing a
@@ -471,10 +488,76 @@ def compute_combat_advice(
             common_random_numbers=call_cfg.common_random_numbers,
         )
     tags = tags_from_result(result, wire["deck"]["hand"])
-    pv = _pv_labels(list(result.get("pv") or [])[:4], state)
+    kill_note = None
+    try:
+        tags, kill_note = realgame_foresight.keep_kill_reward_card(
+            sts2_rs, tags, sts2_rs.state_from_dict(real_wire), real_wire["deck"]["hand"], state.get("hand") or []
+        )
+    except Exception as exc:
+        logger.warning("kill-reward check failed: %s", exc)
+    # The search's line starts with the move it ranked first; after a re-rank
+    # it would name the card the advice just said to hold.
+    pv = None if kill_note else _pv_labels(list(result.get("pv") or [])[:4], state)
     advice = build_advice(tags, state, sims=sims, pv=pv)
     rows = combat_rows(result, headless, advice)
+    if foresight:
+        _add_foresight(advice, state, real_wire, coop, share, cfg, sims)
+    if kill_note:
+        advice.setdefault("forecast_lines", []).append(kill_note)
     return advice, cs, call_cfg, rows
+
+
+#: Search budget for a teammate's suggested turn: a hint to call out on
+#: voice, not the move you play, so it gets a fraction of yours.
+TEAMMATE_SIMS = 3000
+
+
+def _add_foresight(
+    advice: dict[str, Any],
+    state: dict[str, Any],
+    real_wire: dict[str, Any],
+    coop: dict[str, Any],
+    share: float,
+    cfg: RecommendConfig,
+    sims: int,
+) -> None:
+    """Attach the personal-build extras to combat ``advice``, each on its own
+    so one failing never costs the move advice: the end-turn forecast and
+    enemy timeline (``forecast_lines``/``forecast_danger``), the co-op note,
+    and each teammate's best turn (``teammate_tips``)."""
+    import sts2_rs
+
+    try:
+        names = [e.get("name") for e in state.get("enemies") or []]
+        fc = realgame_foresight.forecast(sts2_rs, sts2_rs.state_from_dict(real_wire), real_wire, names)
+        advice["forecast_lines"] = fc["lines"]
+        advice["forecast_danger"] = fc["danger"]
+    except Exception as exc:
+        logger.warning("forecast failed: %s", exc)
+    if share > 0:
+        advice["coop_note"] = (
+            f"co-op: your teammate has done {share:.0%} of the damage this fight; advice plans with that"
+        )
+    tips = []
+    for mate in coop.get("teammates") or []:
+        board = mate.get("board")
+        if not isinstance(board, dict):
+            continue
+        try:
+            board = dict(board)
+            # From the teammate's seat, everyone else's share is the rest.
+            board["coop"] = {"teammate_share": max(0.0, 1.0 - share)}
+            mate_advice, *_ = compute_combat_advice(
+                board, cfg, min(sims, TEAMMATE_SIMS), None, foresight=False
+            )
+            line = mate_advice.get("pv") or []
+            best = (mate_advice.get("best") or {}).get("label")
+            what = " -> ".join(line[:4]) if line else (best or "end turn")
+            tips.append(f"{mate.get('name') or 'Teammate'}: {what}")
+        except Exception as exc:
+            logger.warning("teammate advice failed: %s", exc)
+    if tips:
+        advice["teammate_tips"] = tips
 
 
 def _row_key(d: dict[str, Any]) -> tuple[Any, Any]:
@@ -866,7 +949,9 @@ def compute_screen_advice(
         note += " · scored as a deck pick; this copy only lasts the fight"
 
     advice = {"note": note, "options": options, "best": best}
-    if advice_for in _HAND_BACK_SURFACES:
+    # A chest with a single relic is not a pick (solo chests offer one): taking
+    # it needs no policy, so autoplay should not stop there.
+    if advice_for in _HAND_BACK_SURFACES and not (advice_for == "treasure" and len(options) <= 1):
         advice["hand_back"] = _HAND_BACK_SURFACES[advice_for]
 
     if advice_for == "map_select":
@@ -1285,13 +1370,28 @@ def build_coach(
 
 
 def serve(args: argparse.Namespace) -> None:
-    cfg = RecommendConfig(
-        sims=args.sims,
-        threads=args.threads,
-        hidden_info=HONEST_SEARCH["hidden_info"],
-        c_puct=HONEST_SEARCH["c_puct"],
-        draw_widening_c=HONEST_SEARCH["draw_widening_c"],
-    )
+    if args.fight_sight == "clairvoyant":
+        # Personal build: the fight search keeps the TRUE draw order the mod
+        # sends (and the RNG cursors) instead of blindfolding them. Measured
+        # by the clairvoyance-rent re-anchor (sts2-rs/docs/experiments/
+        # 2026-07-12-clairvoyance-rent-reanchor.md) at +25.5pp full-run wins
+        # for the PPO champion. c_puct/draw widening defer to the mode (1.4 /
+        # engine default), the clairvoyant-era tuning.
+        import combat_mirror
+
+        combat_mirror.ALLOW_CLAIRVOYANT = True
+        global FIGHT_SIGHT_LABEL
+        FIGHT_SIGHT_LABEL = "sees the future"
+        cfg = RecommendConfig(sims=args.sims, threads=args.threads, hidden_info="clairvoyant")
+    else:
+        cfg = RecommendConfig(
+            sims=args.sims,
+            threads=args.threads,
+            hidden_info=HONEST_SEARCH["hidden_info"],
+            c_puct=HONEST_SEARCH["c_puct"],
+            draw_widening_c=HONEST_SEARCH["draw_widening_c"],
+        )
+    logger.info("fight sight: %s (hidden_info=%s)", args.fight_sight, cfg.hidden_info)
     log = AdvisorLog(Path(args.log_dir))
     logger.info("advisor log: %s", log.path)
     wlog = WorkbenchRunLogger(args.workbench_logs)
@@ -1941,6 +2041,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Seconds after an end turn within which the coach must finish "
         "grading that turn; past it, or once the next turn's advice is "
         "requested, the turn stays ungraded and silent (never a late chip).",
+    )
+    parser.add_argument(
+        "--fight-sight",
+        choices=("honest", "clairvoyant"),
+        default="honest",
+        help="honest: the deployed blindfolded fight search. clairvoyant: plan "
+        "fights with the true draw order and RNG cursors the mod reads.",
     )
     parser.add_argument(
         "--smoke",

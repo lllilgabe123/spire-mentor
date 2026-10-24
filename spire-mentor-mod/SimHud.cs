@@ -80,6 +80,10 @@ internal sealed class SimAdviceOption
     /// <summary>Hand index for card options (drives the per-card label).</summary>
     public int? CardIndex;
 
+    /// <summary>Enemy index for targeted card options (SimTieBreak re-points
+    /// the recommendation with it).</summary>
+    public int? TargetIndex;
+
     /// <summary>Map-graph coordinate for map options (drives the map marker).</summary>
     public int? Col;
     public int? Row;
@@ -132,6 +136,29 @@ internal sealed class SimAdvice
     public double? PWin;
     public bool LowConfidence;
     public SimBestAction? Best;
+
+    /// <summary>Set by SimTieBreak when the top moves are within the search's
+    /// noise ("about equal: Strike ≈ Inflame+ → Inflame+ first ...").</summary>
+    public string? TieNote;
+
+    /// <summary>Set by SimRouteRisk when the recommended map route's own HP
+    /// forecast enters an Elite or reaches the boss weak.</summary>
+    public string? RiskNote;
+
+    /// <summary>Personal-build foresight from the advisor
+    /// (realgame_foresight.py): what ending the turn now does and the
+    /// enemies' next moves. <see cref="ForecastDanger"/>: ending now is lethal.</summary>
+    public readonly List<string> ForecastLines = new();
+    public bool ForecastDanger;
+
+    /// <summary>Set by SimMapForesight on map advice: the rooms the route and
+    /// the next choices hold.</summary>
+    public readonly List<string> PreviewLines = new();
+
+    /// <summary>Co-op: the teammate share the advice planned with, and each
+    /// teammate's suggested turn to call out.</summary>
+    public string? CoopNote;
+    public readonly List<string> TeammateTips = new();
     public readonly List<SimAdviceOption> Options = new();
     public readonly List<string> Pv = new();
 
@@ -209,6 +236,7 @@ internal sealed class SimAdvice
                     IsBest = ReadBool(o, "is_best") ?? false,
                     LowConfidence = ReadBool(o, "low_confidence") ?? false,
                     CardIndex = ReadInt(o, "card_index"),
+                    TargetIndex = ReadInt(o, "target_index"),
                     Col = ReadInt(o, "col"),
                     Row = ReadInt(o, "row"),
                 });
@@ -275,11 +303,33 @@ internal sealed class SimAdvice
             }
         }
 
+        ReadStrings(el, "forecast_lines", advice.ForecastLines);
+        ReadStrings(el, "teammate_tips", advice.TeammateTips);
+        advice.ForecastDanger = el.TryGetProperty("forecast_danger", out JsonElement fd) && fd.ValueKind == JsonValueKind.True;
+        if (el.TryGetProperty("coop_note", out JsonElement cn) && cn.ValueKind == JsonValueKind.String)
+        {
+            advice.CoopNote = cn.GetString();
+        }
+
         return advice;
     }
 
     private static string? ReadString(JsonElement el, string name) =>
         el.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+    private static void ReadStrings(JsonElement el, string name, List<string> into)
+    {
+        if (el.TryGetProperty(name, out JsonElement arr) && arr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement s in arr.EnumerateArray())
+            {
+                if (s.ValueKind == JsonValueKind.String)
+                {
+                    into.Add(s.GetString() ?? "");
+                }
+            }
+        }
+    }
 
     private static double? ReadDouble(JsonElement el, string name) =>
         el.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : null;
@@ -678,7 +728,9 @@ internal sealed class SimHud
         bool hasEval = advice.BestQ != null || advice.PWin != null;
         bool wantPanel = (SpireMentorModConfig.ShowWinBar && hasEval) ||
                          (SpireMentorModConfig.ShowRankedList && hasRanked) ||
-                         advice.Pv.Count > 0;
+                         advice.Pv.Count > 0 || advice.RiskNote != null ||
+                         advice.ForecastLines.Count > 0 || advice.TeammateTips.Count > 0 ||
+                         advice.PreviewLines.Count > 0;
         if (!wantPanel || _adviceRows == null || !GodotObject.IsInstanceValid(_adviceRows))
         {
             if (_advicePanel != null && GodotObject.IsInstanceValid(_advicePanel))
@@ -689,6 +741,46 @@ internal sealed class SimHud
         }
 
         _advicePanel!.Visible = true;
+
+        if (advice.RiskNote != null)
+        {
+            // First, so it is read before the ranking it qualifies.
+            Label risk = SmallLabel(advice.RiskNote, new Color(1f, 0.6f, 0.35f));
+            risk.CustomMinimumSize = new Vector2(400, 0);
+            risk.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            _adviceRows.AddChildSafely(risk);
+        }
+
+        foreach (string preview in advice.PreviewLines)
+        {
+            Label p = SmallLabel(preview, new Color(0.8f, 0.75f, 1f));
+            p.CustomMinimumSize = new Vector2(400, 0);
+            p.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            _adviceRows.AddChildSafely(p);
+        }
+
+        // Foresight first too: a lethal end turn is the one thing to read
+        // before anything else. Danger red, otherwise a quiet blue-grey.
+        for (int i = 0; i < advice.ForecastLines.Count; i++)
+        {
+            bool alarm = i == 0 && advice.ForecastDanger;
+            Label line = SmallLabel((alarm ? "⚠ " : "") + advice.ForecastLines[i],
+                alarm ? new Color(1f, 0.3f, 0.3f) : new Color(0.7f, 0.8f, 0.9f));
+            line.CustomMinimumSize = new Vector2(400, 0);
+            line.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            _adviceRows.AddChildSafely(line);
+        }
+        if (advice.CoopNote != null)
+        {
+            _adviceRows.AddChildSafely(SmallLabel(advice.CoopNote, new Color(0.6f, 0.85f, 0.6f)));
+        }
+        foreach (string tip in advice.TeammateTips)
+        {
+            Label t = SmallLabel("Tell " + tip, new Color(0.55f, 0.95f, 0.75f));
+            t.CustomMinimumSize = new Vector2(400, 0);
+            t.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            _adviceRows.AddChildSafely(t);
+        }
 
         if (SpireMentorModConfig.ShowWinBar && hasEval)
         {
@@ -727,7 +819,15 @@ internal sealed class SimHud
             // the Qs converge and the order is noise -- printing them without
             // comment invites reading a 0.003 gap as a real preference.
             double? spread = QSpread(ranked, maxRows);
-            if (spread != null && spread.Value < 0.01)
+            if (advice.TieNote != null)
+            {
+                // SimTieBreak names the tied moves and the pick it made.
+                Label tie = SmallLabel(advice.TieNote, new Color(0.85f, 0.85f, 0.6f));
+                tie.CustomMinimumSize = new Vector2(400, 0);
+                tie.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+                _adviceRows.AddChildSafely(tie);
+            }
+            else if (spread != null && spread.Value < 0.01)
             {
                 _adviceRows.AddChildSafely(SmallLabel(
                     "top moves within ±0.01 — the search rates them equivalent",

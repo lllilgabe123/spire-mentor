@@ -56,6 +56,10 @@ public static class SimSpeed
     public static void Apply(double scale, bool showVfx)
     {
         double value = Math.Clamp(Math.Round(scale, 1), Min, Max);
+        if (Math.Abs(value - 1.0) > 1e-9 && SimMultiplayer.Refuse("Game speed"))
+        {
+            return;
+        }
         if (NGame.IsMainThread())
         {
             ApplyOnMainThread(value, showVfx);

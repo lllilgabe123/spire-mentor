@@ -11076,6 +11076,36 @@ fn potion_weight() -> f32 {
     })
 }
 
+/// Low-HP caution λ (`STS2_LOW_HP_CAUTION`, default 0 = off): the weight of
+/// HP below half of max in the victory score. Read once, panics on a bad
+/// value like [`potion_weight`].
+fn low_hp_caution() -> f32 {
+    static CAUTION: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *CAUTION.get_or_init(|| match std::env::var("STS2_LOW_HP_CAUTION") {
+        Err(_) => 0.0,
+        Ok(s) => {
+            let w: f32 = s
+                .parse()
+                .unwrap_or_else(|_| panic!("STS2_LOW_HP_CAUTION={s:?} is not a valid f32"));
+            assert!(w.is_finite() && w >= 0.0, "STS2_LOW_HP_CAUTION={w} must be finite and non-negative");
+            w
+        }
+    })
+}
+
+/// End-of-fight HP as the victory score sees it under [`low_hp_caution`]:
+/// `(hp + λ·min(hp, max/2)) / (1 + λ/2)`. Zero and full HP map to
+/// themselves, so the score's range is unchanged; each HP point below half of
+/// max is worth `(1+λ)/(1+λ/2)` of one above it -- losing the last half of
+/// your HP costs more than losing the first. λ = 0 is the identity.
+fn cautious_hp(hp: f32, max_hp: f32) -> f32 {
+    let lambda = low_hp_caution();
+    if lambda == 0.0 || max_hp <= 0.0 {
+        return hp;
+    }
+    (hp + lambda * hp.min(max_hp / 2.0)) / (1.0 + lambda / 2.0)
+}
+
 /// In-progress (depth-cap leaf) potion price, tanh-scale — used by the narrow
 /// [`evaluate_in_progress_raw`] and the wide `evaluate_in_progress_wide`. The
 /// tuned base [`POTIONS_WEIGHT`] (`= 2.0`, from the `tidt` empirical refit,
@@ -11170,7 +11200,9 @@ const VICTORY_HP_UNIT: f32 = 0.5 * 100.0 / (VICTORY_RAW_MAX - VICTORY_RAW_MIN);
 /// A/B is the arbiter of whether the trade-off nets out).
 #[must_use]
 pub fn victory_hp_surplus(state: &CombatState) -> f32 {
-    (hp_weight() - 1.0) * state.player.current_hp.max(0) as f32 * VICTORY_HP_UNIT
+    (hp_weight() - 1.0)
+        * cautious_hp(state.player.current_hp.max(0) as f32, state.player.max_hp.max(0) as f32)
+        * VICTORY_HP_UNIT
 }
 
 /// HP-equivalent price of ONE run-deck card a thief walks off with
@@ -11589,7 +11621,7 @@ const WASTED_BLOCK_NORM: f32 = 50.0;
 /// and can be folded in once the per-turn counters land.
 #[must_use]
 pub fn evaluate_victory(state: &CombatState) -> f32 {
-    let hp = state.player.current_hp.max(0) as f32;
+    let hp = cautious_hp(state.player.current_hp.max(0) as f32, state.player.max_hp.max(0) as f32);
     let potions = state.player.potions.len() as f32;
     let round = f32::from(state.round);
     let raw = 100.0 * (35.0 + hp + potions * potion_weight() - round * 0.01);
@@ -11613,8 +11645,8 @@ pub fn evaluate_victory(state: &CombatState) -> f32 {
 /// keeps every win inside the `[0.5, 1.0]` range the search is tuned for.
 #[must_use]
 pub fn evaluate_victory_carry(state: &CombatState, hp_carry: f32, potion_carry: f32) -> f32 {
-    let hp = state.player.current_hp.max(0) as f32;
     let max_hp = state.player.max_hp.max(0) as f32;
+    let hp = cautious_hp(state.player.current_hp.max(0) as f32, max_hp);
     let potions = state.player.potions.len() as f32;
     let hp_eff = hp_carry * hp + (1.0 - hp_carry) * max_hp.max(hp);
     let potions_eff = potion_carry * potions + (1.0 - potion_carry) * potions.max(3.0);

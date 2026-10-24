@@ -58,7 +58,7 @@ internal static class SimWorkbenchLink
         {
             SimActionLog.Note(configured.Length > 0
                 ? $"Workbench is not reachable at {configured} (the Workbench URL setting)."
-                : "Workbench is not reachable — turn the AI coach on (F8): the advisor hosts it. " +
+                : "Workbench is not reachable — turn the AI coach on (Insert): the advisor hosts it. " +
                   "In a dev install, `just workbench` in sts2-pycli starts the Python one.");
             Logger.Log($"[SimWorkbenchLink] Health probe failed for {string.Join(", ", candidates)}; not opening a browser.");
             return;

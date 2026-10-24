@@ -115,18 +115,18 @@ internal static class SimHelp
                 // stale-config safety net: installs made before 0.2.1 have
                 // auto_start=true sitting in %LOCALAPPDATA%\SpireMentor.
                 ? "[color=#ff9d5c][b]Spire Mentor: AUTOPILOT IS ARMED[/b] — the AI will play by itself as soon as " +
-                  "the advisor connects. Press [b]F8[/b] to take the controls back, or set " +
-                  "[i]auto_start[/i] to false in SpireMentor.conf. [b]F1[/b] for help.[/color]"
+                  "the advisor connects. Press [b]Insert[/b] to take the controls back, or set " +
+                  "[i]auto_start[/i] to false in SpireMentor.conf. [b]Home[/b] for help.[/color]"
                 : SimRuntime.CoachStyleActive
                     ? $"[color=#9aa3b8]Spire Mentor {MainFile.ModVersion} loaded — [b]Coach[/b]: nothing shows " +
                       "before you act, [b]F5[/b] peeks at the AI's next pick, and a note afterwards says where " +
-                      "you differed. [b]F8[/b] turns the AI off, the toolbar switches Hints / Coach, [b]F1[/b] for help.[/color]"
+                      "you differed. [b]Insert[/b] turns the AI off, the toolbar switches Hints / Coach, [b]Home[/b] for help.[/color]"
                 : SimRuntime.Mode == SimMode.Advisor
                     ? $"[color=#9aa3b8]Spire Mentor {MainFile.ModVersion} loaded — [b]Hints[/b]: the AI rates " +
-                      "your options while you decide. [b]F8[/b] turns the AI off, the toolbar switches Hints / Coach, " +
-                      "[b]F1[/b] for help.[/color]"
+                      "your options while you decide. [b]Insert[/b] turns the AI off, the toolbar switches Hints / Coach, " +
+                      "[b]Home[/b] for help.[/color]"
                     : $"[color=#9aa3b8]Spire Mentor {MainFile.ModVersion} loaded — click the [b]Spire Mentor[/b] " +
-                      "strip in the top-left to turn the AI coach on, or press [b]F1[/b] for help.[/color]";
+                      "strip in the top-left to turn the AI coach on, or press [b]Home[/b] for help.[/color]";
             Reposition();
             _hint.Visible = true;
             Logger.Log($"[SimHelp] Boot hint shown (armed={armed}) at {_hint.Position} " +
@@ -160,17 +160,17 @@ internal static class SimHelp
         sb.Append("Mode: ").Append(mode).Append("\n\n");
 
         sb.Append("[b]Keys[/b]\n");
-        Row(sb, "F8", "turn the AI on / off (from Autopilot: take the controls back); the toolbar's Hints / Coach button switches style");
+        Row(sb, "Insert", "turn the AI on / off (from Autopilot: take the controls back); the toolbar's Hints / Coach button switches style");
         Row(sb, "F5", "Coach: peek at the AI's pick for just the next decision (also the toolbar's Peek button)");
-        Row(sb, "F6", "let the AI take just this one decision");
-        Row(sb, "F7", "let the AI keep playing until you stop it (press again to stop)");
+        Row(sb, "Ctrl+Shift+N", "let the AI take just this one decision");
+        Row(sb, "Ctrl+Shift+P", "let the AI keep playing until you stop it (press again to stop)");
         Row(sb, "F4", "show / hide the HUD");
         Row(sb, "F3", "action log — what was played, and what was advised at the time");
         Row(sb, "F9 / F10", $"game speed down / up 0.1x  (now {SimSpeed.Desired:0.0}x)");
         Row(sb, "Ctrl+Z", "undo to the start of this combat turn");
         Row(sb, "Ctrl+Shift+Z", "rewind to the start of this room");
         Row(sb, "Ctrl+Shift+C", "copy this position — paste it into the workbench to explore it");
-        Row(sb, "F1", "this panel");
+        Row(sb, "Home", "this panel");
 
         sb.Append("\n[b]Toolbar[/b]\n");
         sb.Append("[color=#c8ccd4]The [b]Spire Mentor[/b] strip in the top-left does everything the keys do, ")
@@ -206,7 +206,7 @@ internal static class SimHelp
         sb.Append("[color=#c8ccd4]Config:  %LOCALAPPDATA%\\SpireMentor\\SpireMentor.conf\n")
           .Append("Logs:    %LOCALAPPDATA%\\SpireMentor\\advisor_stdout.log[/color]\n");
 
-        sb.Append("\n[color=#5b6070]F1 closes this.[/color]");
+        sb.Append("\n[color=#5b6070]Home closes this.[/color]");
         return sb.ToString();
     }
 
@@ -315,7 +315,7 @@ internal static class SimHelp
         _panel = panel;
         _text = text;
         _hint = hint;
-        Logger.Log("[SimHelp] Help layer created (F1).");
+        Logger.Log("[SimHelp] Help layer created (Home).");
         return true;
     }
 

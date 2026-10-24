@@ -215,7 +215,7 @@ internal sealed class SimToolbar
             buttons.AddThemeConstantOverride("separation", 4);
 
             _coach = SimUiKit.MakeButton("AI off",
-                "Turn the AI coach on / off (F8)",
+                "Turn the AI coach on / off (Insert)",
                 SimActions.ToggleAdvisor, SetHint);
             buttons.AddChild(_coach);
 
@@ -232,12 +232,12 @@ internal sealed class SimToolbar
             buttons.AddChild(_peek);
 
             _aiOnce = SimUiKit.MakeButton("AI once",
-                "Let the AI take just this one decision (F6) -- needs the coach on",
+                "Let the AI take just this one decision (Ctrl+Shift+N) -- needs the coach on",
                 () => SimActions.AiOnce("The AI-once button"), SetHint);
             buttons.AddChild(_aiOnce);
 
             _aiAuto = SimUiKit.MakeButton("AI auto",
-                "Let the AI keep playing until you stop it (F7) -- needs the coach on",
+                "Let the AI keep playing until you stop it (Ctrl+Shift+P) -- needs the coach on",
                 () => SimActions.ToggleAutoplay("The AI-auto button"), SetHint);
             buttons.AddChild(_aiAuto);
 
@@ -266,12 +266,12 @@ internal sealed class SimToolbar
                     new("⟲⟲ Back", "Rewind one room further back", SimActions.BackOneRoom),
                 }, SetHint));
             buttons.AddChild(SimUiKit.MakeMenuButton("Panels",
-                "Log (F3) · HUD (F4) · Help (F1) · Settings (works mid-run)",
+                "Log (F3) · HUD (F4) · Help (Home) · Settings (works mid-run)",
                 new SimUiKit.MenuEntry[]
                 {
                     new("Log  (F3)", "Show / hide the action log (F3)", SimActions.ToggleLog),
                     new("HUD  (F4)", "Show / hide the advice HUD (F4)", SimActions.ToggleHud),
-                    new("Help  (F1)", "What everything does (F1)", SimActions.ToggleHelp),
+                    new("Help  (Home)", "What everything does (Home)", SimActions.ToggleHelp),
                     new("Settings", "Mod settings -- works mid-run (the main-menu page is run-locked)", SimSettingsPanel.Instance.Toggle),
                 }, SetHint));
             buttons.AddChild(SimUiKit.MakeMenuButton("Workbench",
@@ -503,7 +503,7 @@ internal sealed class SimToolbar
         // whole run with the AI's modifiers on (2026-08-05).
         if (SimRuntime.Mode == SimMode.Autopilot && !SimRuntime.AutopilotEngaged)
         {
-            status += " (idle — waiting for the AI client; F8 or 'Take over')";
+            status += " (idle — waiting for the AI client; Insert or 'Take over')";
         }
         if (_advisorStatus != SimAdvisorStatus.None)
         {

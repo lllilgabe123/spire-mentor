@@ -137,6 +137,7 @@ public static class SimRuntime
     /// </summary>
     public static bool AutopilotEngaged =>
         Mode == SimMode.Autopilot &&
+        !SimMultiplayer.InRun &&
         SimAutoSlayer.IsActive &&
         BridgeServer.Instance.IsClientConnected;
 

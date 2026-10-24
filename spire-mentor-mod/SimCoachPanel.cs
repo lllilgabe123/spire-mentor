@@ -241,7 +241,9 @@ internal sealed class SimCoachPanel
     /// (every tick: the viewport and the toolbar can move).</summary>
     private void Place()
     {
-        if (_panel == null || !GodotObject.IsInstanceValid(_panel))
+        // Not yet in the tree on the first Show: the layer is added deferred
+        // (EnsureLayer), and the ticker places the panel once it is.
+        if (_panel == null || !GodotObject.IsInstanceValid(_panel) || !_panel.IsInsideTree())
         {
             return;
         }

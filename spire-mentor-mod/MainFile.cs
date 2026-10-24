@@ -111,6 +111,24 @@ public static class MainFile
             Logger.Log($"Settings page registration failed (non-fatal): {ex.Message}");
         }
 
+        try
+        {
+            SimMultiplayer.Install();
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"  SKIP: SimMultiplayer - {ex.Message}");
+        }
+
+        try
+        {
+            SimWatchdog.Install();
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"  SKIP: SimWatchdog - {ex.Message}");
+        }
+
         TaskHelper.RunSafely(SimVfxCap.InstallWhenReadyAsync());
         TaskHelper.RunSafely(SimHotkeys.InstallWhenReadyAsync());
         TaskHelper.RunSafely(SimToolbar.Instance.InstallWhenReadyAsync());

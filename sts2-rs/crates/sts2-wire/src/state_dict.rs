@@ -1910,14 +1910,16 @@ pub fn card_id_from_python_name(s: &str) -> Option<CardId> {
     // (e.g. `RUPTURE`, `VICIOUS`) resolve against the canonical
     // `RUPTURE_CARD` / `VICIOUS_CARD` ids. Mirrors the same fallback
     // wired into `names::card_id_from_str` via `sts2-rs-u5zc`.
-    if let Some(c) = CardId::all()
-        .iter()
-        .copied()
-        .find(|k| k.to_python_name() == s)
-    {
+    //
+    // v0.111.0: the version-only cards (GH #793, e.g. the MP-only Midnight)
+    // sit outside `CardId::all` (the v0.107.1 universe), as the v0.111.0
+    // powers and potions do. Without the chain a live v0.111.0 co-op
+    // state holding one failed to parse (`$.deck.hand[i]: MIDNIGHT`).
+    let all = || CardId::all().iter().chain(CardId::V0111_ONLY.iter()).copied();
+    if let Some(c) = all().find(|k| k.to_python_name() == s) {
         return Some(c);
     }
-    CardId::all().iter().copied().find(|k| {
+    all().find(|k| {
         let canonical = k.to_python_name();
         canonical.strip_suffix("_CARD") == Some(s)
     })
@@ -4159,6 +4161,18 @@ pub fn var_key_from_wire(name: &str) -> Option<VarKey> {
 mod tests {
     use super::*;
     use sts2_content::monster_dispatch::build_ai;
+
+    /// Every v0.111.0-only card resolves from its wire name (a live co-op
+    /// state holding the MP-only Midnight used to fail to parse), and a
+    /// v0.107.1 name is unaffected.
+    #[test]
+    fn card_id_from_python_name_resolves_v0111_only_cards() {
+        for id in CardId::V0111_ONLY {
+            assert_eq!(card_id_from_python_name(id.to_python_name()), Some(id), "{id:?}");
+        }
+        assert_eq!(card_id_from_python_name("MIDNIGHT"), Some(CardId::Midnight));
+        assert_eq!(card_id_from_python_name("STRIKE_IRONCLAD"), Some(CardId::StrikeIronclad));
+    }
     /// Every [`WIRE_MOVE_STATE_ALIASES`] target must exist as a move
     /// state on the freshly-built AI of its monster — a content-side
     /// state rename would otherwise silently revive the inert-enemy

@@ -857,6 +857,10 @@ def _default_log_path() -> Path:
 #: the search root. Refused by :meth:`CombatMirror.search`.
 _CLAIRVOYANT_PROFILES = frozenset({"clairvoyant"})
 
+#: Set by the real-game advisor's ``--fight-sight clairvoyant``: the search is
+#: then MEANT to see the mirror's ground truth, so the refusal stands down.
+ALLOW_CLAIRVOYANT = False
+
 
 class CombatMirror:
     """One live engine state per fight, re-synchronized from reality.
@@ -2077,7 +2081,7 @@ class CombatMirror:
         cfg = cfg or self.cfg
         if seed is not None:
             cfg = replace(cfg, seed=seed)
-        if cfg.hidden_info in _CLAIRVOYANT_PROFILES:
+        if cfg.hidden_info in _CLAIRVOYANT_PROFILES and not ALLOW_CLAIRVOYANT:
             raise ValueError(
                 "CombatMirror.search: refusing hidden_info="
                 f"{cfg.hidden_info!r}. The mirror holds the TRUE draw order and "

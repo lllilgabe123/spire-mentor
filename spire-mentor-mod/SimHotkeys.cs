@@ -9,13 +9,13 @@
 // which is what we want: mode/speed/HUD control should work on any screen.
 //
 // Defaults (chosen from keys the game leaves unbound):
-//   F1  help panel -- mode, every key, where the files are
-//   F4  toggle HUD visibility
-//   F3  toggle the action-log panel
-//   F5  Coach style: peek at the AI's pick for the next decision only
-//   F6  AI takes this decision (advisor mode, combat)
-//   F7  AI plays until I stop (toggle)
-//   F8  AI on / off in the current style (from Autopilot: stop the AI and take over)
+//   Home          help panel -- mode, every key, where the files are
+//   F4            toggle HUD visibility
+//   F3            toggle the action-log panel
+//   F5            Coach style: peek at the AI's pick for the next decision only
+//   Ctrl+Shift+N  AI takes this decision (advisor mode, combat)
+//   Ctrl+Shift+P  AI plays until I stop (toggle)
+//   Insert        AI on / off in the current style (from Autopilot: stop the AI and take over)
 //   F9  game speed down 0.1x
 //   F10 game speed up 0.1x
 //
@@ -83,13 +83,20 @@ public static class SimHotkeys
                 return;
             }
 
-            RegisterAction(ActionHelp, Key.F1);
+            // Help, AI once / auto and AI on/off moved off F1/F6/F7/F8: other
+            // installed mods (BetterSpire2, Damage Meter, Wait for Vuln, Low
+            // Spec Spire, Who Carried?, Map Enhance, Host Tools) listen to
+            // those. Home and Insert are bound by neither the game nor them;
+            // N and P are not game letters, so the Ctrl+Shift chords cannot
+            // also fire a game action (NHotkeyManager uses IsActionPressed,
+            // which ignores extra modifiers).
+            RegisterAction(ActionHelp, Key.Home);
             RegisterAction(ActionToggleHud, Key.F4);
             RegisterAction(ActionToggleLog, Key.F3);
             RegisterAction(ActionPeek, Key.F5);
-            RegisterAction(ActionAiOnce, Key.F6);
-            RegisterAction(ActionAiAuto, Key.F7);
-            RegisterAction(ActionToggleAdvisor, Key.F8);
+            RegisterAction(ActionAiOnce, Key.N, ctrl: true, shift: true);
+            RegisterAction(ActionAiAuto, Key.P, ctrl: true, shift: true);
+            RegisterAction(ActionToggleAdvisor, Key.Insert);
             RegisterAction(ActionSpeedDown, Key.F9);
             RegisterAction(ActionSpeedUp, Key.F10);
             // Ctrl-chorded, not F-keys: Z alone is a card hotkey surface and
@@ -105,8 +112,8 @@ public static class SimHotkeys
             manager.PushHotkeyPressedBinding(ActionToggleHud, SimActions.ToggleHud);
             manager.PushHotkeyPressedBinding(ActionToggleLog, SimActions.ToggleLog);
             manager.PushHotkeyPressedBinding(ActionPeek, SimActions.Peek);
-            manager.PushHotkeyPressedBinding(ActionAiOnce, () => SimActions.AiOnce("F6 (AI takes this decision)"));
-            manager.PushHotkeyPressedBinding(ActionAiAuto, () => SimActions.ToggleAutoplay("F7 (AI plays until you stop)"));
+            manager.PushHotkeyPressedBinding(ActionAiOnce, () => SimActions.AiOnce("Ctrl+Shift+N (AI takes this decision)"));
+            manager.PushHotkeyPressedBinding(ActionAiAuto, () => SimActions.ToggleAutoplay("Ctrl+Shift+P (AI plays until you stop)"));
             manager.PushHotkeyPressedBinding(ActionToggleAdvisor, SimActions.ToggleAdvisor);
             manager.PushHotkeyPressedBinding(ActionSpeedDown, () => SimActions.NudgeSpeed(-0.1));
             manager.PushHotkeyPressedBinding(ActionSpeedUp, () => SimActions.NudgeSpeed(0.1));
@@ -115,7 +122,7 @@ public static class SimHotkeys
             manager.PushHotkeyPressedBinding(ActionCopyState, SimActions.CopyState);
 
             _installed = true;
-            GD.Print("[SpireMentor] Hotkeys installed: F1=help, F4=HUD, F3=log, F5=peek (Coach), F6=AI once, F7=AI auto, F8=AI on/off, F9/F10=speed -/+, Ctrl+Z=undo turn, Ctrl+Shift+Z=restart room, Ctrl+Shift+C=copy state");
+            GD.Print("[SpireMentor] Hotkeys installed: Home=help, F4=HUD, F3=log, F5=peek (Coach), Ctrl+Shift+N=AI once, Ctrl+Shift+P=AI auto, Insert=AI on/off, F9/F10=speed -/+, Ctrl+Z=undo turn, Ctrl+Shift+Z=restart room, Ctrl+Shift+C=copy state");
         }
         catch (Exception ex)
         {

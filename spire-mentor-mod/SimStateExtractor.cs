@@ -185,8 +185,10 @@ public static class SimStateExtractor
                 ["niche"] = Cursor(rng.Niche),
                 ["combat_orbs"] = Cursor(rng.CombatOrbGeneration),
             };
+            // The local player's streams: in a co-op run Players[0] can be
+            // someone else.
             var prng = (runState?.Players != null && runState.Players.Count > 0)
-                ? runState.Players[0].PlayerRng
+                ? (MegaCrit.Sts2.Core.Context.LocalContext.GetMe(runState) ?? runState.Players[0]).PlayerRng
                 : null;
             if (prng != null)
             {

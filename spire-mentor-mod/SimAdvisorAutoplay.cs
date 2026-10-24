@@ -131,7 +131,7 @@ internal static class SimAdvisorAutoplay
                 {
                     return;
                 }
-                Logger.Log("[SimAdvisorAutoplay] Arming autoplay (same path as F7).");
+                Logger.Log("[SimAdvisorAutoplay] Arming autoplay (same path as Ctrl+Shift+P).");
                 SimAdvisor.Instance.ToggleAutoPlay();
             }));
         }

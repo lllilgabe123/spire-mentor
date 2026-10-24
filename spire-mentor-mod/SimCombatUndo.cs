@@ -106,6 +106,11 @@ internal static class SimCombatUndo
 
     private static async Task UndoTurnAsync(int targetTurn, string? tapeId)
     {
+        if (SimMultiplayer.InRun)
+        {
+            Fail("multiplayer", "undo is off in multiplayer runs");
+            return;
+        }
         if (!SimRestore.TryBegin())
         {
             Fail("undo_busy", "another rewind is already running");

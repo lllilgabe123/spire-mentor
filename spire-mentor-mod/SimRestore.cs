@@ -86,6 +86,11 @@ internal static class SimRestore
 
     private static async Task RestoreAsync(string snapshotId)
     {
+        if (SimMultiplayer.InRun)
+        {
+            Fail(snapshotId, "multiplayer", "rewind is off in multiplayer runs");
+            return;
+        }
         if (!TryBegin())
         {
             Fail(snapshotId, "restore_busy", "another restore is already running");

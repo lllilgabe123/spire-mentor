@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    SpireTestBot: a random-move player for local two-instance multiplayer
+    tests of SpireMentor. Inert unless the game is launched with
+    `-spiretestbot`. Built like SpireMentor.csproj: plain Microsoft.NET.Sdk,
+    referencing the game's own assemblies.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>true</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SpireTestBot</RootNamespace>
+    <AssemblyName>SpireTestBot</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <NoWarn>$(NoWarn);MSB3270</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <SteamRoot>$(registry:HKEY_CURRENT_USER\Software\Valve\Steam@SteamPath)</SteamRoot>
+    <STS2_GAME_DIR Condition="'$(STS2_GAME_DIR)' == '' and Exists('$(SteamRoot)/steamapps/common/Slay the Spire 2')">$(SteamRoot)/steamapps/common/Slay the Spire 2</STS2_GAME_DIR>
+    <Sts2DataDir>$(STS2_GAME_DIR)/data_sts2_windows_x86_64</Sts2DataDir>
+    <ModsPath>$(STS2_GAME_DIR)/mods/</ModsPath>
+  </PropertyGroup>
+
+  <Target Name="CheckGameDir" BeforeTargets="Build">
+    <Error Text="Slay the Spire 2 not found at '$(STS2_GAME_DIR)'. Pass -p:STS2_GAME_DIR=..." Condition="!Exists('$(Sts2DataDir)/sts2.dll')" />
+  </Target>
+
+  <ItemGroup>
+    <Reference Include="sts2"><HintPath>$(Sts2DataDir)/sts2.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="GodotSharp"><HintPath>$(Sts2DataDir)/GodotSharp.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <Target Name="DeploySpireTestBot" AfterTargets="Build" Condition="'$(SkipDeploy)' != 'true'">
+    <MakeDir Directories="$(ModsPath)SpireTestBot" />
+    <Copy SourceFiles="$(TargetDir)SpireTestBot.dll;$(MSBuildProjectDirectory)/SpireTestBot.json" DestinationFolder="$(ModsPath)SpireTestBot/" />
+    <Message Text="SpireTestBot deployed to $(ModsPath)SpireTestBot/" Importance="high" />
+  </Target>
+</Project>
