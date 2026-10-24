@@ -10,13 +10,16 @@
 # (and redoes the arm) if the game starts, and restarts training when done.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-OUT="$HERE/run1"
+OUT="$HERE/run2"
 PYCLI="$LOCALAPPDATA/sm073/sts2-pycli"
 CKPT="$LOCALAPPDATA/sts2train/ironclad_champion_rebuilt.pt"
 SEEDS=${SEEDS:-250}
-ASCS=${ASCS:-"10 9 8"}
+ASCS=${ASCS:-"10 7 5"}
 ARMS=${ARMS:-"base caution pros smith50"}
 mkdir -p "$OUT"
+# One copy at a time: a second start (e.g. a re-armed waiter) exits here.
+mkdir "$OUT/.lock" 2>/dev/null || { echo "another A/B is already running on $OUT"; exit 0; }
+trap 'rmdir "$OUT/.lock"' EXIT
 
 game_running() { tasklist //FI "IMAGENAME eq SlayTheSpire2.exe" | grep -qi SlayTheSpire2; }
 wait_idle() {

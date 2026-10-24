@@ -1,26 +1,35 @@
 """Paired comparison of a run-AI A/B (ab.sh output): every arm against "base".
 
-Per ascension and pooled: win rates on the same seeds, the discordant pairs
-(won only by base / only by the arm), and an exact two-sided McNemar p-value.
+Per ascension and pooled, on the seeds both arms finished without an error:
+win rates, the discordant pairs (won only by base / only by the arm) with an
+exact two-sided McNemar p-value, and the mean floor reached with a paired
+95% interval -- the floor still separates arms at A10, where almost every
+run is lost. Crashed runs ("outcome": "error") are counted and left out.
 
 usage: python compare.py <dir> [arm ...]   (first arm is the baseline)
 """
 import json
 import math
+import statistics
 import sys
 from pathlib import Path
 
 
-def wins(path: Path) -> dict[int, bool]:
-    out = {}
+def runs(path: Path) -> tuple[dict[int, tuple[bool, int]], int]:
+    """{seed: (won, total_floor)} for finished runs, and the error count."""
+    out, errors = {}, 0
     if path.exists():
         for line in path.open(encoding="utf-8"):
             try:
                 r = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            out[int(r["seed"])] = bool(r.get("won"))
-    return out
+            if r.get("outcome") == "error":
+                errors += 1
+                continue
+            floor = int(((r.get("final") or {}).get("total_floor")) or 0)
+            out[int(r["seed"])] = (bool(r.get("won")), floor)
+    return out, errors
 
 
 def mcnemar(b: int, c: int) -> float:
@@ -38,23 +47,22 @@ def main() -> None:
     ascs = sorted({int(p.stem.split("_A")[1]) for p in d.glob(f"{base}_A*.jsonl")}, reverse=True)
     for arm in others:
         print(f"\n== {arm} vs {base}")
-        print(f"{'asc':>4} {'runs':>5} {base:>8} {arm:>8} {'delta':>8}  only-{base} only-{arm}  p")
-        tot = [0, 0, 0, 0, 0]
+        print(f"{'asc':>4} {'runs':>5} {'win '+base:>9} {'win '+arm:>9} {'delta':>8} {'p':>6}   floor {base} -> {arm} (95% interval of the change)  errors")
         for asc in ascs:
-            a, c = wins(d / f"{base}_A{asc}.jsonl"), wins(d / f"{arm}_A{asc}.jsonl")
+            (a, ea), (c, ec) = runs(d / f"{base}_A{asc}.jsonl"), runs(d / f"{arm}_A{asc}.jsonl")
             seeds = sorted(set(a) & set(c))
             if not seeds:
                 continue
             n = len(seeds)
-            aw, cw = sum(a[s] for s in seeds), sum(c[s] for s in seeds)
-            oa = sum(a[s] and not c[s] for s in seeds)
-            oc = sum(c[s] and not a[s] for s in seeds)
-            print(f"A{asc:>3} {n:>5} {aw / n:>8.1%} {cw / n:>8.1%} {100 * (cw - aw) / n:>+7.1f}pp  {oa:>9} {oc:>9}  {mcnemar(oa, oc):.3f}")
-            for i, v in enumerate((n, aw, cw, oa, oc)):
-                tot[i] += v
-        n, aw, cw, oa, oc = tot
-        if n:
-            print(f"{'all':>4} {n:>5} {aw / n:>8.1%} {cw / n:>8.1%} {100 * (cw - aw) / n:>+7.1f}pp  {oa:>9} {oc:>9}  {mcnemar(oa, oc):.3f}")
+            aw, cw = sum(a[s][0] for s in seeds), sum(c[s][0] for s in seeds)
+            oa = sum(a[s][0] and not c[s][0] for s in seeds)
+            oc = sum(c[s][0] and not a[s][0] for s in seeds)
+            diffs = [c[s][1] - a[s][1] for s in seeds]
+            mean = statistics.fmean(diffs)
+            half = 1.96 * statistics.stdev(diffs) / math.sqrt(n) if n > 1 else float("nan")
+            fa = statistics.fmean(a[s][1] for s in seeds)
+            print(f"A{asc:>3} {n:>5} {aw / n:>9.1%} {cw / n:>9.1%} {100 * (cw - aw) / n:>+7.1f}pp {mcnemar(oa, oc):>6.3f}"
+                  f"   {fa:5.1f} -> {fa + mean:5.1f} ({mean - half:+.1f} .. {mean + half:+.1f})  {ea}/{ec}")
 
 
 if __name__ == "__main__":
