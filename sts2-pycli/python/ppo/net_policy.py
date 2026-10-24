@@ -13,7 +13,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from . import schema
+from . import pro_prior, schema
 from .encoder import featurize_row
 from .model import Featurized, RunPolicyNet, collate, load_compat
 
@@ -97,7 +97,11 @@ class NetPolicy:
         feat = featurize_row(obs, actions, metrics, features=self.features)
         b = collate([feat])
         logits, value, _ = self.net(b)
-        logp = F.log_softmax(logits[0, : feat.n_actions], dim=-1)
+        row = logits[0, : feat.n_actions]
+        if pro_prior.active():
+            # Personal-build A/B nudges (ppo.pro_prior); off unless env-set.
+            row = torch.as_tensor(pro_prior.adjust(obs, actions, row.cpu().numpy()), dtype=row.dtype)
+        logp = F.log_softmax(row, dim=-1)
         if greedy:
             idx = int(logp.argmax().item())
         else:

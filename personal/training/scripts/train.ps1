@@ -71,6 +71,11 @@ if ($resume -gt 0) { $targs += @('--resume-from-iter', $resume); Say "Resuming a
 else { $targs += @('--init-ckpt', (Join-Path $Root $cfg.init_ckpt)); Say "Starting fresh from the current shipped AI ($($cfg.iterations) rounds planned)." }
 
 $env:STS2_GAME_VERSION = $cfg.game_version
+# Fights the run AI trains against: "clairvoyant" matches the live advisor's
+# --fight-sight clairvoyant (STS2_RUNAI_HONEST=0); anything else keeps the
+# deployed honest search.
+if ($cfg.fight_sight -eq 'clairvoyant') { $env:STS2_RUNAI_HONEST = '0'; Say 'Fights: see-the-future (like your game).' }
+else { Remove-Item Env:STS2_RUNAI_HONEST -ErrorAction SilentlyContinue }
 $env:PYTHONPATH = 'python'
 $env:PYTHONUTF8 = '1'
 # Below-normal priority is inherited by the trainer and all of its workers.
