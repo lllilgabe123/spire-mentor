@@ -1196,6 +1196,10 @@ public static class SimStateExtractor
                     string? bossIdEntry = runState.Act?.BossEncounter?.Id?.Entry;
                     if (!string.IsNullOrEmpty(bossIdEntry))
                         bossNode["id"] = bossIdEntry;
+                    // A10's final act has a second boss (personal build's boss check).
+                    string? secondIdEntry = runState.Act?.SecondBossEncounter?.Id?.Entry;
+                    if (!string.IsNullOrEmpty(secondIdEntry))
+                        bossNode["second_id"] = secondIdEntry;
                 }
                 catch (Exception ex)
                 {

@@ -54,6 +54,7 @@ from typing import Any
 
 import realgame_foresight
 import realgame_hand_select
+import realgame_bosscheck
 import realgame_proguide
 import runtime_paths
 from enemy_labels import enemy_label
@@ -969,6 +970,19 @@ def compute_screen_advice(
         if path:
             advice["path"] = path
             advice["note"] += _route_note(path)
+        # Personal build: how this deck does against the act's boss(es),
+        # simulated on a background thread (realgame_bosscheck).
+        try:
+            boss_lines = realgame_bosscheck.lines(
+                state,
+                character,
+                run_ascension(state.get("run_state") or {}, 0),
+                state.get("game_version") or "v0.111.0",
+            )
+            if boss_lines:
+                advice["forecast_lines"] = boss_lines
+        except Exception as exc:
+            logger.warning("boss check failed: %s", exc)
 
     return advice
 

@@ -51,6 +51,17 @@ ARCHETYPES: dict[str, dict[str, list[str]]] = {
     },
 }
 
+#: Characters whose builds are read off the card text the game sends (so
+#: they follow the installed version): a card belongs to a build when its
+#: description matches the pattern. Checked against the v0.111.0 pools: Silent
+#: Poison 9 / Shiv 9 / Discard 7, Necrobinder Summon 21 / Doom 11 / Souls 9,
+#: Regent Stars 10 / Forge 13.
+KEYWORD_ARCHETYPES: dict[str, dict[str, str]] = {
+    "silent": {"Poison": r"\bPoison", "Shiv": r"\bShiv", "Discard": r"\bDiscard|\bSly\b"},
+    "necrobinder": {"Summon": r"\bSummon|\bOsty", "Doom": r"\bDoom", "Souls": r"\bSouls?\b"},
+    "regent": {"Stars": r"\bStars?\b", "Forge": r"\bForge|Sovereign Blade"},
+}
+
 #: Cards that grant Strength (for the v0.111.0 Expect a Fight note).
 STRENGTH_SOURCES = {"inflame", "demonform", "rupture", "brand", "fightme", "spite"}
 
@@ -93,24 +104,36 @@ def _table(character: str) -> dict[str, list[float]]:
     return _TABLES[key]
 
 
-def _deck_names(state: dict[str, Any]) -> list[str]:
+def _deck(state: dict[str, Any]) -> list[dict[str, Any]]:
     deck = (state.get("player") or {}).get("deck") or ((state.get("run_state") or {}).get("master_deck")) or []
-    return [_norm(c.get("id") or c.get("name") or "") for c in deck if isinstance(c, dict)]
+    return [c for c in deck if isinstance(c, dict)]
 
 
-def _builds(character: str, deck: list[str]) -> dict[str, int]:
-    out = {}
-    for name, cards in ARCHETYPES.get(character, {}).items():
-        members = {_norm(c) for c in cards}
-        out[name] = sum(1 for c in deck if c in members)
+def _card_builds(character: str, card: dict[str, Any]) -> list[str]:
+    """The builds ``card`` belongs to: by name for the curated characters,
+    by its live description for the keyword ones."""
+    key = _norm(card.get("id") or card.get("name") or "")
+    if character in ARCHETYPES:
+        return [b for b, cards in ARCHETYPES[character].items() if key in {_norm(c) for c in cards}]
+    text = re.sub(r"\[/?[a-z]+\]", "", str(card.get("description") or ""))
+    return [b for b, pat in KEYWORD_ARCHETYPES.get(character, {}).items() if re.search(pat, text)]
+
+
+def _builds(character: str, deck: list[dict[str, Any]]) -> dict[str, int]:
+    names = list(ARCHETYPES.get(character, {})) or list(KEYWORD_ARCHETYPES.get(character, {}))
+    out = dict.fromkeys(names, 0)
+    for c in deck:
+        for b in _card_builds(character, c):
+            out[b] += 1
     return out
 
 
 def card_reward_lines(state: dict[str, Any], character: str) -> list[str]:
     character = character.lower()
     table = _table(character)
-    deck = _deck_names(state)
-    builds = _builds(character, deck)
+    deck_cards = _deck(state)
+    deck = [_norm(c.get("id") or c.get("name") or "") for c in deck_cards]
+    builds = _builds(character, deck_cards)
     act = int(state.get("act") or (state.get("live_context") or {}).get("act") or 1)
     lines = []
     active = sorted(((n, k) for k, n in builds.items() if n >= 2), reverse=True)
@@ -126,10 +149,9 @@ def card_reward_lines(state: dict[str, Any], character: str) -> list[str]:
         if row:
             act_pick = row[1 + min(act, 3)]
             bits.append(f"pros take {act_pick:.0f}% in act {act} ({row[1]:.0f}% overall)")
-        for build, cards in ARCHETYPES.get(character, {}).items():
-            if key in {_norm(c) for c in cards}:
-                n = builds.get(build, 0)
-                bits.append(f"fits your {build} ({n})" if n >= 2 else f"{build} card")
+        for build in _card_builds(character, card):
+            n = builds.get(build, 0)
+            bits.append(f"fits your {build} ({n})" if n >= 2 else f"{build} card")
         if key == "expectafight":
             strength = sum(1 for c in deck if c in STRENGTH_SOURCES)
             bits.append("beta: 3 energy, Block scales with Strength; " +
