@@ -54,6 +54,7 @@ from typing import Any
 
 import realgame_foresight
 import realgame_hand_select
+import realgame_proguide
 import runtime_paths
 from enemy_labels import enemy_label
 from realgame_adapter import (
@@ -953,6 +954,15 @@ def compute_screen_advice(
     advice = {"note": note, "options": options, "best": best}
     if advice_for in _HAND_BACK_SURFACES:
         advice["hand_back"] = _HAND_BACK_SURFACES[advice_for]
+
+    # Personal build: what strong beta players do here (display only).
+    try:
+        if advice_for == "card_reward":
+            advice["forecast_lines"] = realgame_proguide.card_reward_lines(state, character)
+        elif advice_for == "rest_site":
+            advice["forecast_lines"] = realgame_proguide.rest_site_lines(state)
+    except Exception as exc:
+        logger.warning("pro guide failed: %s", exc)
 
     if advice_for == "map_select":
         path = _project_map_path(state, policy, best_i, hp_table=_projection_hp_table())
