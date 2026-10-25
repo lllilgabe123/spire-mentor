@@ -107,6 +107,18 @@ internal static class SimTieBreak
                 Logger.Log($"[SimTieBreak] {tie}: recommending {chosen.Label} over {best.Label} " +
                            $"(Q {chosen.Q:F4} vs {best.Q:F4}).");
             }
+            else if (!ReferenceEquals(chosen, best) && chosen.Label == "End turn" && best.CardIndex is null)
+            {
+                // A potion only tied with ending the turn: keep the potion.
+                best.IsBest = false;
+                chosen.IsBest = true;
+                advice.Best = new SimBestAction { Action = "end_turn", Label = chosen.Label };
+                advice.Pv.Clear();
+                advice.Pv.Add(chosen.Label);
+                advice.TieNote = $"about equal: {tie} → End turn (keep {best.Label} for a fight where it matters)";
+                Logger.Log($"[SimTieBreak] {tie}: keeping {best.Label}, recommending End turn " +
+                           $"(Q {chosen.Q:F4} vs {best.Q:F4}).");
+            }
             else
             {
                 advice.TieNote = $"about equal: {tie}";
@@ -127,7 +139,9 @@ internal static class SimTieBreak
 
     /// <summary>0 = Power card, 1 = self-buff or hand setup (Armaments, Enlightenment, Rage), 2 = Vulnerable/Weak on enemies,
     /// 3 = anything else, 4 = End turn (when tied, do something rather than
-    /// nothing).</summary>
+    /// nothing), 5 = a potion: when drinking is only as good as the
+    /// alternatives, keep it for a fight where it matters (the Dexterity
+    /// Potions it recommended were all within 0.0006 of End turn).</summary>
     private static int Rank(SimAdviceOption o, IReadOnlyList<CardModel> hand)
     {
         if (o.Label == "End turn")
@@ -136,7 +150,7 @@ internal static class SimTieBreak
         }
         if (o.CardIndex is not int ci || ci < 0 || ci >= hand.Count)
         {
-            return 3; // potions
+            return 5; // potions
         }
         CardModel card = hand[ci];
         if (card.Type == CardType.Power)
