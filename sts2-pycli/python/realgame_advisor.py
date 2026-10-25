@@ -52,9 +52,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import realgame_bosscheck
+import realgame_combos
+import realgame_fighttips
 import realgame_foresight
 import realgame_hand_select
-import realgame_bosscheck
 import realgame_proguide
 import runtime_paths
 from enemy_labels import enemy_label
@@ -548,6 +550,12 @@ def _add_foresight(
         advice["forecast_danger"] = fc["danger"]
     except Exception as exc:
         logger.warning("forecast failed: %s", exc)
+    try:
+        tips = realgame_fighttips.combat_lines(state)
+        if tips:
+            advice["forecast_lines"] = list(advice.get("forecast_lines") or []) + tips
+    except Exception as exc:
+        logger.warning("fight tips failed: %s", exc)
     # Potion hoarding (your won Defect run ended four hard fights at 7-19 HP
     # with a potion still held; top beta players drink 60-99% of theirs).
     try:
@@ -993,6 +1001,18 @@ def compute_screen_advice(
             advice["forecast_lines"] = realgame_proguide.event_lines(state)
     except Exception as exc:
         logger.warning("pro guide failed: %s", exc)
+    # Personal build: combo watch / loop meter (display only).
+    try:
+        if advice_for == "card_reward":
+            combo = realgame_combos.card_reward_lines(state, character)
+        elif advice_for in ("shop", "map_select"):
+            combo = realgame_combos.deck_lines(state, character)
+        else:
+            combo = []
+        if combo:
+            advice["forecast_lines"] = combo + list(advice.get("forecast_lines") or [])
+    except Exception as exc:
+        logger.warning("combo watch failed: %s", exc)
 
     if advice_for == "map_select":
         path = _project_map_path(state, policy, best_i, hp_table=_projection_hp_table())
@@ -1008,8 +1028,13 @@ def compute_screen_advice(
                 run_ascension(state.get("run_state") or {}, 0),
                 state.get("game_version") or "v0.111.0",
             )
+            boss = state.get("boss") or {}
+            for enc in [state.get("next_elite"), boss.get("id"), boss.get("second_id")]:
+                tip = realgame_fighttips.encounter_tip(str(enc)) if enc else None
+                if tip:
+                    boss_lines.append(f"{str(enc).replace('_', ' ').title()}: {tip}")
             if boss_lines:
-                advice["forecast_lines"] = boss_lines
+                advice["forecast_lines"] = boss_lines + list(advice.get("forecast_lines") or [])
         except Exception as exc:
             logger.warning("boss check failed: %s", exc)
 
