@@ -26,7 +26,9 @@ using System.Linq;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Localization.DynamicVars;
+using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Powers;
 
 namespace SpireMentor;
 
@@ -66,6 +68,14 @@ internal static class SimTieBreak
                 RageBeforeAttack(advice, best, hand))
             {
                 return;
+            }
+            if (ThornsHit(best, hand) is int thorns && thorns > 0)
+            {
+                // The search counted the Thorns and still prefers the hit
+                // (a kill, a race); say what it costs. Thorns damage is
+                // Unpowered, not Unblockable, so Block soaks it.
+                int hits = Math.Max(1, (int)(hand[best.CardIndex!.Value].DynamicVars.Values.OfType<RepeatVar>().FirstOrDefault()?.BaseValue ?? 1));
+                advice.TieNote = $"Thorns {thorns}: each hit costs you {thorns} HP ({hits * thorns} for this card). Play Block first: Thorns hits Block before HP";
             }
             bool endTurnBest = advice.Best.Action == "end_turn";
             double margin = endTurnBest ? EndTurnQ : TieQ;
@@ -283,12 +293,33 @@ internal static class SimTieBreak
     /// (HpLossVar: Hemokinesis, Bloodletting, Offering, ...).</summary>
     private static bool Harmless(SimAdviceOption o, IReadOnlyList<CardModel> hand) =>
         o.CardIndex is int ci && ci >= 0 && ci < hand.Count &&
-        !hand[ci].DynamicVars.Values.Any(v => v is HpLossVar) &&
+        !hand[ci].DynamicVars.Values.Any(v => v is HpLossVar) && ThornsHit(o, hand) == 0 &&
         (hand[ci].Type == CardType.Attack || Rank(o, hand) <= 2);
+
+    /// <summary>Thorns on what <paramref name="o"/> attacks (the most on any
+    /// enemy for an all/random-enemy Attack), or 0. Each hit costs you that
+    /// much, Block first: Spiny Toad's Protruding Spikes gives Thorns 5 for
+    /// one turn, and a live Silent was told to throw Shivs into it on
+    /// near-equal calls because Attacks counted as harmless.</summary>
+    private static int ThornsHit(SimAdviceOption o, IReadOnlyList<CardModel> hand)
+    {
+        if (o.CardIndex is not int ci || ci < 0 || ci >= hand.Count || hand[ci].Type != CardType.Attack)
+        {
+            return 0;
+        }
+        CardModel card = hand[ci];
+        static int Thorns(Creature? c) =>
+            c == null ? 0 : (int)c.Powers.Where(p => p is ThornsPower).Sum(p => (decimal)p.Amount);
+        if (card.TargetType == TargetType.AnyEnemy)
+        {
+            return Thorns(SimCombatHandler.ResolveTarget(card, o.TargetIndex ?? -1));
+        }
+        return card.CombatState?.HittableEnemies.Select(Thorns).DefaultIfEmpty(0).Max() ?? 0;
+    }
 
     /// <summary>0 = Power card, 1 = self-buff or hand setup (Armaments, Enlightenment, Rage), 2 = Vulnerable/Weak on enemies,
     /// 3 = anything else, 4 = End turn (when tied, do something rather than
-    /// nothing), 5 = a potion: when drinking is only as good as the
+    /// nothing), 5 = an Attack into Thorns, 6 = a potion: when drinking is only as good as the
     /// alternatives, keep it for a fight where it matters (the Dexterity
     /// Potions it recommended were all within 0.0006 of End turn).</summary>
     private static int Rank(SimAdviceOption o, IReadOnlyList<CardModel> hand)
@@ -299,7 +330,11 @@ internal static class SimTieBreak
         }
         if (o.CardIndex is not int ci || ci < 0 || ci >= hand.Count)
         {
-            return 5; // potions
+            return 6; // potions
+        }
+        if (ThornsHit(o, hand) > 0)
+        {
+            return 5; // an Attack into Thorns costs HP: on a near-tie, anything else first
         }
         CardModel card = hand[ci];
         if (card.Type == CardType.Power)
