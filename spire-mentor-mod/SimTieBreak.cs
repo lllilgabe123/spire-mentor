@@ -62,7 +62,8 @@ internal static class SimTieBreak
                 return;
             }
             IReadOnlyList<CardModel> hand = PileType.Hand.GetPile(me).Cards;
-            if (SkipEmptyXCost(advice, best, hand, me) || HoldIdleBuffPotion(advice, best, hand, me))
+            if (SkipEmptyXCost(advice, best, hand, me) || HoldIdleBuffPotion(advice, best, hand, me) ||
+                RageBeforeAttack(advice, best, hand))
             {
                 return;
             }
@@ -134,6 +135,37 @@ internal static class SimTieBreak
         {
             Logger.Log($"[SimTieBreak] skipped: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Rage costs 0 and gives Block for every Attack played after it this
+    /// turn, so whenever the pick is an Attack and Rage is playable, Rage
+    /// first is never worse. Not a close call: a live game still showed Rage
+    /// played after the Attacks when an Attack out-scored it by more than
+    /// TieQ (the search's noise). Returns true when it changed the pick.
+    /// </summary>
+    private static bool RageBeforeAttack(SimAdvice advice, SimAdviceOption best, IReadOnlyList<CardModel> hand)
+    {
+        if (advice.Best?.Action != "play" || best.CardIndex is not int bi || bi < 0 || bi >= hand.Count ||
+            hand[bi].Type != CardType.Attack)
+        {
+            return false;
+        }
+        SimAdviceOption? rage = advice.Options.FirstOrDefault(o =>
+            o.CardIndex is int i && i >= 0 && i < hand.Count && hand[i].Id.Entry == "RAGE");
+        if (rage == null)
+        {
+            return false;
+        }
+        best.IsBest = false;
+        rage.IsBest = true;
+        advice.Best = new SimBestAction { Action = "play", CardIndex = rage.CardIndex!.Value, TargetIndex = -1, Label = rage.Label };
+        advice.Pv.Clear();
+        advice.Pv.Add(rage.Label);
+        MoveToFront(advice.PlanStep, rage.CardIndex!.Value);
+        advice.TieNote = $"Rage first: every Attack after it this turn gives Block ({CardName(best.Label)} next)";
+        Logger.Log($"[SimTieBreak] Rage before {best.Label} (Q {rage.Q:F4} vs {best.Q:F4}).");
+        return true;
     }
 
     /// <summary>The planned order with <paramref name="card"/> played first:

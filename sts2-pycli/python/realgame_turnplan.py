@@ -106,3 +106,27 @@ def plan_turn(
             line.append("end turn")
             break
     return order, line
+
+
+def rage_first(order: list[dict[str, int]], line: list[str], state: dict[str, Any]) -> None:
+    """Rage (0 cost, Block per Attack after it this turn) goes before the
+    plan's first Attack; the search sometimes ranks it after them by more
+    than its noise. Edits ``order`` and ``line`` in place."""
+    cards = [*(state.get("hand") or []), *((state.get("draw_pile") or {}).get("cards") or [])]
+    types = {str(c.get("name")): str(c.get("type")) for c in cards if isinstance(c, dict)}
+    steps = [s for s in line if s[:1].isdigit()]
+    names = [s.split(". ", 1)[1].removesuffix(" (drawn)") for s in steps]
+    if "Rage" not in names:
+        return
+    r = names.index("Rage")
+    first_attack = next((i for i, n in enumerate(names[:r]) if types.get(n) == "Attack"), None)
+    if first_attack is None:
+        return
+    moved = [*steps[:first_attack], steps[r], *steps[first_attack:r], *steps[r + 1:]]
+    tail = [s for s in line if not s[:1].isdigit()]
+    line[:] = [f"{i}. {s.split('. ', 1)[1]}" for i, s in enumerate(moved, 1)] + tail
+    by_step = {o["step"]: o for o in order}
+    new_pos = {old: new for new, old in enumerate(
+        [*range(1, first_attack + 1), r + 1, *range(first_attack + 1, r + 1), *range(r + 2, len(steps) + 1)], 1)}
+    for step, o in by_step.items():
+        o["step"] = new_pos.get(step, step)
