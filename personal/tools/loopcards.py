@@ -21,13 +21,19 @@ for name, pool in pools.items():
     def var(kind):
         v = re.search(kind + r"\((\d+)m?\)", s)
         return int(v.group(1)) if v else 0
+    # The OnPlay method only: later hooks (AfterCardExhausted on Drum of
+    # Battle) are not part of playing the card.
     play = s[s.find("OnPlay"):] if "OnPlay" in s else ""
+    nxt = re.search(r"\n\t(public|protected|private)[^\n]*\(", play[10:])
+    if nxt:
+        play = play[: 10 + nxt.start()]
     energy = var("new EnergyVar") if "GainEnergy" in play else 0
     draw = var("new CardsVar") if "CardPileCmd.Draw(" in play and "DynamicVars.Cards" in play else 0
     if "CardPileCmd.Draw(choiceContext, 1m" in play:
         draw = max(draw, 1)
     discard = 1 if "FromHandForDiscard" in play else 0
-    exhaust = "CardKeyword.Exhaust)" in s.split("CanonicalKeywords")[1][:300] if "CanonicalKeywords" in s else False
+    kw = s.split("CanonicalKeywords", 1)[1].split(";", 1)[0] if "CanonicalKeywords" in s else ""
+    exhaust = "CardKeyword.Exhaust" in kw
     cond = bool(re.search(r"if \(|IsPlayable", play))
     # Breaks a loop: stops further draws this turn (Battle Trance, Bullet
     # Time), adds junk cards (Overclock's Burn), or raises costs (Borrowed Time).

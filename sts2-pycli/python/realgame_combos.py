@@ -226,7 +226,10 @@ def find_core(keys: list[str], relics: set[str], max_size: int = 4) -> list[str]
     letter = "LETTER_OPENER" in relics
     best: tuple[int, int, list[str]] | None = None
 
-    for size in range(1, max_size + 1):
+    # One card cannot draw itself back: it is still being played when its
+    # draw resolves (engine-checked: 1 Flash of Steel stalls, 2 loop). Only
+    # Unceasing Top, which draws after the hand empties, makes one enough.
+    for size in range(1 if top else 2, max_size + 1):
         for combo in set(combinations(pool, size)):
             rows = [table[k] for k in combo]
             draw = sum(r[5] - r[6] for r in rows)
@@ -254,8 +257,12 @@ def core_line(keys: list[str], relics: set[str], in_fight: bool = False) -> str 
     rest = len([k for k in keys if k not in core]) if gaps else 0
     where = "in this fight's cards" if in_fight else "in your deck"
     verb = "loops" if len(core) == 1 else "loop"
-    return (f"Infinite potential {where}: {names} {verb} on their own. The other {rest} cards clog the cycle; "
-            "each one you exhaust or remove brings the loop closer")
+    # Engine-checked (Flash of Steel x2, Flash + Finesse, Restlessness +
+    # Pommel Strike vs the 630-HP Queen): turn-1 kills with up to 4 other
+    # cards in the cycle, none with 5 -- the hand fills before the loop runs.
+    tail = ("it should already run: play the loop cards first" if rest <= 4 else
+            f"it needs the cycle down to about {len(core) + 4} cards: exhaust or remove {rest - 4} more")
+    return f"Infinite potential {where}: {names} {verb} on their own; {tail}"
 
 
 def combat_lines(state: dict[str, Any]) -> list[str]:
