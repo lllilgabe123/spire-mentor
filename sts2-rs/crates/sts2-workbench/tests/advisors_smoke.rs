@@ -561,6 +561,9 @@ fn last_turn_grade_wasted_turn_is_costly() {
     );
     assert!(r["context"]["enemies"][0]["intent"].is_string(), "{r}");
     assert_eq!(r["searches"], json!(1));
+    // Nothing visible separates the lines on turn 1 (no kill, no wake).
+    assert_eq!(r["why"], Value::Null, "{r}");
+    assert!(r.as_object().unwrap().contains_key("why"), "{r}");
 }
 
 /// Only an End turn closes a turn: after a card play there is nothing to grade.

@@ -64,6 +64,14 @@ public static class MainFile
             ApplyPatch(typeof(EventOptionClickedPatch));
             ApplyPatch(typeof(RestOptionSelectedPatch));
             SimReduceEffects.Install(_patcher);
+            try
+            {
+                SimNoSaves.InstallIfRequested(_patcher);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"  SKIP: SimNoSaves - {ex.Message} (this instance may write the profile)");
+            }
 
             try
             {
@@ -94,8 +102,8 @@ public static class MainFile
 
         try
         {
-            BridgeServer.Instance.Start(config.Port);
-            Logger.Log($"TCP bridge started on port {config.Port}");
+            BridgeServer.Instance.StartWithFallback(config.Port, tries: 4);
+            Logger.Log($"TCP bridge started on port {BridgeServer.Instance.Port}");
         }
         catch (Exception ex)
         {
@@ -129,6 +137,12 @@ public static class MainFile
             Logger.Log($"  SKIP: SimWatchdog - {ex.Message}");
         }
 
+        if (SimMp.SpeedOverride is double speed)
+        {
+            SimSpeed.Apply(speed, showVfx: false);
+            Logger.Log($"--spire-mentor-speed: game speed {SimSpeed.Current:0.0}x");
+        }
+
         TaskHelper.RunSafely(SimVfxCap.InstallWhenReadyAsync());
         TaskHelper.RunSafely(SimHotkeys.InstallWhenReadyAsync());
         TaskHelper.RunSafely(SimToolbar.Instance.InstallWhenReadyAsync());
@@ -148,6 +162,7 @@ public static class MainFile
         if (config.AdvisorAutoplay)
         {
             SimAdvisorAutoplay.ArmWhenRunStarts();
+            SimCoopDummy.InstallIfRequested();
         }
         else if (SimRuntime.Mode == SimMode.Off && SpireMentorModConfig.CoachOnAtLaunch &&
                  OperatingSystem.IsWindows())
@@ -983,6 +998,8 @@ public static class CardSelectContextPatch
     {
         try
         {
+            if (SimMp.IsAnotherPlayers(__args))
+                return;
             object? source = SimCardSelectContext.SourceObjectFrom(__args);
             SimCardSelectContext.Set(
                 __originalMethod.Name,
@@ -1014,6 +1031,8 @@ public static class CardSelectContextNoPrefsPatch
     {
         try
         {
+            if (SimMp.IsAnotherPlayers(__args))
+                return;
             bool isUpgrade = __originalMethod.Name == "FromHandForUpgrade";
             string? key = isUpgrade ? "TO_UPGRADE" : "TO_OBTAIN";
             // `FromChooseACardScreen(context, cards, player, bool canSkip)` —

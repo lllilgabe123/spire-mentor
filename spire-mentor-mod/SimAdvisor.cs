@@ -181,6 +181,13 @@ internal sealed class SimAdvisor
     [ThreadStatic]
     public static bool SuppressEndTurnReport;
 
+    /// <summary>In co-op the mod's end turn is an enqueued
+    /// EndPlayerTurnAction, which reaches PlayerCmd.EndTurn later and with
+    /// canBackOut: true, the human's signature; this marks it as the AI's.
+    /// Only the main thread touches it (takeover and the queue both run
+    /// there).</summary>
+    private static bool _aiEndTurnQueued;
+
     /// <summary>F5 was pressed for the current position before its advice
     /// arrived: render the peek on the next accepted reply. Cleared whenever
     /// the position changes (ScheduleAdvice).</summary>
@@ -235,6 +242,11 @@ internal sealed class SimAdvisor
     /// <summary>Consecutive recommendations the live game refused; reset by any
     /// accepted action. See <see cref="OnActionRefused" />.</summary>
     private int _refusedInARow;
+
+    /// <summary>Co-op autoplay: combat replies in a row that carried no
+    /// move (the advisor failed on the position). See
+    /// <see cref="OnNoMoveInCoop"/>.</summary>
+    private int _noMoveInARow;
 
     /// <summary>Backing field — write through <see cref="SetAutoPlay"/> so
     /// SimRuntime.AdvisorAutoplayArmed (the speed patches' gate) stays in
@@ -405,7 +417,11 @@ internal sealed class SimAdvisor
         // CombatEnded(CombatRoom) fires with the room's combat state intact
         // (both game builds), so the round and room type are read from it.
         cm.CombatEnded += room => OnCombatEnded(room?.CombatState?.RoundNumber ?? 0, room?.RoomType.ToString() ?? "Combat");
-        cm.PlayerUnendedTurn += _ => HumanEndTurnPending = false;
+        cm.PlayerUnendedTurn += _ =>
+        {
+            HumanEndTurnPending = false;
+            _aiEndTurnQueued = false;
+        };
         cm.History.Changed += OnHistoryChanged;
         ActiveScreenContext.Instance.Updated += OnScreenUpdated;
         StartScreenPoll();
@@ -553,6 +569,10 @@ internal sealed class SimAdvisor
             // The player's turn in a fight: the previous fight's recap is over.
             SimCoachPanel.Instance.OnCombatTurn();
         }
+        _aiEndTurnQueued = false;
+        // A streak is about one position: no-move replies from an earlier
+        // turn or fight must not end this turn on its first miss.
+        _noMoveInARow = 0;
         _turnStartHistoryMark = CombatHistoryMark();
         _unsettledRetries = 0;
         try
@@ -1467,6 +1487,14 @@ internal sealed class SimAdvisor
                     // (and press F7 to stop) before it fires.
                     ScheduleAutoPlay();
                 }
+                if (isCombat)
+                {
+                    _noMoveInARow = _lastBest != null ? 0 : _noMoveInARow + 1;
+                    if (_autoPlay && _lastBest == null)
+                    {
+                        OnNoMoveInCoop(advice.Note);
+                    }
+                }
             });
         }
         catch (Exception ex)
@@ -1625,7 +1653,8 @@ internal sealed class SimAdvisor
                         return;
                     }
                     var target = SimCombatHandler.ResolveTarget(card, best.TargetIndex);
-                    if (card.TargetType == TargetType.AnyEnemy && target == null)
+                    if ((card.TargetType == TargetType.AnyEnemy || card.TargetType == TargetType.AnyAlly) &&
+                        target == null)
                     {
                         Logger.Log("[SimAdvisor] Takeover: recommended target no longer hittable.");
                         OnActionRefused(player);
@@ -1656,6 +1685,16 @@ internal sealed class SimAdvisor
                         return;
                     }
                     var target = SimCombatHandler.ResolvePotionTarget(player, potion, best.TargetIndex);
+                    // Same guard as a card: the game drops a targeted potion
+                    // with no target in silence (an AnyAlly one has none when
+                    // no teammate is alive).
+                    if ((potion.TargetType == TargetType.AnyEnemy || potion.TargetType == TargetType.AnyAlly) &&
+                        target == null)
+                    {
+                        Logger.Log("[SimAdvisor] Takeover: no valid target for the recommended potion.");
+                        OnActionRefused(player);
+                        return;
+                    }
                     RunManager.Instance.ActionQueueSynchronizer.RequestEnqueue(
                         new UsePotionAction(potion, target, cm.IsInProgress));
                     break;
@@ -1716,6 +1755,40 @@ internal sealed class SimAdvisor
     }
 
     /// <summary>
+    /// The advisor answers this combat position with no move (an engine
+    /// error: content it cannot model, 2026-10-23's Dowsing). Solo, autoplay
+    /// just waits and the player takes over. In co-op nobody can: the enemy
+    /// turn starts only once every player has ended theirs, so a silent
+    /// player freezes the whole run. After a few such replies, end the turn
+    /// -- the same escape hatch as <see cref="OnActionRefused"/>.
+    /// </summary>
+    private void OnNoMoveInCoop(string? note)
+    {
+        if (!SimMp.IsMultiplayer || _noMoveInARow < MaxRefusedBeforeEndTurn)
+        {
+            return;
+        }
+        Player? player = LocalContext.GetMe(RunManager.Instance.DebugOnlyGetState());
+        if (player == null)
+        {
+            return;
+        }
+        Logger.Log(
+            $"[SimAdvisor] {_noMoveInARow} combat replies without a move ({note ?? "no note"}); " +
+            "ending the turn so the co-op partners are not blocked.");
+        SimActionLog.Note($"AI has no move {_noMoveInARow}x — ending turn (co-op)");
+        _noMoveInARow = 0;
+        try
+        {
+            EndTurnAsAi(player);
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"[SimAdvisor] Could not end the turn after no-move replies: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// "Executed" above means ENQUEUED, not accepted. A card the game refuses
     /// -- unplayable, or an index that addressed a different card because the
     /// board moved under a slow reply -- is dropped by the action queue in
@@ -1737,7 +1810,7 @@ internal sealed class SimAdvisor
             {
                 return;
             }
-            int mark = cm.History.Entries.Count();
+            int mark = CombatHistoryMark();
             SceneTreeTimer timer = tree.CreateTimer(RefusedActionWatchdogSeconds);
             timer.Connect(SceneTreeTimer.SignalName.Timeout, Callable.From(() =>
             {
@@ -1759,7 +1832,16 @@ internal sealed class SimAdvisor
                     {
                         return;
                     }
-                    if (now.History.Entries.Count() != mark)
+                    // Our end turn is queued or done. It leaves no history
+                    // entry of ours, and in co-op it waits on the synced
+                    // queue, so an unchanged mark here is not a refusal; a
+                    // re-ask would queue plays behind the end turn.
+                    Player? ending = LocalContext.GetMe(RunManager.Instance.DebugOnlyGetState());
+                    if (_aiEndTurnQueued || (ending != null && now.IsPlayerReadyToEndTurn(ending)))
+                    {
+                        return;
+                    }
+                    if (CombatHistoryMark() != mark)
                     {
                         // The board moved: this action was accepted. THIS is
                         // acceptance, and the only place the streak may reset.
@@ -2228,7 +2310,19 @@ internal sealed class SimAdvisor
         {
             // Count() not .Count: Entries is an IEnumerable, so `?.Count` binds
             // the LINQ method group and does not compile.
-            return CombatManager.Instance?.History?.Entries?.Count() ?? -1;
+            IEnumerable<CombatHistoryEntry>? entries = CombatManager.Instance?.History?.Entries;
+            if (entries == null)
+            {
+                return -1;
+            }
+            if (!SimMp.IsMultiplayer)
+            {
+                return entries.Count();
+            }
+            // Co-op: teammates' plays append entries too, which would read as
+            // "our action resolved" to every guard keyed on this mark.
+            var me = LocalContext.GetMe(RunManager.Instance.DebugOnlyGetState())?.Creature;
+            return entries.Count(e => e.Actor == me);
         }
         catch (Exception)
         {
@@ -2567,6 +2661,11 @@ internal sealed class SimAdvisor
             {
                 return;
             }
+            if (_aiEndTurnQueued)
+            {
+                _aiEndTurnQueued = false;
+                return;
+            }
             HumanEndTurnPending = true;
         }
         catch (Exception ex)
@@ -2579,6 +2678,23 @@ internal sealed class SimAdvisor
     /// here, so the end-turn capture never reports it as the human's.</summary>
     internal static void EndTurnAsAi(Player player)
     {
+        if (SimMp.IsMultiplayer)
+        {
+            // PlayerCmd.EndTurn only marks this machine ready; the other
+            // players never hear of it and the turn never ends. The end-turn
+            // button's path (NEndTurnButton) goes through the synced queue.
+            // Once: a re-ask before the action runs would queue a second one,
+            // which reaches the prefix after the marker is spent.
+            if (_aiEndTurnQueued || player.PlayerCombatState is not { } combatState ||
+                CombatManager.Instance.IsPlayerReadyToEndTurn(player))
+            {
+                return;
+            }
+            _aiEndTurnQueued = true;
+            RunManager.Instance.ActionQueueSynchronizer.RequestEnqueue(
+                new EndPlayerTurnAction(player, combatState.TurnNumber));
+            return;
+        }
         bool was = SuppressEndTurnReport;
         SuppressEndTurnReport = true;
         try

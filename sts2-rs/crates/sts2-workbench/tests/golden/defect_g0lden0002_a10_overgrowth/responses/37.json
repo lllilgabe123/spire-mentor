@@ -1,6 +1,6 @@
 {
  "act": null,
- "best_label": "Strike",
+ "best_label": "Zap",
  "best_line": [],
  "best_mean_hp": null,
  "best_win_prob": 1.0,
@@ -10,7 +10,7 @@
  "idx": 30,
  "is_blunder": false,
  "matched_best": false,
- "message": "Turn 4: Defend instead of Strike dropped P(win) 100%→100% (−0 pts)",
+ "message": "Turn 4: Defend instead of Zap dropped P(win) 100%→100% (−0 pts)",
  "n_actions": 4,
  "node_id": null,
  "played_label": "Defend",

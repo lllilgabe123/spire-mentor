@@ -53,9 +53,9 @@ def canonical_potion(token: str) -> str:
 _POLICY = None  # one ONNX session per worker process
 
 
-def _one_run(args: tuple[int, int]) -> tuple[list[dict], dict]:
+def _one_run(args: tuple[int, int, str]) -> tuple[list[dict], dict]:
     """Play one seed; return (counterfactual rows, run summary)."""
-    seed, ascension = args
+    seed, ascension, act1 = args
     import champions
     from ppo.env import PpoRunEnv, Terminal
     from ppo.onnx_policy import OnnxPolicy
@@ -67,7 +67,7 @@ def _one_run(args: tuple[int, int]) -> tuple[list[dict], dict]:
         _POLICY = OnnxPolicy(str(champ.onnx_path))
     policy = _POLICY
 
-    env = PpoRunEnv(seed=seed, ascension=ascension, character="Ironclad")
+    env = PpoRunEnv(seed=seed, ascension=ascension, character="Ironclad", act1=act1)
     d = env.reset()
     rows: list[dict] = []
     steps = 0
@@ -115,6 +115,11 @@ def main() -> int:
     ap.add_argument("--seed-base", type=int, default=5_000)
     ap.add_argument("--ascension", type=int, default=8)
     ap.add_argument("--procs", type=int, default=8)
+    ap.add_argument(
+        "--act1",
+        default="overgrowth",
+        help="act-1 model: overgrowth | underdocks | roll (roll = the deployed mix)",
+    )
     ap.add_argument("--out", type=str, default="../logs/2026-08-19-potion-oc")
     args = ap.parse_args()
 
@@ -123,7 +128,7 @@ def main() -> int:
     t0 = time.time()
     all_rows: list[dict] = []
     wins = 0
-    jobs = [(args.seed_base + i, args.ascension) for i in range(args.runs)]
+    jobs = [(args.seed_base + i, args.ascension, args.act1) for i in range(args.runs)]
     with (
         Pool(args.procs) as pool,
         open(out / "probe_critic_rows.jsonl", "w", encoding="utf-8") as sink,
@@ -193,6 +198,8 @@ def main() -> int:
         "act3_scaling_median_dv": round(median(scale3), 6) if scale3 else None,
         "act3_nuke_median_dv": round(median(nuke3), 6) if nuke3 else None,
         "runs": args.runs,
+        "ascension": args.ascension,
+        "act1": args.act1,
         "wins": wins,
     }
 

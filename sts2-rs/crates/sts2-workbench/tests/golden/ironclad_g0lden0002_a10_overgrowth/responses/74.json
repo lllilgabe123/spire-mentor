@@ -1,6 +1,6 @@
 {
  "act": null,
- "best_label": "Sword Boomerang",
+ "best_label": "Bash",
  "best_line": [],
  "best_mean_hp": null,
  "best_win_prob": 1.0,
@@ -10,7 +10,7 @@
  "idx": 50,
  "is_blunder": false,
  "matched_best": false,
- "message": "Turn 4: Strike instead of Sword Boomerang dropped P(win) 100%→100% (−0 pts)",
+ "message": "Turn 4: Strike instead of Bash dropped P(win) 100%→100% (−0 pts)",
  "n_actions": 5,
  "node_id": null,
  "played_label": "Strike",

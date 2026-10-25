@@ -1,6 +1,6 @@
 {
  "act": null,
- "best_label": "Defend",
+ "best_label": "Shiv",
  "best_line": [],
  "best_mean_hp": null,
  "best_win_prob": 1.0,
@@ -9,8 +9,8 @@
  "hp_drop": null,
  "idx": 30,
  "is_blunder": false,
- "matched_best": true,
- "message": "Turn 1: Defend matched the MCTS line (P(win) 100%)",
+ "matched_best": false,
+ "message": "Turn 1: Defend instead of Shiv dropped P(win) 100%→100% (−0 pts)",
  "n_actions": 4,
  "node_id": null,
  "played_label": "Defend",
@@ -20,6 +20,6 @@
  "regret": 0.0,
  "severity": 0.0,
  "turn": 1,
- "verdict": "best",
+ "verdict": "uncertain",
  "visits": 6
 }

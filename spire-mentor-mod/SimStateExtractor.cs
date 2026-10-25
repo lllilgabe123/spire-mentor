@@ -140,7 +140,11 @@ public static class SimStateExtractor
         // enemy intent and reshuffle order it predicts is a guess, and a guess
         // that misses is not evidence of anything. Same block, same names, as
         // the headless runner emits; the mirror's restore path is shared.
-        msg["rng"] = RngState(runState);
+        msg["rng"] = RngState(runState, player);
+        // Co-op (PROTOCOL.md s1): the advisor plans for the local player
+        // only; this says how many others share the fight and the map. Absent
+        // (every mod before the field) means 1.
+        msg["player_count"] = SimMp.PlayerCount;
         // Phase 1b stale-state guard (see SimProtocolHelpers.cs / PROTOCOL.md
         // "state_id"): every outbound message gets a fresh, monotonically
         // increasing id here so a handler can compare it against an optional
@@ -154,13 +158,16 @@ public static class SimStateExtractor
     /// <summary>
     /// `{"run_seed": uint (v0.107.1) | ulong (v0.111.0), "counters": {stream: readCount}}` — the run's RNG
     /// position, keyed by the same snake_case stream names sts2-rs uses so the
-    /// two sides line up field-for-field. Empty when no run is active.
+    /// two sides line up field-for-field. Empty when no run is active, and in
+    /// co-op: teammates draw from the shared streams between our actions, and
+    /// each player's own streams are seeded by slot, so no lineage we could
+    /// send would hold.
     /// </summary>
-    private static Dictionary<string, object?> RngState(RunState? runState)
+    private static Dictionary<string, object?> RngState(RunState? runState, Player? player)
     {
         var d = new Dictionary<string, object?>();
         var rng = runState?.Rng;
-        if (rng == null) return d;
+        if (rng == null || SimMp.IsMultiplayer) return d;
         try
         {
             // Built LOCALLY and published as a pair. A partial block here is
@@ -185,11 +192,11 @@ public static class SimStateExtractor
                 ["niche"] = Cursor(rng.Niche),
                 ["combat_orbs"] = Cursor(rng.CombatOrbGeneration),
             };
-            // The local player's streams: in a co-op run Players[0] can be
-            // someone else.
-            var prng = (runState?.Players != null && runState.Players.Count > 0)
-                ? (MegaCrit.Sts2.Core.Context.LocalContext.GetMe(runState) ?? runState.Players[0]).PlayerRng
-                : null;
+            // Solo only (co-op returned above), so the local player is
+            // Players[0]: a caller without a player must not drop the three
+            // player streams and publish the partial block warned about above.
+            var prng = player?.PlayerRng ??
+                       (runState!.Players is { Count: > 0 } players ? players[0].PlayerRng : null);
             if (prng != null)
             {
                 c["rewards"] = Cursor(prng.Rewards);
@@ -247,6 +254,12 @@ public static class SimStateExtractor
                 ["relics"] = relics,
                 ["master_deck"] = deck,
                 ["ascension"] = runState?.AscensionLevel ?? 0,
+                // The two facts the run agent's boss win value keys on
+                // (sts2-mcts `boss_win_carry`, Rust `is_last_act` /
+                // `awaiting_second_boss`): the run's last boss values only
+                // winning. Null when there is no run to read.
+                ["is_last_act"] = runState == null ? null : (bool?)(runState.CurrentActIndex >= runState.Acts.Count - 1),
+                ["awaiting_second_boss"] = runState == null ? null : (bool?)SafeBool(() => SimAutoSlayer.IsFirstOfDoubleBoss(runState)),
                 ["character"] = player?.Character?.Id.Entry,
                 ["unlocked_epochs"] = SerializeUnlockedEpochs(runState, player),
             };

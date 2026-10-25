@@ -55,6 +55,7 @@ import argparse
 import collections
 import json
 import math
+import multiprocessing as mp
 import os
 import random
 import time
@@ -82,6 +83,9 @@ TABLE_VERSION = 2  # the one version with per-species tables
 STATE_DIM, ACTION_DIM = FEATURE_DIMS[1]
 MONSTER_SLOTS = 5
 HEUR_FEATURE = 21  # -priority / tau, the heuristic playout's own logit
+# `gen` gives up on its pool this long after `--fight-timeout-s` with no fight
+# finishing: a search step overran the per-fight deadline it cannot interrupt.
+STALL_GRACE_S = 600
 
 
 def _canon(action: dict[str, Any]) -> str:
@@ -91,14 +95,77 @@ def _canon(action: dict[str, Any]) -> str:
 # ── gen ──────────────────────────────────────────────────────────────────
 
 
+def record_decisions(
+    rm: Any,
+    agent: Any,
+    version: int,
+    room: int,
+    fight_idx: int,
+    out: dict[str, Any],
+    deadline: float = math.inf,
+) -> None:
+    """Let `agent` play `rm`'s combat to the end and append one row per
+    searched decision with >= 2 legal actions to `out["decisions"]`: the
+    playout features of every legal action (`sts2_rs.rollout_features`), the
+    root visits, the recommended action and the root win share. Past the
+    `time.monotonic()` `deadline` it stops after the current step and sets
+    `out["timeout"]`."""
+    import sts2_rs
+
+    steps = 0
+    while rm.phase() == "combat" and not rm.is_over() and steps < 3000:
+        if "timeout" in out:
+            break
+        feats = sts2_rs.rollout_features(rm.combat_state(), version=version)
+        rec = agent.step(rm)
+        steps += 1
+        if time.monotonic() > deadline:
+            out["timeout"] = True
+        if rec is None:
+            break
+        search = rec.get("combat_search")
+        if not search or len(feats["actions"]) < 2:
+            continue
+        index = {_canon(a): i for i, a in enumerate(feats["actions"])}
+        visits = [0.0] * len(feats["actions"])
+        wins = total = 0
+        for a in search["actions"]:
+            i = index.get(_canon(a["action"]))
+            if i is None:
+                out["unmatched"] += 1
+                continue
+            visits[i] += a["visits"]
+            wins += a["wins"]
+            total += a["visits"]
+        if not total:
+            continue
+        chosen = index.get(_canon(search.get("recommended") or {}), -1)
+        row = {
+            "state": feats["state"],
+            "keys": feats["keys"],
+            "x": feats["x"],
+            "visits": visits,
+            "chosen": chosen,
+            "pwin": wins / total,
+            "room": room,
+            "fight": fight_idx,
+        }
+        if version == TABLE_VERSION:
+            row["monsters"] = feats["monsters"]
+        out["decisions"].append(row)
+
+
 def gen_fight(job: tuple[Any, ...]) -> dict[str, Any]:
-    fight, fight_idx, reps, rep0, sims, boss_sims, clair, version = job
+    fight, fight_idx, reps, rep0, sims, boss_sims, clair, version, timeout_s = job
     import sts2_rs
 
     if clair:
         os.environ["STS2_RUNAI_HONEST"] = "0"
     key = f"{fight['file']}:{fight['floor']}"
     out: dict[str, Any] = {"key": key, "decisions": [], "unmatched": 0}
+    # Wall-clock budget for all reps of this fight (0 = none), checked after
+    # each search step; the decisions recorded before it ran out are kept.
+    deadline = time.monotonic() + timeout_s if timeout_s > 0 else math.inf
     try:
         for rep in range(reps):
             s = _fight_seed(key) * 100 + rep0 + rep
@@ -118,43 +185,11 @@ def gen_fight(job: tuple[Any, ...]) -> dict[str, Any]:
             )
             rm.debug_enter_combat(state, fight["room_type"])
             agent = sts2_rs.MctsCombatAgent(seed=s, sims=sims, boss_sims=boss_sims)
-            steps = 0
-            while rm.phase() == "combat" and not rm.is_over() and steps < 3000:
-                feats = sts2_rs.rollout_features(rm.combat_state(), version=version)
-                rec = agent.step(rm)
-                steps += 1
-                if rec is None:
-                    break
-                search = rec.get("combat_search")
-                if not search or len(feats["actions"]) < 2:
-                    continue
-                index = {_canon(a): i for i, a in enumerate(feats["actions"])}
-                visits = [0.0] * len(feats["actions"])
-                wins = total = 0
-                for a in search["actions"]:
-                    i = index.get(_canon(a["action"]))
-                    if i is None:
-                        out["unmatched"] += 1
-                        continue
-                    visits[i] += a["visits"]
-                    wins += a["wins"]
-                    total += a["visits"]
-                if not total:
-                    continue
-                chosen = index.get(_canon(search.get("recommended") or {}), -1)
-                row = {
-                    "state": feats["state"],
-                    "keys": feats["keys"],
-                    "x": feats["x"],
-                    "visits": visits,
-                    "chosen": chosen,
-                    "pwin": wins / total,
-                    "room": ROOMS.get(fight["room_type"], 0),
-                    "fight": fight_idx,
-                }
-                if version == TABLE_VERSION:
-                    row["monsters"] = feats["monsters"]
-                out["decisions"].append(row)
+            record_decisions(
+                rm, agent, version, ROOMS.get(fight["room_type"], 0), fight_idx, out, deadline
+            )
+            if "timeout" in out:
+                break
     except Exception as e:
         out["error"] = repr(e)
     return out
@@ -267,7 +302,17 @@ def gen(args: argparse.Namespace) -> int:
         else set()
     )
     jobs = [
-        (f, i, args.reps, args.rep0, args.sims, args.boss_sims, args.clair, args.feature_version)
+        (
+            f,
+            i,
+            args.reps,
+            args.rep0,
+            args.sims,
+            args.boss_sims,
+            args.clair,
+            args.feature_version,
+            args.fight_timeout_s,
+        )
         for i, f in pool
         if f"{f['file']}:{f['floor']}" not in done
     ]
@@ -278,14 +323,31 @@ def gen(args: argparse.Namespace) -> int:
     )
     writer = ShardWriter(args.out_dir, args.per_shard)
     t0 = time.time()
-    n = n_dec = err = unmatched = 0
+    n = n_dec = err = timeouts = unmatched = 0
+    pending = {f"{job[0]['file']}:{job[0]['floor']}" for job in jobs}
+    # A search step that never returns escapes the per-fight deadline; the
+    # parent then stops waiting, keeps what it has and names the stuck fights.
+    stall_s = args.fight_timeout_s + STALL_GRACE_S if args.fight_timeout_s > 0 else None
     with (
         get_context("spawn").Pool(args.procs) as pool_,
         open(done_path, "a", encoding="utf-8") as done_f,
     ):
-        for row in pool_.imap_unordered(gen_fight, jobs):
+        results = pool_.imap_unordered(gen_fight, jobs)
+        while pending:
+            try:
+                row = results.next(stall_s)
+            except mp.TimeoutError:
+                writer.flush()
+                print(
+                    f"[rollout_learn] STALLED: no fight finished in {stall_s:.0f}s; "
+                    f"{len(pending)} unfinished: {sorted(pending)[:20]}",
+                    flush=True,
+                )
+                return 1
+            pending.discard(row["key"])
             n += 1
             err += "error" in row
+            timeouts += "timeout" in row
             unmatched += row["unmatched"]
             n_dec += len(row["decisions"])
             writer.add(row["decisions"])
@@ -294,7 +356,140 @@ def gen(args: argparse.Namespace) -> int:
             if n % 200 == 0 or n == len(jobs):
                 print(
                     f"[rollout_learn] {n}/{len(jobs)} fights, {n_dec} decisions, {err} errors, "
+                    f"{timeouts} timeouts, "
                     f"{unmatched} unmatched root actions, {time.time() - t0:.0f}s",
+                    flush=True,
+                )
+    writer.flush()
+    print("DONE", flush=True)
+    return 0
+
+
+# ── gen-replay ───────────────────────────────────────────────────────────
+
+
+def gen_replay_fight(job: tuple[Any, ...]) -> dict[str, Any]:
+    """Every start of one replayed fight (GH #830 playout distillation).
+
+    A start is `(turn, mode)`: the in-sync turn start `turn` of the fight
+    (`ppo.turnplan.pro.fight_turns`, the exact engine state of the human's
+    game) and `mode` "pilot" (the pilot plays from there) or "human" (the
+    human's turn is forced first, checked against a plain replay, then the
+    pilot plays from the next turn: a takeover post-state). The pilot plays to
+    the end of the fight and every searched decision is recorded.
+    """
+    path, combat_id, starts, sims, boss_sims, version, env = job
+    import zlib
+
+    import sts2_rs
+
+    from ppo.bc_human import replay
+    from ppo.combat_bench import takeover
+    from ppo.turnplan.pro import fight_turns, room_type
+
+    agents.apply_env(env)
+    name = Path(path).name
+    # The fight id is the RUN's, so `train`'s validation split holds out runs.
+    out: dict[str, Any] = {"keys": [], "decisions": [], "unmatched": 0, "skipped": 0}
+    fight_idx = zlib.crc32(name.encode()) % (2**31)
+    try:
+        rec = next(r for r in replay.fights(path) if r["combat_id"] == combat_id)
+        turns, _ = fight_turns(rec)
+        room = room_type(rec["encounter"])
+        for t, mode in starts:
+            key = f"{name}:{combat_id}:{t}:{mode}"
+            out["keys"].append(key)
+            if t >= len(turns) or turns[t]["status"] != "legal":
+                out["skipped"] += 1
+                continue
+            state = turns[t]["state"]
+            seed = zlib.crc32(key.encode()) % (2**31)
+            rm = sts2_rs.RunManager(
+                seed=seed,
+                character=rec["character"].capitalize(),
+                ascension_level=rec["ascension"] or 0,
+            )
+            rm.debug_enter_combat(state.clone(), room)
+            if mode == "human":
+                check = state.clone()
+                ok = True
+                for a in turns[t]["actions"]:
+                    ra = takeover.run_action(a)
+                    if ra is None:
+                        ok = False
+                        break
+                    rm.take_action(ra)
+                    check.apply_step(a)
+                    if rm.phase() != "combat" or rm.is_over():
+                        break
+                cs = rm.combat_state() if rm.phase() == "combat" and not rm.is_over() else None
+                if not ok or cs is None or takeover._snapshot(cs) != takeover._snapshot(check):
+                    out["skipped"] += 1
+                    continue
+            agent = sts2_rs.MctsCombatAgent(seed=seed, sims=sims, boss_sims=boss_sims)
+            record_decisions(rm, agent, version, ROOMS.get(room, 0), fight_idx, out)
+    except Exception as e:
+        out["error"] = repr(e)[:300]
+    return out
+
+
+def gen_replay(args: argparse.Namespace) -> int:
+    """`gen` from replayed human positions: `--starts` JSONL rows
+    `{"file", "combat_id", "turn", "mode"}` (see `gen_replay_fight`), the
+    replay files found through the `pro collect` dir `--collect`. Choosing
+    the starts, and keeping panel runs out of them, is the caller's job
+    (`docs/experiments/2026-10-23-830-playout-distill/plan_starts.py`)."""
+    env = agents.build_env(agents.parse_kv(args.env or [], "--env"))
+    sel = json.loads(Path(args.collect, "selection.json").read_text(encoding="utf-8"))["files"]
+    path_of = {Path(r["file"]).name: r["file"] for r in sel}
+    by_fight: dict[tuple[str, str], list[tuple[int, str]]] = collections.defaultdict(list)
+    for line in open(args.starts, encoding="utf-8"):
+        r = json.loads(line)
+        by_fight[r["file"], r["combat_id"]].append((int(r["turn"]), r["mode"]))
+    os.makedirs(args.out_dir, exist_ok=True)
+    features: dict[str, Any] = {"feature_version": args.feature_version}
+    feat_path = os.path.join(args.out_dir, FEATURES_META)
+    if os.path.exists(feat_path) and json.load(open(feat_path, encoding="utf-8")) != features:
+        raise SystemExit(f"{feat_path} records other features; use a new --out-dir")
+    json.dump(features, open(feat_path, "w", encoding="utf-8"))
+    with open(os.path.join(args.out_dir, BENCH_META), "w", encoding="utf-8") as f:
+        json.dump({"starts": args.starts, "note": "panel runs excluded by the starts file"}, f)
+    done_path = os.path.join(args.out_dir, "done.txt")
+    done = (
+        set(open(done_path, encoding="utf-8").read().split())
+        if os.path.exists(done_path)
+        else set()
+    )
+    jobs = []
+    for (f, c), st in sorted(by_fight.items()):
+        st = [s for s in st if f"{f}:{c}:{s[0]}:{s[1]}" not in done]
+        if st:
+            jobs.append((path_of[f], c, st, args.sims, args.boss_sims, args.feature_version, env))
+    random.Random(args.sample_seed).shuffle(jobs)
+    print(
+        f"[rollout_learn gen-replay] {len(jobs)} fights, {sum(len(j[2]) for j in jobs)} starts",
+        flush=True,
+    )
+    writer = ShardWriter(args.out_dir, args.per_shard)
+    t0 = time.time()
+    n = n_dec = err = skipped = 0
+    with (
+        get_context("spawn").Pool(args.procs) as pool_,
+        open(done_path, "a", encoding="utf-8") as done_f,
+    ):
+        for row in pool_.imap_unordered(gen_replay_fight, jobs):
+            n += 1
+            err += "error" in row
+            skipped += row["skipped"]
+            n_dec += len(row["decisions"])
+            writer.add(row["decisions"])
+            for k in row["keys"]:
+                done_f.write(k + "\n")
+            done_f.flush()
+            if n % 50 == 0 or n == len(jobs):
+                print(
+                    f"[rollout_learn gen-replay] {n}/{len(jobs)} fights, {n_dec} decisions, "
+                    f"{err} errors, {skipped} skipped starts, {time.time() - t0:.0f}s",
                     flush=True,
                 )
     writer.flush()
@@ -585,6 +780,22 @@ def train(args: argparse.Namespace) -> int:
     data, keys, mkeys = load_shards(args.data)
     features = data_features(args.data)
     version = int(features["feature_version"])
+    init = json.load(open(args.init, encoding="utf-8")) if args.init else None
+    if init is not None:
+        if int(init.get("feature_version", 1)) != version or init.get("monster_keys"):
+            raise SystemExit(
+                "--init must be a net of the data's feature version, no encounter rows"
+            )
+        # The net's key vocabulary is the init's, extended by the data's new keys
+        # (their rows start at zero: the init's policy exactly, until trained).
+        net_keys = list(init["keys"])
+        pos = {k: i for i, k in enumerate(net_keys)}
+        for k in keys:
+            if k not in pos:
+                pos[k] = len(net_keys)
+                net_keys.append(k)
+        data["key"] = np.asarray([pos[k] for k in keys], np.int64)[data["key"]]
+        keys = net_keys
     use_mon = bool(args.monster_emb)
     if use_mon and (version != TABLE_VERSION or "mon" not in data):
         raise SystemExit("--monster-emb needs v2 gen data (gen --feature-version 2)")
@@ -644,17 +855,37 @@ def train(args: argparse.Namespace) -> int:
     va_idx = torch.as_tensor(np.flatnonzero(is_val), device=dev)
 
     torch.manual_seed(args.seed)
-    net = _playout_net(
-        torch, args.hidden, args.emb_dim, len(keys), version, len(mkeys) - 1 if use_mon else 0
-    ).to(dev)
-    for p in (net.emb.weight, net.bias.weight, net.proj.weight):
-        torch.nn.init.normal_(p, std=0.01)
-    with torch.no_grad():
-        # Start AT the heuristic playout: logit = -priority / tau.
-        net.lin.weight.zero_()
-        net.lin.weight[0, HEUR_FEATURE] = 1.0
-        if net.mon is not None:
-            net.mon.weight.zero_()
+    ref = None
+    if init is not None:
+        n0 = len(init["keys"])
+        base_net = _load_playout_net(torch, init)
+        net = _playout_net(torch, init["hidden"], init["emb_dim"], len(keys), version).to(dev)
+        with torch.no_grad():
+            for name, p in net.named_parameters():
+                q = dict(base_net.named_parameters())[name]
+                if name in ("emb.weight", "bias.weight"):
+                    p.zero_()
+                    p[:n0].copy_(q)
+                else:
+                    p.copy_(q)
+        if args.kl_init > 0:
+            import copy
+
+            ref = copy.deepcopy(net).eval()
+            for p in ref.parameters():
+                p.requires_grad_(False)
+    else:
+        net = _playout_net(
+            torch, args.hidden, args.emb_dim, len(keys), version, len(mkeys) - 1 if use_mon else 0
+        ).to(dev)
+        for p in (net.emb.weight, net.bias.weight, net.proj.weight):
+            torch.nn.init.normal_(p, std=0.01)
+        with torch.no_grad():
+            # Start AT the heuristic playout: logit = -priority / tau.
+            net.lin.weight.zero_()
+            net.lin.weight[0, HEUR_FEATURE] = 1.0
+            if net.mon is not None:
+                net.mon.weight.zero_()
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=args.wd)
 
     def logits(idx: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -693,12 +924,22 @@ def train(args: argparse.Namespace) -> int:
         raise SystemExit("no training decisions left after the validation split")
     base = metrics(va_idx, heuristic=True)
     print(f"[rollout_learn] heuristic on val: {base}", flush=True)
+    if init is not None:
+        meta_init = metrics(va_idx)
+        print(f"[rollout_learn] init net on val: {meta_init}", flush=True)
     steps_per_epoch = math.ceil(len(tr_idx) / args.batch)
     for epoch in range(args.epochs):
         perm = tr_idx[torch.randperm(len(tr_idx), device=dev)]
         tot = 0.0
         for b in torch.split(perm, args.batch):
             z, T = logits(b)
+            if ref is not None:
+                # Pull toward the init policy (a soft trust region): the target
+                # is (1 - kl) x teacher + kl x the init net's own distribution.
+                X, K, _, M = padded(b)
+                with torch.no_grad():
+                    p_ref = torch.softmax(ref(S_[b], X, K, M) / args.temperature, -1)
+                T = (1 - args.kl_init) * T + args.kl_init * p_ref
             loss = -(T * torch.log_softmax(z, -1)).sum(-1).mean()
             opt.zero_grad()
             loss.backward()
@@ -711,6 +952,8 @@ def train(args: argparse.Namespace) -> int:
         )
 
     meta = {"data": args.data, "decisions": n_dec, "val_heuristic": base, "val": metrics(va_idx)}
+    if init is not None:
+        meta.update(init=args.init, kl_init=args.kl_init, val_init=meta_init)
     # The combat-bench holdout each gen run applied (absent for gen runs made
     # before GH #830, which held nothing out).
     meta["bench_holdout"] = {
@@ -1394,6 +1637,12 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--boss-sims", type=int, default=4000)
     g.add_argument("--clair", action="store_true", help="clairvoyant teacher (STS2_RUNAI_HONEST=0)")
     g.add_argument("--procs", type=int, default=40)
+    g.add_argument(
+        "--fight-timeout-s",
+        type=float,
+        default=1800,
+        help="wall-clock budget per fight (all reps); its decisions so far are kept (0 = none)",
+    )
     g.add_argument("--per-shard", type=int, default=20000)
     g.add_argument(
         "--feature-version",
@@ -1407,6 +1656,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="do NOT drop combat-bench runs (ppo.combat_bench.holdout); warns and records it",
     )
+    gr = sub.add_parser(
+        "gen-replay", help="gen from replayed human positions (pilot or human-turn starts)"
+    )
+    gr.add_argument("--starts", required=True, help="JSONL of {file, combat_id, turn, mode}")
+    gr.add_argument("--collect", required=True, help="the `ppo.turnplan.pro collect` dir")
+    gr.add_argument("--out-dir", required=True)
+    gr.add_argument("--sims", type=int, default=4000)
+    gr.add_argument("--boss-sims", type=int, default=4000)
+    gr.add_argument("--feature-version", type=int, choices=(1, 2, 3, 4), default=1)
+    gr.add_argument("--env", action="append", default=[], metavar="K=V", help="engine env")
+    gr.add_argument("--procs", type=int, default=24)
+    gr.add_argument("--per-shard", type=int, default=20000)
+    gr.add_argument("--sample-seed", type=int, default=0)
     t = sub.add_parser("train", help="fit the playout policy, write its JSON weights")
     t.add_argument("--data", nargs="+", required=True, help="gen output dirs")
     t.add_argument("--out", required=True)
@@ -1432,6 +1694,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     t.add_argument("--seed", type=int, default=0)
     t.add_argument("--device", default="cuda")
+    t.add_argument(
+        "--init",
+        help="start from this net (JSON; same feature version): its weights and key "
+        "vocabulary, new data keys appended at zero; --hidden/--emb-dim are ignored",
+    )
+    t.add_argument(
+        "--kl-init",
+        type=float,
+        default=0.0,
+        help="with --init: blend this share of the init net's own policy into the target",
+    )
     rollout_starts.add_traj_parser(sub)
     r = sub.add_parser("rl", help="improve a playout policy by REINFORCE on playout outcomes")
     r.add_argument("--init", required=True, help="starting weights (JSON from train)")
@@ -1555,7 +1828,13 @@ def main(argv: list[str] | None = None) -> int:
         help="do NOT drop combat-bench runs (ppo.combat_bench.holdout); warns and records it",
     )
     args = ap.parse_args(argv)
-    return {"gen": gen, "train": train, "traj": rollout_starts.traj, "rl": rl}[args.cmd](args)
+    return {
+        "gen": gen,
+        "gen-replay": gen_replay,
+        "train": train,
+        "traj": rollout_starts.traj,
+        "rl": rl,
+    }[args.cmd](args)
 
 
 if __name__ == "__main__":

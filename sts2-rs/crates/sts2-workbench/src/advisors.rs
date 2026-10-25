@@ -701,8 +701,16 @@ fn legal_action_for(cs: &CombatState, v: &Value) -> Option<Action> {
 /// either).
 #[must_use]
 pub fn label_line(cs: &CombatState, pv: &[Value], loc: &Loc) -> Vec<String> {
+    walk_line(cs, pv, loc).0
+}
+
+/// [`label_line`], plus the position the line ended the turn from: the
+/// one its End turn was played in, or the won / lost position — `None` when
+/// the line stopped short of either (`realgame_coach.CoachEngine.ai_turn`).
+fn walk_line(cs: &CombatState, pv: &[Value], loc: &Loc) -> (Vec<String>, Option<CombatState>) {
     let mut state = cs.clone();
     let mut out = Vec::new();
+    let mut end = None;
     for v in pv {
         if state.is_over {
             break;
@@ -713,19 +721,147 @@ pub fn label_line(cs: &CombatState, pv: &[Value], loc: &Loc) -> Vec<String> {
         if let Some(idx) = row_stable_idx(v) {
             out.push(action_label(idx, &named_combat_state(&state, loc)));
         }
-        let ends_turn = matches!(action, Action::EndTurn);
+        if matches!(action, Action::EndTurn) {
+            end = Some(state.clone());
+            break;
+        }
         let hand_before = state.player.hand.clone();
         let _ = sts2_core::apply(&mut state, action);
+        if state.is_over {
+            end = Some(state);
+            break;
+        }
         let hand_gained = state
             .player
             .hand
             .iter()
             .any(|uid| !hand_before.contains(uid));
-        if ends_turn || hand_gained {
+        if hand_gained {
             break;
         }
     }
+    (out, end)
+}
+
+/// Powers whose removal is an enemy waking up (C# `AsleepPower` /
+/// `SlumberPower`): `realgame_coach._SLEEP_POWERS`.
+const SLEEP_POWERS: [&str; 2] = ["ASLEEP", "SLUMBER"];
+
+fn asleep(enemy: &Value) -> bool {
+    enemy["powers"].as_array().is_some_and(|ps| {
+        ps.iter().any(|p| {
+            p["name"]
+                .as_str()
+                .is_some_and(|n| SLEEP_POWERS.contains(&n))
+        })
+    })
+}
+
+/// `realgame_coach.board_events`: what a line visibly did to the enemies
+/// between two engine boards ([`rmx::wire`]) — `("wakes", i)` /
+/// `("kills", i)` per encounter slot, or a lone `("wins", -1)`.
+fn board_events(start: &Value, end: &Value) -> Vec<(&'static str, i64)> {
+    if end["phase"] == "Victory" {
+        return vec![("wins", -1)];
+    }
+    let empty = Vec::new();
+    let after = end["encounter"].as_array().unwrap_or(&empty);
+    let mut out = Vec::new();
+    for (i, e) in start["encounter"]
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .enumerate()
+    {
+        if e["is_dead"].as_bool() == Some(true) {
+            continue;
+        }
+        let Some(f) = after.iter().find(|f| f["uid"] == e["uid"]) else {
+            continue;
+        };
+        if f["is_dead"].as_bool() == Some(true) {
+            out.push(("kills", i as i64));
+        } else if asleep(e) && !asleep(f) {
+            out.push(("wakes", i as i64));
+        }
+    }
     out
+}
+
+/// `realgame_coach.why_text`: the recap's reason line — what one line did on
+/// the board that the other did not, e.g. "Your line wakes Lagavulin
+/// Matriarch on turn 1" (GH #888). `None` when both lines did the same.
+fn why_text(
+    you: &[(&'static str, i64)],
+    ai: &[(&'static str, i64)],
+    names: &[String],
+    turn: &Value,
+) -> Option<String> {
+    let phrase = |&(kind, i): &(&str, i64)| {
+        if kind == "wins" {
+            return "wins the fight".to_string();
+        }
+        let name = usize::try_from(i)
+            .ok()
+            .and_then(|i| names.get(i).cloned())
+            .unwrap_or_else(|| format!("enemy {}", i + 1));
+        format!("{kind} {name}")
+    };
+    let mut parts = Vec::new();
+    for (subject, mine, theirs) in [("your line", you, ai), ("the AI's line", ai, you)] {
+        let only: Vec<String> = mine
+            .iter()
+            .filter(|e| !theirs.contains(e))
+            .map(phrase)
+            .collect();
+        if !only.is_empty() {
+            parts.push(format!("{subject} {}", only.join(" and ")));
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let mut text = parts.join("; ");
+    if let Some(t) = turn.as_i64() {
+        text.push_str(&format!(" on turn {t}"));
+    }
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+}
+
+/// The reason line of a graded turn: the boards the turn started from
+/// (`start`), the player's End turn was played from (`you_end`) and the AI's
+/// line ended at (`ai_end`). Enemy names are the turn context's board labels
+/// by encounter slot, falling back to the view's name.
+fn turn_why(
+    start: &CombatState,
+    you_end: &CombatState,
+    ai_end: Option<&CombatState>,
+    named: &Value,
+) -> Option<String> {
+    let ai_end = ai_end?;
+    let start = rmx::wire(start);
+    let empty = Vec::new();
+    let mut names: Vec<String> = start["encounter"]
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .map(|e| crate::display_maps::monster_title(e["kind"].as_str().unwrap_or("?")))
+        .collect();
+    let view = named["enemies"].as_array().unwrap_or(&empty);
+    for (e, label) in view.iter().zip(crate::enemy_labels::enemy_labels(view)) {
+        if let Some(slot) = e["index"].as_u64().and_then(|i| names.get_mut(i as usize)) {
+            *slot = label;
+        }
+    }
+    why_text(
+        &board_events(&start, &rmx::wire(you_end)),
+        &board_events(&start, &rmx::wire(ai_end)),
+        &names,
+        &named["round"],
+    )
 }
 
 /// Index of the score row for `(stable_idx, target)` — [`match_row`]'s
@@ -1381,8 +1517,14 @@ pub fn last_turn_grade(sess: &Session, config: &Value) -> Result<Option<Value>, 
     let Some(grade) = grade_turn(&regrets) else {
         return Ok(None);
     };
+    let (head, _) = steps[0];
+    let named = resolve_state_names(Some(&head.state), sess.loc());
+    let mut why = None;
     let ai = first.as_ref().map_or_else(Vec::new, |(cs, pv, scores)| {
-        let line = label_line(cs, pv, sess.loc());
+        let (line, ai_end) = walk_line(cs, pv, sess.loc());
+        if let (Some(start), Some(you_end)) = (head.combat.as_ref(), end.combat.as_ref()) {
+            why = turn_why(start, you_end, ai_end.as_ref(), &named);
+        }
         if line.is_empty() {
             let best = best_row(scores);
             vec![best["action"].as_str().unwrap_or("?").to_string()]
@@ -1390,8 +1532,6 @@ pub fn last_turn_grade(sess: &Session, config: &Value) -> Result<Option<Value>, 
             line
         }
     });
-    let (head, _) = steps[0];
-    let named = resolve_state_names(Some(&head.state), sess.loc());
     let mut record = json!({
         "kind": "turn",
         "id": format!("turn:{}", head.id),
@@ -1400,6 +1540,7 @@ pub fn last_turn_grade(sess: &Session, config: &Value) -> Result<Option<Value>, 
         "floor": Value::Null,
         "you": you,
         "ai": ai,
+        "why": why,
         "peeked": peeked,
         "ungraded_actions": ungraded_actions,
         "context": turn_context(&named),
@@ -2644,6 +2785,139 @@ mod tests {
             json!({"action": "end_turn"}),
         ];
         assert_eq!(label_line(&cs, &pv, &test_loc()), vec!["Pommel Strike"]);
+    }
+
+    /// The AI line's end board: the position its End turn is played in;
+    /// none when it stops at a draw first (GH #888).
+    #[test]
+    fn walk_line_ends_where_the_end_turn_is_played() {
+        let cs = ironclad_with_hand(&["BASH", "DEFEND_IRONCLAD", "STRIKE_IRONCLAD"]);
+        let defend = play_slot(&cs, 1);
+        let mut after = cs.clone();
+        let _ = sts2_core::apply(&mut after, legal_action_for(&cs, &defend).unwrap());
+        let pv = vec![defend, json!({"action": "end_turn"})];
+        let (line, end) = walk_line(&cs, &pv, &test_loc());
+        assert_eq!(line, vec!["Defend", "end turn"]);
+        assert_eq!(rmx::wire(&end.expect("end board")), rmx::wire(&after));
+        let drawn = ironclad_fight(&["POMMEL_STRIKE"], &["DEFEND_IRONCLAD", "BASH"]);
+        let pv = vec![play_slot(&drawn, 0), json!({"action": "end_turn"})];
+        assert!(walk_line(&drawn, &pv, &test_loc()).1.is_none());
+    }
+
+    /// On a real board: three Strikes break the sleeping Lagavulin's 12
+    /// block and wake it, a Defend does not — the reason line names it from
+    /// the turn context.
+    #[test]
+    fn turn_why_names_the_woken_enemy() {
+        let deck: Vec<String> = ["STRIKE_IRONCLAD"; 3]
+            .iter()
+            .chain(&["DEFEND_IRONCLAD"])
+            .map(|s| (*s).to_string())
+            .collect();
+        let cs = sts2_wire::scenario::build_scenario_state(
+            1,
+            "Ironclad",
+            &deck,
+            80,
+            80,
+            &[],
+            &[],
+            "LAGAVULIN_MATRIARCH_BOSS",
+            0,
+            None,
+            None,
+        )
+        .expect("scenario builds");
+        let after = |ids: &[&str]| {
+            let mut out = cs.clone();
+            for id in ids {
+                let slot = out
+                    .player
+                    .hand
+                    .iter()
+                    .position(|&u| {
+                        sts2_core::card_by_uid(&out.cards, u)
+                            .is_some_and(|c| c.card_id.to_python_name() == *id)
+                    })
+                    .expect("in hand");
+                let action =
+                    legal_action_for(&out, &play_slot(&out, u8::try_from(slot).unwrap())).unwrap();
+                let _ = sts2_core::apply(&mut out, action);
+            }
+            out
+        };
+        let strike = after(&["STRIKE_IRONCLAD"; 3]);
+        let defend = after(&["DEFEND_IRONCLAD"]);
+        let named = named_combat_state(&cs, &test_loc());
+        assert_eq!(
+            turn_why(&cs, &strike, Some(&defend), &named).as_deref(),
+            Some("Your line wakes Lagavulin Matriarch on turn 1")
+        );
+        assert_eq!(turn_why(&cs, &defend, Some(&defend), &named), None);
+        assert_eq!(turn_why(&cs, &strike, None, &named), None);
+    }
+
+    fn lagavulin(asleep: bool, dead: bool, uid: i64) -> Value {
+        let powers = if asleep {
+            json!([{"name": "ASLEEP", "amount": 3}])
+        } else {
+            json!([])
+        };
+        json!({"kind": "LAGAVULIN_MATRIARCH", "uid": uid, "is_dead": dead, "powers": powers})
+    }
+
+    fn board(enemies: &[Value], phase: &str) -> Value {
+        json!({"phase": phase, "encounter": enemies})
+    }
+
+    /// Twin of `test_realgame_coach.TestWhy` (GH #888).
+    #[test]
+    fn board_events_wake_kill_and_win() {
+        let p = "PlayerPhase";
+        let start = board(&[lagavulin(true, false, 7), lagavulin(false, false, 8)], p);
+        let end = board(&[lagavulin(false, false, 7), lagavulin(false, true, 8)], p);
+        assert_eq!(board_events(&start, &end), vec![("wakes", 0), ("kills", 1)]);
+        assert_eq!(
+            board_events(&start, &board(&[], "Victory")),
+            vec![("wins", -1)]
+        );
+        assert!(board_events(&start, &start).is_empty());
+        let mut slumber = lagavulin(false, false, 7);
+        slumber["powers"] = json!([{"name": "SLUMBER"}]);
+        assert_eq!(
+            board_events(
+                &board(&[slumber], p),
+                &board(&[lagavulin(false, false, 7)], p)
+            ),
+            vec![("wakes", 0)]
+        );
+    }
+
+    #[test]
+    fn why_text_names_each_sides_extra_events() {
+        let names = ["Lagavulin Matriarch".to_string(), "Cultist".to_string()];
+        assert_eq!(
+            why_text(&[("wakes", 0)], &[], &names, &json!(1)).as_deref(),
+            Some("Your line wakes Lagavulin Matriarch on turn 1")
+        );
+        assert_eq!(
+            why_text(
+                &[("wakes", 0)],
+                &[("wakes", 0), ("kills", 1)],
+                &names,
+                &json!(2)
+            )
+            .as_deref(),
+            Some("The AI's line kills Cultist on turn 2")
+        );
+        assert_eq!(
+            why_text(&[("wakes", 0)], &[("wins", -1)], &names, &json!(4)).as_deref(),
+            Some("Your line wakes Lagavulin Matriarch; the AI's line wins the fight on turn 4")
+        );
+        assert_eq!(
+            why_text(&[("kills", 1)], &[("kills", 1)], &names, &json!(1)),
+            None
+        );
     }
 
     fn end_turn_rows() -> Vec<Value> {

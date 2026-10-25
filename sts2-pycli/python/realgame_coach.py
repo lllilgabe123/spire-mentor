@@ -593,6 +593,8 @@ class CoachEngine:
             draw_widening_c=c.resolved_draw_widening_c(),
             endturn_widening_c=c.endturn_widening_c,
             endturn_widening_alpha=c.endturn_widening_alpha,
+            win_hp_carry=c.win_hp_carry,
+            win_potion_carry=c.win_potion_carry,
         )
 
     def _recommend(self, cs: Any, cfg: Any, sims: int, threads: int) -> dict[str, Any]:
@@ -611,6 +613,8 @@ class CoachEngine:
             draw_widening_c=c.resolved_draw_widening_c(),
             endturn_widening_c=c.endturn_widening_c,
             endturn_widening_alpha=c.endturn_widening_alpha,
+            win_hp_carry=c.win_hp_carry,
+            win_potion_carry=c.win_potion_carry,
         )
 
     def catch_up(self, cs: Any, cfg: Any, sims: int) -> list[dict[str, Any]]:

@@ -1,6 +1,6 @@
 {
  "act": null,
- "best_label": "Unleash",
+ "best_label": "Bodyguard",
  "best_line": [],
  "best_mean_hp": null,
  "best_win_prob": 1.0,
@@ -9,8 +9,8 @@
  "hp_drop": null,
  "idx": 50,
  "is_blunder": false,
- "matched_best": false,
- "message": "Turn 3: Bodyguard instead of Unleash dropped P(win) 100%→100% (−0 pts)",
+ "matched_best": true,
+ "message": "Turn 3: Bodyguard matched the MCTS line (P(win) 100%)",
  "n_actions": 5,
  "node_id": null,
  "played_label": "Bodyguard",
@@ -20,6 +20,6 @@
  "regret": 0.0,
  "severity": 0.0,
  "turn": 3,
- "verdict": "uncertain",
+ "verdict": "best",
  "visits": 5
 }

@@ -35,6 +35,12 @@ def scraper_dir(sub: str) -> str:
     return str(Path("sts2_run_scraper") / "data" / sub)
 
 
+# `combat_end.result` of a finished fight: the game logs a death as "loss"
+# (never "defeat"); a fight cut by a reload or a quit ends "abandoned".
+FINISHED = ("victory", "loss")
+DEATH = "loss"
+
+
 # Decision event types: what the human chose. `pick` only counts when the
 # human made it (`selector == "human"`) inside a combat.
 DECISION_TYPES = ("play", "potion_start", "potion_used", "end_turn", "pick")
@@ -76,6 +82,9 @@ class _RunTracker:
             self.deck = d["cards"]
         elif t == "relic" and d.get("id"):
             self.relics.append(d["id"])
+        elif t == "relic_lost" and d.get("id") in self.relics:
+            # `removed` / `replaced` by an event; a replacement logs its own `relic`.
+            self.relics.remove(d["id"])
         elif t in ("hp", "max_hp") and d.get("dst", "player") == "player":
             if "hp" in d:
                 self.hp = d["hp"]
@@ -100,6 +109,29 @@ class _RunTracker:
                 return
 
 
+def _take_turn_end_hits(events: list[dict[str, Any]], own: str | None) -> list[dict[str, Any]]:
+    """Pop this turn's end-of-turn hand damage (Infection, Burn, ...) from `events`.
+
+    The mod logs it before the player's `end_turn`, so it trails the previous
+    decision's events. Only hits on the player by a card other than the last
+    play's own card, after that play or the turn's start, are taken (GH #918).
+    """
+    start = 0
+    for i, e in enumerate(events):
+        if e["t"] == "play" or (e["t"] == "turn" and e.get("side") == "player"):
+            start = i + 1
+            own = e.get("id") if e["t"] == "play" else None
+    taken = [
+        e
+        for e in events[start:]
+        if e["t"] == "hit" and e.get("dst") == "player" and e.get("card") and e["card"] != own
+    ]
+    if taken:
+        ids = {id(e) for e in taken}
+        events[start:] = [e for e in events[start:] if id(e) not in ids]
+    return taken
+
+
 def fights(path: str) -> Iterator[dict[str, Any]]:
     """One record per combat attempt in the replay at `path`."""
     it = _events(path)
@@ -108,9 +140,11 @@ def fights(path: str) -> Iterator[dict[str, Any]]:
         return
     run = _RunTracker(header)
     cur: dict[str, Any] | None = None
+    attempts: dict[Any, int] = {}  # combat_id -> attempts started so far
     for d in it:
         t = d["t"]
         if t == "combat_start":
+            attempts[d.get("combat_id")] = attempts.get(d.get("combat_id"), -1) + 1
             if cur is not None:
                 cur["result"] = "abandoned"  # reloaded before combat_end
                 yield cur
@@ -123,6 +157,8 @@ def fights(path: str) -> Iterator[dict[str, Any]]:
                 "floor": d.get("floor"),
                 "act": d.get("act"),
                 "combat_id": d.get("combat_id"),
+                # 0 for the first attempt; k > 0 after k reloads of this fight.
+                "attempt": attempts.get(d.get("combat_id"), 0),
                 "attempt_id": d.get("attempt_id"),
                 "encounter": d.get("encounter"),
                 "enemies": d.get("enemies", []),
@@ -157,15 +193,25 @@ def fights(path: str) -> Iterator[dict[str, Any]]:
             cur["potions_started"][d["id"]] -= 1
         elif t == "potion_start":
             cur["potions_started"][d.get("id")] = cur["potions_started"].get(d.get("id"), 0) + 1
+        # A replayed play (Glam, Burst, Double Tap, ...: `play_index` > 0 of
+        # `play_count`) is logged as its own non-auto `play`, but the human
+        # chose only the first; the replays are that decision's aftermath.
         is_decision = (
-            (t == "play" and not d.get("auto"))
+            (t == "play" and not d.get("auto") and not d.get("play_index"))
             or t == "potion_start"
             or (t == "potion_used" and not started)
             or (t == "end_turn" and d.get("side") == "player")
             or (t == "pick" and d.get("selector") == "human")
         )
         if is_decision:
-            cur["decisions"].append({"ev": d, "after": []})
+            after: list[dict[str, Any]] = []
+            if t == "end_turn":
+                prev = cur["decisions"][-1] if cur["decisions"] else None
+                after = _take_turn_end_hits(
+                    prev["after"] if prev else cur["pre"],
+                    prev["ev"].get("id") if prev and prev["ev"]["t"] == "play" else None,
+                )
+            cur["decisions"].append({"ev": d, "after": after})
         elif cur["decisions"]:
             cur["decisions"][-1]["after"].append(d)
         else:

@@ -221,6 +221,18 @@ impl ClassScale {
     }
 }
 
+/// Whether a fight's belt is priced as carried into the NEXT act — the
+/// `is_boss` argument of [`PotionOcTable::charge_slots`] and its critic
+/// twin. True for a boss fight, EXCEPT the first boss of an A10
+/// DoubleBoss act: there the belt carries into the second boss of the
+/// SAME act, so it keeps its current-act price. Before this rule the
+/// first act-3 boss at A10 was read as "the final boss" and charged zero
+/// — the opposite of the carry it actually has (GH #830 elite-gap: the
+/// second boss beats 74% of the A10 runs that reach it).
+pub(crate) fn prices_next_act(is_boss: bool, awaiting_second_boss: bool) -> bool {
+    is_boss && !awaiting_second_boss
+}
+
 impl PotionOc {
     /// Per-slot root-Q charges for the current combat belt (dispatching
     /// twin of [`PotionOcTable::charge_slots`]).
@@ -231,6 +243,7 @@ impl PotionOc {
         is_boss: bool,
         class_scale: ClassScale,
     ) -> [f32; 8] {
+        let is_boss = prices_next_act(is_boss, rm.run_state.awaiting_second_boss());
         let mut charges = match self {
             PotionOc::Table(t) => {
                 t.charge_slots(&combat.player.potions, rm.run_state.act_index, is_boss)
@@ -849,6 +862,24 @@ mod tests {
         // GOOD's highest act is 3 => a boss in act 3 has no act-4 carry.
         let slots = t.charge_slots(&belt, 3, true);
         assert!(slots.iter().all(|&c| c == 0.0), "{slots:?}");
+    }
+
+    /// The FIRST boss of an A10 DoubleBoss act is not a final boss: the
+    /// belt carries into the second boss of the same act, so it is priced
+    /// at the current act's value — non-zero — while the second (last)
+    /// boss still charges nothing.
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn first_of_two_bosses_prices_the_current_act() {
+        let t = parse_potion_oc(GOOD, "test");
+        let belt = [PotionKind::PowerPotion];
+        let first = t.charge_slots(&belt, 3, prices_next_act(true, true));
+        assert!((first[0] - victory_hp_equiv_to_q(16.0)).abs() < 1e-7);
+        let last = t.charge_slots(&belt, 3, prices_next_act(true, false));
+        assert_eq!(last[0], 0.0);
+        // A non-boss fight is unaffected by the double-boss flag.
+        assert!(!prices_next_act(false, true));
+        assert!(!prices_next_act(false, false));
     }
 
     #[test]

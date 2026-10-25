@@ -123,17 +123,38 @@ public class SimCombatHandler : IRoomHandler, IHandler
         return false;
     }
 
+    /// <summary>
+    /// The teammate an ally-target card or potion goes to (co-op only; such
+    /// cards are unplayable alone). The advisor sees no teammates, so it
+    /// cannot name one: the living teammate lowest on HP, which is what a heal
+    /// or block wants and harmless for a buff.
+    /// </summary>
+    internal static Creature? TeammateTarget(Player player)
+    {
+        Creature? me = player.Creature;
+        ICombatState? combat = me?.CombatState;
+        if (combat == null)
+            return null;
+        return combat.PlayerCreatures
+            .Where(c => c != me && c.IsAlive)
+            .OrderBy(c => c.MaxHp > 0 ? (double)c.CurrentHp / c.MaxHp : 1.0)
+            .FirstOrDefault();
+    }
+
     private static bool IsPlayerInPlayPhase(Player player) =>
         player.PlayerCombatState?.Phase == PlayerTurnPhase.Play;
 
     /// <summary>
-    /// Target for a card play. Only AnyEnemy cards take a target. A
-    /// non-negative index addresses the full enemy list (so indices match the
-    /// serialized <c>enemies</c> array) and must land on a hittable enemy; a
-    /// negative index means "first hittable enemy".
+    /// Target for a card play. AnyEnemy cards take an enemy: a non-negative
+    /// index addresses the full enemy list (so indices match the serialized
+    /// <c>enemies</c> array) and must land on a hittable enemy; a negative
+    /// index means "first hittable enemy". Co-op's AnyAlly cards take a
+    /// teammate (<see cref="TeammateTarget"/>).
     /// </summary>
     internal static Creature? ResolveTarget(CardModel card, int targetIndex)
     {
+        if (card.TargetType == TargetType.AnyAlly)
+            return TeammateTarget(card.Owner);
         if (card.TargetType != TargetType.AnyEnemy)
             return null;
 
@@ -281,6 +302,12 @@ public class SimCombatHandler : IRoomHandler, IHandler
             SendMissingTarget(targetIndex, potion.Id.Entry, runState, player);
             return;
         }
+        if (potion.TargetType == TargetType.AnyAlly && target == null)
+        {
+            SimProtocolHelpers.SendError("target_required",
+                $"{potion.Id.Entry} needs a living teammate and there is none", runState, player);
+            return;
+        }
 
         Logger.Log($"[SimCombat] Using potion in slot {slot} (target_index={targetIndex})");
         await UsePotionAndWaitAsync(player, potion, slot, target, ct);
@@ -327,8 +354,9 @@ public class SimCombatHandler : IRoomHandler, IHandler
 
     /// <summary>
     /// Target for a potion use. AnyEnemy follows the same addressing as
-    /// <see cref="ResolveTarget"/>; self/ally potions target the player;
-    /// everything else auto-targets (null).
+    /// <see cref="ResolveTarget"/>; self/any-player potions target the player;
+    /// ally potions a teammate (<see cref="TeammateTarget"/>, null when none
+    /// is alive); everything else auto-targets (null).
     /// </summary>
     internal static Creature? ResolvePotionTarget(Player player, PotionModel? potion, int targetIndex)
     {
@@ -349,9 +377,11 @@ public class SimCombatHandler : IRoomHandler, IHandler
                 Creature candidate = combat.Enemies[targetIndex];
                 return candidate.IsHittable ? candidate : null;
             }
+            case TargetType.AnyAlly:
+                // Never the user (PotionModel.IsValidTarget).
+                return TeammateTarget(player);
             case TargetType.Self:
             case TargetType.AnyPlayer:
-            case TargetType.AnyAlly:
                 return player.Creature;
             default:
                 return null;

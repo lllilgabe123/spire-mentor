@@ -95,3 +95,5 @@ sts2_rs-pin/
 experiments/turnplan-g0/
 # Turn-plan pro-replay feasibility shards (docs/experiments/2026-10-22-turnplan-pro-feasibility.md).
 experiments/turnplan-pro/
+# GH #830 elite-gap diagnosis runs (docs/experiments/2026-10-23-830-elite-gap.md).
+experiments/elite-gap/

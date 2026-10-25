@@ -448,6 +448,13 @@ internal static class SimScreenAdvice
                 });
         }
 
+        if (SimMp.HasVotedOnTreasure(LocalContext.GetMe(RunManager.Instance.DebugOnlyGetState())))
+        {
+            // Co-op: the relics are voted on (ties by rock-paper-scissors);
+            // ours is in and the holders stay up for the others'.
+            return null;
+        }
+
         var options = new List<Dictionary<string, object>>();
         var labels = new List<string>();
         for (int i = 0; i < holders.Count; ++i)
@@ -534,9 +541,12 @@ internal static class SimScreenAdvice
         // An option still has to be in room.Options: after a selection the
         // game drops it from the list first and swaps the buttons later
         // (UpdateRestSiteOptions), and clicking a stale button throws (#731).
+        // Co-op's Mend (heal a teammate) opens a teammate picker autoplay
+        // cannot answer, and the advisor does not see teammates' HP to judge
+        // it; it stays a human-only option.
         var buttons = UiHelper.FindAll<NRestSiteButton>(room)
             .Where(b => GodotObject.IsInstanceValid(b) && b.Option.IsEnabled
-                && room.Options.Contains(b.Option))
+                && room.Options.Contains(b.Option) && b.Option.OptionId != "MEND")
             .ToList();
         if (buttons.Count == 0)
         {
@@ -816,6 +826,13 @@ internal static class SimScreenAdvice
 
         RunState? runState = RunManager.Instance.DebugOnlyGetState();
         Player? me = LocalContext.GetMe(runState);
+        if (SimMp.HasVotedOnEvent(me))
+        {
+            // Co-op shared event: our vote is in; the options stay up for the
+            // others'. Pressing again (or the looping-event escape pressing
+            // another option) would change it.
+            return null;
+        }
         Dictionary<string, object> state = new()
         {
             [NonCombatBridgeProtocol.TypeField] = NonCombatBridgeProtocol.EventState,
@@ -1299,8 +1316,9 @@ internal static class SimScreenAdvice
             return null;
         }
         RunState? runState = RunManager.Instance.DebugOnlyGetState();
-        if (runState == null)
+        if (runState == null || SimMp.HasVotedOnMap(LocalContext.GetMe(runState)))
         {
+            // Co-op: our vote is in; the map stays open for the others'.
             return null;
         }
         List<NMapPoint> available = SimMapHandler.AvailableNodes(map, runState);

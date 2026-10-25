@@ -164,6 +164,16 @@ class TestEngineIsBuiltForTheBuild:
         # And the round trip keeps it, so the mirror's carried state does too.
         assert sts2_rs.state_to_dict(cs).get("game_version") == "v0.111.0"
 
+    def test_beta_only_card_in_hand_builds(self) -> None:
+        # GH #929: the DowsingRod's quest card (a v0.111.0-only id) in hand
+        # failed every advice request with UnsupportedStateError.
+        board = _board(game_version="v0.111.0")
+        card = board["hand"][0]
+        card.update(id="DOWSING", name="Dowsing", type="Quest", rarity="Quest")
+        card.update(target_type="None", cost=-1, base_cost=-1, effective_cost=-1)
+        cs = sts2_rs.state_from_dict(_wire(board))
+        assert "DOWSING" in json.dumps(sts2_rs.state_to_dict(cs))
+
 
 # ---------------------------------------------------------------------------
 # The advisor's request handler

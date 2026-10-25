@@ -2118,6 +2118,8 @@ class CombatMirror:
             endturn_widening_c=cfg.endturn_widening_c,
             endturn_widening_alpha=cfg.endturn_widening_alpha,
             common_random_numbers=cfg.common_random_numbers,
+            win_hp_carry=cfg.win_hp_carry,
+            win_potion_carry=cfg.win_potion_carry,
         )
 
     def search_choice_picks(

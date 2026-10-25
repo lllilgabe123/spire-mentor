@@ -12,9 +12,26 @@
  "scores": [
   {
    "action": "Neutralize",
+   "hp_n": 18,
+   "hp_sd": 4.4222,
+   "is_best": true,
+   "losses": 5,
+   "low_confidence": false,
+   "mean_final_hp": 5.3333,
+   "q": 0.4105,
+   "q_saturated": false,
+   "stable_idx": 1,
+   "target_index": 2,
+   "ties": 0,
+   "visits": 18,
+   "win_prob": 0.7222,
+   "wins": 13
+  },
+  {
+   "action": "Neutralize",
    "hp_n": 15,
    "hp_sd": 4.0792,
-   "is_best": true,
+   "is_best": false,
    "losses": 4,
    "low_confidence": false,
    "mean_final_hp": 4.6,
@@ -43,23 +60,6 @@
    "visits": 15,
    "win_prob": 0.7333,
    "wins": 11
-  },
-  {
-   "action": "Neutralize",
-   "hp_n": 18,
-   "hp_sd": 4.4222,
-   "is_best": false,
-   "losses": 5,
-   "low_confidence": false,
-   "mean_final_hp": 5.3333,
-   "q": 0.4105,
-   "q_saturated": false,
-   "stable_idx": 1,
-   "target_index": 2,
-   "ties": 0,
-   "visits": 18,
-   "win_prob": 0.7222,
-   "wins": 13
   }
  ]
 }

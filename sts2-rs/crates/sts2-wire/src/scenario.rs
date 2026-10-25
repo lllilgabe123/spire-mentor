@@ -259,6 +259,15 @@ pub fn build_scenario_state_for_version_with_slots(
 pub struct RunRngInit<'a> {
     pub run_seed: u64,
     pub counters: &'a [(String, u32)],
+    /// C#'s `RunState.TotalFloor` when the room's monsters were generated.
+    /// With it the roster is rolled off the per-encounter `Rng(Seed +
+    /// TotalFloor + hash(id))`, as the run path does
+    /// (`run_callbacks::build_combat_for_room`), so an encounter that draws
+    /// its monsters' spawn args there (Decimillipede's opener rotation,
+    /// ScrollsOfBiting, CorpseSlug, TwoTailedRat) gets the game's draw.
+    /// `None` keeps the old roster: the encounter table's static one, or a
+    /// `monster_override`'s kinds without spawn args (GH #918).
+    pub encounter_floor: Option<i64>,
 }
 
 /// [`build_scenario_state_for_version_with_slots`] that can replace the
@@ -511,6 +520,7 @@ pub fn build_scenario_state_with_run_rng(
     // GH #788: seeded in the scenario's game build (v0.107.1 keeps the low
     // 32 bits of `seed`, exactly the old `RunRngSet::new(seed as i32)`).
     let mut run_rng = sts2_core::run_rng_set::RunRngSet::new_for(game_version, seed);
+    let encounter_floor = run_rng_init.as_ref().and_then(|init| init.encounter_floor);
     if let Some(init) = run_rng_init {
         run_rng = sts2_core::run_rng_set::RunRngSet::new_for(game_version, init.run_seed);
         for (name, counter) in init.counters {
@@ -538,16 +548,35 @@ pub fn build_scenario_state_with_run_rng(
     // Inklet slot, KinFollower slot, etc.); the harness-override path
     // (sts2-rs-3010t) defaults to `MonsterSpawnArgs::None` since C#
     // doesn't round-trip per-monster spawn args today.
+    //
+    // GH #918: a recorded fight that knows its floor rolls the encounter's
+    // roster exactly as the run path does, and an override naming the same
+    // kinds keeps that roll's spawn args. Without this a SpireCodex replay's
+    // Decimillipede always opened on the `num2 = 0` rotation, so the human's
+    // targeted hits, Weak and Thorns landed on segments carrying other moves
+    // than in the game.
+    let rolled: Option<Vec<(MonsterKind, MonsterSpawnArgs)>> = encounter_floor.map(|floor| {
+        let mut enc_rng = run_rng.named_at(floor, enc.id);
+        enc.roster(&mut enc_rng).into_iter().collect()
+    });
     let roster: Vec<(MonsterKind, MonsterSpawnArgs)> = match monster_override {
-        Some(names) => names
-            .iter()
-            .map(|n| {
-                state_dict::monster_kind_from_python_name(n)
+        Some(names) => {
+            let kinds = names
+                .iter()
+                .map(|n| {
+                    state_dict::monster_kind_from_python_name(n)
+                        .ok_or_else(|| format!("unknown monster id {n:?}"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            match rolled {
+                Some(r) if r.iter().map(|(k, _)| *k).eq(kinds.iter().copied()) => r,
+                _ => kinds
+                    .into_iter()
                     .map(|k| (k, MonsterSpawnArgs::None))
-                    .ok_or_else(|| format!("unknown monster id {n:?}"))
-            })
-            .collect::<Result<_, _>>()?,
-        None => enc.monsters.to_vec(),
+                    .collect(),
+            }
+        }
+        None => rolled.unwrap_or_else(|| enc.monsters.to_vec()),
     };
 
     // sts2-rs-u3wjj: when the coverage sweep forwards C#'s observed
@@ -807,6 +836,70 @@ mod tests {
             None,
             None,
         )
+    }
+
+    /// GH #918: a recorded fight that passes its floor rolls Decimillipede's
+    /// opener rotation off the per-encounter RNG, the run path's draw, and the
+    /// kind-only roster override a replay sends keeps that roll. Without the
+    /// floor every rebuild opened on the `num2 = 0` rotation.
+    #[test]
+    fn encounter_floor_rolls_the_decimillipede_rotation() {
+        let version = sts2_core::GameVersion::V0_111_0;
+        let deck = vec!["STRIKE_IRONCLAD".to_string(); 5];
+        let kinds: Vec<String> = [
+            "DecimillipedeSegmentFront",
+            "DecimillipedeSegmentMiddle",
+            "DecimillipedeSegmentBack",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+        let run_seed = 0x5eed_u64;
+        let openers = |floor: Option<i64>| -> Vec<&'static str> {
+            super::build_scenario_state_with_run_rng(
+                version,
+                1,
+                "Ironclad",
+                &deck,
+                70,
+                80,
+                &[],
+                &[],
+                "DECIMILLIPEDE_ELITE",
+                10,
+                Some(&kinds),
+                None,
+                None,
+                Some(super::RunRngInit {
+                    run_seed,
+                    counters: &[],
+                    encounter_floor: floor,
+                }),
+            )
+            .expect("scenario builds")
+            .creatures
+            .iter()
+            .filter_map(|c| {
+                c.ai.as_ref()
+                    .map(sts2_core::monster_ai::MonsterAi::current_state_id)
+            })
+            .collect()
+        };
+        const MOVES: [&str; 3] = ["WRITHE", "BULK", "CONSTRICT"];
+        assert_eq!(openers(None), MOVES);
+        let mut rotations = std::collections::BTreeSet::new();
+        for floor in 2..20 {
+            let set = sts2_core::run_rng_set::RunRngSet::new_for(version, run_seed);
+            let num2 = set
+                .named_at(floor, "DECIMILLIPEDE_ELITE")
+                .next_int_exclusive(0, 3);
+            let want: Vec<&str> = (0..3)
+                .map(|i| MOVES[usize::try_from((num2 + i) % 3).unwrap()])
+                .collect();
+            assert_eq!(openers(Some(floor)), want, "floor {floor}");
+            rotations.insert(num2);
+        }
+        assert!(rotations.len() > 1, "the draw must not be pinned");
     }
 
     /// A rebuilt A10 fight has a 2-slot belt (TightBelt). With both slots

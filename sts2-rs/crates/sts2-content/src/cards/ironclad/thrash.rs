@@ -89,10 +89,20 @@ pub(crate) fn play_thrash(state: &mut CombatState, target: Option<CreatureUid>) 
         // C# folds the UN-floored `ModifyDamage` decimal; capture it as an exact
         // rational `(term_num, term_den)` so the sub-integer part is preserved
         // across plays instead of being floored away each fold.
-        let (term_num, term_den) = card_effects::player_modified_card_damage_frac(
+        let (term_num, mut term_den) = card_effects::player_modified_card_damage_frac(
             state,
             exhausted_base - vigor + relic_add,
         );
+        // Gigantification is the other modifier the fold must see after the
+        // attack, not during it. Thrash's attack latches it, and its
+        // `AfterAttack` decrements it before the fold (GigantificationPower.cs).
+        // Rust consumes at card-play end, so the fold still sees the stack and
+        // composes its ×3. One stack is gone in C# by the fold, so divide the
+        // ×3 back out; with more stacks C# keeps tripling (`commandToModify ==
+        // null`), so leave it (GH #922).
+        if state.player_power_amount(PowerKind::Gigantification) == 1 {
+            term_den = term_den.saturating_mul(3);
+        }
         exhaust_hand_card(state, exhausted_uid);
         // Accumulate `rem + term` (rational add). The integer part flows into
         // `base_damage`; the reduced fractional remainder (in [0, 1)) goes back

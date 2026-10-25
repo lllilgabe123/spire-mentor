@@ -19,6 +19,19 @@ import sts2_rs
 
 GAME_VERSION = "v0.111.0"
 
+#: The coach mod, under every name it has shipped as. From 0.7.4 its manifest
+#: says `affects_gameplay: false` so a co-op partner can join without it, but
+#: its runs are not human play: autoplay plays them and undo rewinds them.
+COACH_MOD_IDS = frozenset({"SpireMentor", "SpireCoach", "SimBridge"})
+
+
+def mods_ok(header: dict[str, Any]) -> bool:
+    """No gameplay mod and no coach in a replay header's `mods`."""
+    return not any(
+        m.get("affects_gameplay") or m.get("id") in COACH_MOD_IDS for m in header.get("mods", [])
+    )
+
+
 # Replay rng_state names -> engine RunRngSet stream names.
 _STREAM = {
     "treasure_room_relics": "treasure_room",
@@ -83,6 +96,10 @@ def _build(rec: dict[str, Any], relics: list[str], roster: bool, monster_ai_offs
         game_version=GAME_VERSION,
         run_seed=sts2_rs.run_seed_hash(rec["seed"], GAME_VERSION),
         rng_counters=counters,
+        # The roster's spawn args (Decimillipede's opener rotation, ...) come
+        # from the per-encounter Rng(Seed + TotalFloor + hash(id)); the
+        # kind-only `monsters` list carries none of them (GH #918).
+        encounter_floor=rec.get("floor"),
     )
 
 
@@ -218,6 +235,20 @@ def check(st: Any, view: _LogView) -> None:
         raise Desync("enemy_hp", f"engine {sorted(eng.items())} log {sorted(log.items())}")
 
 
+def check_end(decisions: list[dict[str, Any]], k: int, result: Any) -> None:
+    """The engine's combat ended at decision `k`; the log's must end there too.
+
+    An engine that wins (or loses) while the log goes on has diverged, though
+    every state up to here matched.
+    """
+    left = len(decisions) - k - 1
+    if left:
+        raise Desync(
+            "ended_early",
+            f"engine {result} with {left} log decision(s) left, next {decisions[k + 1]['ev']['t']}",
+        )
+
+
 def replay(rec: dict[str, Any], monster_ai_offset: int | None = None) -> dict[str, Any]:
     """Step the human's decisions; return how far the engine stayed in sync.
 
@@ -240,17 +271,27 @@ def replay(rec: dict[str, Any], monster_ai_offset: int | None = None) -> dict[st
         if opening and opening != eng_open:
             raise Desync("opening", f"engine {sorted(eng_open)} log {sorted(opening)}")
         check(st, view)
-        for dec in rec["decisions"]:
+        decisions = rec["decisions"]
+        for k, dec in enumerate(decisions):
             ev = dec["ev"]
             a = _action(st, view, ev)
             out["pairs"].append((st.clone(), a))
             r = st.apply_step(a)
-            out["n_ok"] += 1
             for d in dec["after"]:
                 view.feed(d)
             if r in ("combat_won", "combat_lost") or st.terminal_value()[0]:
+                out["n_ok"] = len(out["pairs"])
+                check_end(decisions, k, r)
                 break
+            # The game logs end-of-turn effects (orb passives, Burn/Decay,
+            # ...) BEFORE the player's `end_turn` event, so they sit in the
+            # previous decision's `after`. Check once the end_turn is applied;
+            # a desync there drops the decisions since the last check.
+            if k + 1 < len(decisions) and decisions[k + 1]["ev"]["t"] == "end_turn":
+                continue
             check(st, view)
+            out["n_ok"] = len(out["pairs"])
     except Desync as e:
         out["desync"] = (e.kind, e.detail[:300])
+        del out["pairs"][out["n_ok"] :]
     return out

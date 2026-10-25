@@ -1067,7 +1067,15 @@ class _NoPool:
 
     def imap_unordered(self, fn: Any, jobs: Any) -> Any:
         _NoPool.jobs = list(jobs)
-        return iter(())
+        # Every job "finishes" empty; `gen` reads results with the real
+        # iterator's `next(timeout)`.
+        rows = iter(
+            [
+                {"key": f"{j[0]['file']}:{j[0]['floor']}", "decisions": [], "unmatched": 0}
+                for j in _NoPool.jobs
+            ]
+        )
+        return SimpleNamespace(next=lambda _timeout=None: next(rows))
 
 
 @pytest.mark.parametrize("allow", [False, True])

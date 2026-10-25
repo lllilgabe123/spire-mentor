@@ -1,6 +1,6 @@
 {
  "act": null,
- "best_label": "Strike",
+ "best_label": "Venerate",
  "best_line": [],
  "best_mean_hp": null,
  "best_win_prob": 0.0,
@@ -9,8 +9,8 @@
  "hp_drop": null,
  "idx": 123,
  "is_blunder": false,
- "matched_best": true,
- "message": "Turn 5: Strike matched the MCTS line (P(win) 0%)",
+ "matched_best": false,
+ "message": "Turn 5: Strike instead of Venerate dropped P(win) 0%→0% (−0 pts)",
  "n_actions": 5,
  "node_id": null,
  "played_label": "Strike",
@@ -20,6 +20,6 @@
  "regret": 0.0,
  "severity": 0.0,
  "turn": 5,
- "verdict": "best",
+ "verdict": "uncertain",
  "visits": 3
 }

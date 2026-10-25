@@ -162,7 +162,7 @@ def sync_eligible(h: dict[str, Any], character: str) -> bool:
         and (h.get("replay_version") or 0) >= 6
         and (h.get("player_count") or 1) == 1
         and h.get("game_mode") == "standard"
-        and not any(m.get("affects_gameplay") for m in h.get("mods", []))
+        and sync.mods_ok(h)
         and h.get("character") == character.upper()
     )
 
@@ -183,6 +183,10 @@ class HandLog:
         self.draws: list[tuple[int | None, str]] = []  # (card c, id)
         self.in_start = False  # after the player's `turn` event
         self.started = False  # the turn's first decision was made
+        # Cards generated since the player's last end of turn outside the
+        # start window (enemy Burns, Dazed, Infections): the log names no
+        # pile, so `hand_matches` lets the engine hold them in hand or not.
+        self.generated: Counter[str] = Counter()
 
     def feed(self, d: dict[str, Any]) -> None:
         t = d["t"]
@@ -195,6 +199,8 @@ class HandLog:
                 self.draws.append((d.get("c"), d["id"]))
         elif t == "generate" and self.in_start:
             self.draws.append((d.get("c"), d["id"]))
+        elif t == "generate" and not self.started:
+            self.generated[sync._norm(d["id"])] += 1
         elif t == "exhaust" and not self.started:
             # A start-of-turn choice that exhausts from the hand (Toasty Mittens).
             self.draws = [x for x in self.draws if x[0] is None or x[0] != d.get("c")]
@@ -205,6 +211,7 @@ class HandLog:
         elif t == "end_turn" and d.get("side") == "player":
             self.draws = []
             self.started = False
+            self.generated = Counter()
 
     def decision(self) -> None:
         """The turn's first decision closes its start window."""
@@ -214,6 +221,13 @@ class HandLog:
     def start_hand(self) -> Counter[str]:
         kept = [self.ids.get(c, f"?{c}") for c in self.retained]
         return Counter(sync._norm(i) for i in [*kept, *(i for _, i in self.draws)])
+
+
+def hand_matches(engine: Counter[str], log: HandLog) -> bool:
+    """The engine's turn-start hand equals the log's, up to cards generated
+    off-window whose pile the log does not name (`HandLog.generated`)."""
+    want = log.start_hand()
+    return not (want - engine) and not ((engine - want) - log.generated)
 
 
 def engine_hand(st: Any) -> Counter[str]:
@@ -250,12 +264,12 @@ def fight_turns(rec: dict[str, Any]) -> tuple[list[dict[str, Any]], tuple[str, s
     checked = False  # this turn's start hand was compared with the log's
     try:
         sync.check(st, view)
-        for dec in decisions:
+        for k, dec in enumerate(decisions):
             ev = dec["ev"]
             choosing = st.get_state().get("type") == "card_select"
             if cur is None and not checked and not choosing:
                 checked = True
-                if engine_hand(st) != hand.start_hand():
+                if not hand_matches(engine_hand(st), hand):
                     raise sync.Desync(
                         "hand_start",
                         f"engine {sorted(engine_hand(st).items())} "
@@ -295,7 +309,13 @@ def fight_turns(rec: dict[str, Any]) -> tuple[list[dict[str, Any]], tuple[str, s
                 view.feed(d)
                 hand.feed(d)
             over = r in ("combat_won", "combat_lost") or st.terminal_value()[0]
-            if not over:
+            if over:
+                try:
+                    sync.check_end(decisions, k, r)
+                except sync.Desync as e:
+                    cur["status"] = f"diverged:{e.kind}"
+                    raise
+            else:
                 try:
                     sync.check(st, view)
                 except sync.Desync as e:
@@ -317,14 +337,15 @@ def fight_turns(rec: dict[str, Any]) -> tuple[list[dict[str, Any]], tuple[str, s
 # ── collect ──────────────────────────────────────────────────────────────
 
 
-def deployed_spec() -> dict[str, Any]:
-    """The G0 pilot / teacher spec (1000 sims, 4000 boss, env `{}`), its env applied.
+def deployed_spec(env: dict[str, str] | None = None) -> dict[str, Any]:
+    """The G0 pilot / teacher spec (1000 sims, 4000 boss, env `{}` unless
+    `env` names engine seams), its env applied.
 
     Call before any `sts2_rs` search: some engine seams latch on first use.
     """
     from ppo.combat_bench import agents
 
-    spec = agents.mcts_spec(1000, 4000, agents.build_env({}))
+    spec = agents.mcts_spec(1000, 4000, agents.build_env(dict(env or {})))
     agents.apply_env(spec["env"])
     return spec
 
@@ -392,7 +413,7 @@ def collect_file(path: str, emit: Any) -> dict[str, Any]:
     log_turns: Counter[str] = Counter()
     errors: list[str] = []
     for rec in replay.fights(path):
-        if rec["result"] not in ("victory", "defeat") or not rec["rng_state"]:
+        if rec["result"] not in replay.FINISHED or not rec["rng_state"]:
             continue
         fights += 1
         evs = [d["ev"]["t"] for d in rec["decisions"]]
@@ -578,10 +599,30 @@ def _identity(state: dict[str, Any], a: dict[str, Any]) -> tuple[Any, ...]:
 
 def teacher(args: argparse.Namespace) -> int:
     out = Path(args.out)
+    users = {
+        Path(r["file"]).name: r.get("username")
+        for r in json.loads((out / "selection.json").read_text())["files"]
+    }
+    players = set(args.players.split(",")) if args.players else None
+    skip = set(args.exclude_players.split(",")) if args.exclude_players else set()
+    keys = None
+    if args.keys:
+        keys = {
+            tuple(json.loads(line))
+            for line in Path(args.keys).open(encoding="utf-8")
+            if line.strip()
+        }
     rows = [
         r
         for r in iter_turns(out)
-        if r["locate"]["index"] is not None and not r["cap_hit"] and r["n_plans"] > 1
+        if r["locate"]["index"] is not None
+        and not r["cap_hit"]
+        and r["n_plans"] > 1
+        and (not args.encounters or r["encounter"] in args.encounters.split(","))
+        and (args.room is None or r["room_type"] == args.room)
+        and (players is None or users.get(r["file"]) in players)
+        and users.get(r["file"]) not in skip
+        and (keys is None or (r["file"], r["combat_id"], r["turn"]) in keys)
     ]
     rng = random.Random(args.seed)
     pick = rng.sample(rows, min(args.n, len(rows)))
@@ -592,9 +633,19 @@ def teacher(args: argparse.Namespace) -> int:
         Path(r["file"]).name: r["file"]
         for r in json.loads((out / "selection.json").read_text())["files"]
     }
-    tdir = out / "teacher"
+    tdir = out / args.tdir
     tdir.mkdir(exist_ok=True)
-    jobs = [(path_of[f], wants, args.sims_per_plan, str(tdir)) for f, wants in sorted(want.items())]
+    jobs = [
+        (
+            path_of[f],
+            wants,
+            args.sims_per_plan,
+            str(tdir),
+            tuple(args.pilot_sims),
+            agents_env(args.env),
+        )
+        for f, wants in sorted(want.items())
+    ]
     ctx = get_context("spawn")
     with ctx.Pool(args.workers, maxtasksperchild=1) as pool:
         for i, res in enumerate(pool.imap_unordered(_teacher_file, jobs), 1):
@@ -602,17 +653,28 @@ def teacher(args: argparse.Namespace) -> int:
     return 0
 
 
-def _teacher_file(job: tuple[str, dict[tuple[str, int], dict[str, Any]], int, str]) -> str:
-    path, wants, sims_per_plan, tdir = job
+def agents_env(items: list[str] | None) -> dict[str, str]:
+    """`--env K=V` pairs (engine seams for the teacher's evaluator)."""
     from ppo.combat_bench import agents
 
-    spec = deployed_spec()
+    return agents.parse_kv(items or [], "--env")
+
+
+def _teacher_file(
+    job: tuple[
+        str, dict[tuple[str, int], dict[str, Any]], int, str, tuple[int, ...], dict[str, str]
+    ],
+) -> str:
+    path, wants, sims_per_plan, tdir, pilot_sims, env = job
+    from ppo.combat_bench import agents
+
+    spec = deployed_spec(env)
     shard = Path(tdir) / f"{Path(path).name.split('.')[0]}.jsonl"
     done = n_err = 0
     with shard.open("w") as fh:
         for rec in replay.fights(path):
             keys = [k for k in wants if k[0] == rec["combat_id"]]
-            if not keys or rec["result"] not in ("victory", "defeat"):
+            if not keys or rec["result"] not in replay.FINISHED:
                 continue
             try:
                 turns, _ = fight_turns(rec)
@@ -635,10 +697,19 @@ def _teacher_file(job: tuple[str, dict[tuple[str, int], dict[str, Any]], int, st
                         locate=locate_form(t["actions"]),
                     )
                     label_s = time.perf_counter() - t0
-                    pilot = agents.make_agent(spec, seed)
-                    rm = _rm(t["state"], rec)
-                    view = sts2_view(rm)
-                    step = pilot.step(rm)
+                    view = sts2_view(_rm(t["state"], rec))
+                    picks: dict[str, Any] = {}
+                    for sims in pilot_sims:
+                        pilot = agents.make_agent(
+                            agents.mcts_spec(sims, 4 * sims, spec["env"]), seed
+                        )
+                        step = pilot.step(_rm(t["state"], rec))
+                        search = (step or {}).get("combat_search") or {}
+                        picks[str(sims)] = (
+                            _identity(view, search["recommended"])
+                            if search.get("recommended")
+                            else None
+                        )
                 except (KeyboardInterrupt, SystemExit):
                     raise
                 except BaseException as e:
@@ -646,7 +717,6 @@ def _teacher_file(job: tuple[str, dict[tuple[str, int], dict[str, Any]], int, st
                     fh.write(json.dumps(err) + "\n")
                     n_err += 1
                     continue
-                search = (step or {}).get("combat_search") or {}
                 rec_out = {
                     "file": row["file"],
                     "combat_id": rec["combat_id"],
@@ -662,12 +732,16 @@ def _teacher_file(job: tuple[str, dict[tuple[str, int], dict[str, Any]], int, st
                     "visits": [p["visits"] for p in lab["plans"]],
                     "plan_len": [len(p["actions"]) for p in lab["plans"]],
                     "human_first": _identity(view, t["actions"][0]) if t["actions"] else None,
-                    "agent_first": (
-                        _identity(view, search["recommended"])
-                        if search.get("recommended")
-                        else None
-                    ),
-                    "agent_forced": not search,
+                    "agent_first": picks.get(str(pilot_sims[0])) if pilot_sims else None,
+                    "teacher_env": env,
+                    "sims_per_plan": sims_per_plan,
+                    "agent_first_by_sims": picks,
+                    "encounter": row.get("encounter"),
+                    "plan_features": [p["features"] for p in lab["plans"]],
+                    "plan_cards": [p["cards"] for p in lab["plans"]],
+                    "plan_end": [p["end"] for p in lab["plans"]],
+                    "plan_first": [_identity(view, p["actions"][0]) for p in lab["plans"]],
+                    "hand": [c["id"] for c in view.get("hand", [])],
                 }
                 fh.write(json.dumps(rec_out) + "\n")
                 fh.flush()
@@ -704,6 +778,18 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("--sims-per-plan", type=int, default=500)
     t.add_argument("--seed", type=int, default=0)
     t.add_argument("--workers", type=int, default=os.cpu_count() or 1)
+    t.add_argument("--encounters", default=None, help="comma list: only these encounters")
+    t.add_argument("--pilot-sims", type=int, nargs="*", default=[1000], help="pilot picks")
+    t.add_argument(
+        "--env", action="append", default=[], help="K=V engine seam for the teacher (repeatable)"
+    )
+    t.add_argument("--tdir", default="teacher", help="output subdir of --out")
+    t.add_argument("--room", default=None, help="only this room type")
+    t.add_argument(
+        "--keys", default=None, help="JSONL of [file, combat_id, turn]: only these positions"
+    )
+    t.add_argument("--players", default=None, help="comma list of uploaders to keep")
+    t.add_argument("--exclude-players", default=None, help="comma list of uploaders to drop")
     args = ap.parse_args(sys.argv[1:] if argv is None else argv)
     return collect(args) if args.cmd == "collect" else teacher(args)
 

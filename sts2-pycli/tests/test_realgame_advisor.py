@@ -684,3 +684,52 @@ class TestCombatAdviceRows:
         best = next(o for o in advice["options"] if o["is_best"])
         assert best["mean_final_hp"] == pytest.approx(59.0)
         assert best["hp_n"] == 500
+
+
+class TestRunAgentParity:
+    """The advisor searches the way the Rust run agent plays, so a win rate
+    measured in Rust is the one the mod gets."""
+
+    def test_default_budget_is_the_run_agents_single_tree_at_4x(self, monkeypatch) -> None:
+        seen: dict[str, Any] = {}
+        monkeypatch.setattr(ra, "serve", lambda args: seen.setdefault("args", args))
+        ra.main([])
+        args = seen["args"]
+        assert (args.sims, args.boss_sims, args.threads) == (4000, 16000, 1)
+
+    @staticmethod
+    def _boss(run_state: dict[str, Any], act: int = 3) -> dict[str, Any]:
+        return {"room_type": "Boss", "act": act, "run_state": run_state}
+
+    def test_last_boss_values_only_winning(self) -> None:
+        state = self._boss({"ascension": 9, "is_last_act": True, "awaiting_second_boss": False})
+        cfg = ra.fight_search_cfg(ra.RecommendConfig(), state)
+        assert (cfg.win_hp_carry, cfg.win_potion_carry) == (0.0, 0.0)
+
+    @pytest.mark.parametrize(
+        "state",
+        [
+            {"room_type": "Monster", "act": 3, "run_state": {"is_last_act": True}},
+            # A10's first act-3 boss: the second one is still to come.
+            {
+                "room_type": "Boss",
+                "act": 3,
+                "run_state": {"ascension": 10, "is_last_act": True, "awaiting_second_boss": True},
+            },
+            # An act-1 boss: the run agent's default (`LastBoss`) leaves it alone.
+            {
+                "room_type": "Boss",
+                "act": 1,
+                "run_state": {"ascension": 5, "is_last_act": False, "awaiting_second_boss": False},
+            },
+            # An older mod at A10 cannot say which act-3 boss this is.
+            {"room_type": "Boss", "act": 3, "run_state": {"ascension": 10}},
+        ],
+    )
+    def test_every_other_fight_keeps_the_default_value(self, state: dict[str, Any]) -> None:
+        cfg = ra.RecommendConfig()
+        assert ra.fight_search_cfg(cfg, state) is cfg
+
+    def test_older_mod_below_a10_reads_act_three_as_the_last_boss(self) -> None:
+        cfg = ra.fight_search_cfg(ra.RecommendConfig(), self._boss({"ascension": 9}))
+        assert (cfg.win_hp_carry, cfg.win_potion_carry) == (0.0, 0.0)

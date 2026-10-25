@@ -75,6 +75,12 @@ pub struct RecommendParams {
     /// [`MctsConfig::dominance_pruning`]: drop follow-up card plays whose
     /// reverse order the engine proves at least as good.
     pub dominance_pruning: bool,
+    /// Boss win value by what the fight carries forward
+    /// ([`MctsConfig::win_hp_carry`] / [`MctsConfig::win_potion_carry`],
+    /// GH #771) — what the run agent sets from
+    /// [`sts2_mcts::boss_win_carry`]. `None` keeps the default value.
+    pub win_hp_carry: Option<f32>,
+    pub win_potion_carry: Option<f32>,
 }
 
 impl Default for RecommendParams {
@@ -98,6 +104,8 @@ impl Default for RecommendParams {
             net_expand_order: false,
             fpu_reduction: None,
             dominance_pruning: false,
+            win_hp_carry: None,
+            win_potion_carry: None,
         }
     }
 }
@@ -203,6 +211,12 @@ impl RecommendParams {
         if let Some(v) = obj.get("dominance_pruning").and_then(Value::as_bool) {
             p.dominance_pruning = v;
         }
+        if let Some(v) = obj.get("win_hp_carry").and_then(num_f32) {
+            p.win_hp_carry = Some(v);
+        }
+        if let Some(v) = obj.get("win_potion_carry").and_then(num_f32) {
+            p.win_potion_carry = Some(v);
+        }
         p.resolve_mode_constants(
             obj.get("c_puct").and_then(num_f32).is_some(),
             explicit_draw_widening,
@@ -283,6 +297,8 @@ impl RecommendParams {
         if self.fpu_reduction.is_some() {
             cfg.fpu_reduction = self.fpu_reduction;
         }
+        cfg.win_hp_carry = self.win_hp_carry;
+        cfg.win_potion_carry = self.win_potion_carry;
         cfg
     }
 }
@@ -450,14 +466,19 @@ pub fn action_score_value(
 /// `{actions, pv, q_saturated, fair, sims, threads, intent_damage_known}`.
 ///
 /// Sort: Q desc, then a decisive WIN, then visits desc (matches
-/// `human.rs` plus the GH#296 terminal-win tie-break). The top row is
-/// `is_best`; rows below 5% of the max visits are `low_confidence`;
-/// `q_saturated` when the Q spread across >1 rows is under
-/// [`Q_SATURATION_EPSILON`].
+/// `human.rs` plus the GH#296 terminal-win tie-break). `engine_pick` — the
+/// action the search itself chose ([`sts2_mcts::Mcts::pick_root_action`],
+/// the rule the run agent plays by) — is then moved to the top, so the
+/// `is_best` row is the move the Rust AI would make, not a second rule
+/// that disagrees with it on ties and guards. `None` (the fair mode, which
+/// has no single tree) keeps the plain Q order. The top row is `is_best`;
+/// rows below 5% of the max visits are `low_confidence`; `q_saturated` when
+/// the Q spread across >1 rows is under [`Q_SATURATION_EPSILON`].
 #[must_use]
 pub fn recommend_output_value(
     mut scores: Vec<RecommendScore>,
     pv: &[Action],
+    engine_pick: Option<&Action>,
     fair: bool,
     sims: u32,
     threads: u32,
@@ -471,6 +492,9 @@ pub fn recommend_output_value(
             .then(b.terminal_win.cmp(&a.terminal_win))
             .then(b.visits.cmp(&a.visits))
     });
+    if let Some(pos) = engine_pick.and_then(|p| scores.iter().position(|s| &s.action == p)) {
+        scores[..=pos].rotate_right(1);
+    }
     let q_saturated = if scores.len() > 1 {
         let q_min = scores.iter().map(q_of).fold(f32::INFINITY, f32::min);
         let q_max = scores.iter().map(q_of).fold(f32::NEG_INFINITY, f32::max);
@@ -655,36 +679,42 @@ pub fn recommend_value(
     let cfg = params.mcts_config();
     let policy = SharedPolicy::uniform();
     let legal = legal_actions(state);
-    let (scores, pv): (Vec<RecommendScore>, Vec<Action>) = if legal.is_empty() {
-        (Vec::new(), Vec::new())
-    } else if params.fair {
-        let mut scores: Vec<RecommendScore> = Vec::with_capacity(legal.len());
-        for action in &legal {
-            scores.push(score_action_raw(state, params, action));
-        }
-        // No PV for the fair case — each action has its own tree.
-        (scores, Vec::new())
-    } else if params.threads <= 1 {
-        let mut m = Mcts::with_policy(state.clone(), cfg, policy);
-        let _ = m.search();
-        let outs = m.root_outcomes();
-        let pv: Vec<Action> = m.get_pv().into_iter().take(PV_MAX_DEPTH).collect();
-        (outs.into_iter().map(RecommendScore::from).collect(), pv)
-    } else {
-        let r = par_search_with_policy(
-            state.clone(),
-            cfg,
-            params.threads,
-            policy,
-            LeafEval::default(),
-        );
-        let scores = r.outcomes.into_iter().map(RecommendScore::from).collect();
-        // Merged counters but no shared tree — the PV is just the best action.
-        (scores, vec![r.best_action])
-    };
+    let (scores, pv, engine_pick): (Vec<RecommendScore>, Vec<Action>, Option<Action>) =
+        if legal.is_empty() {
+            (Vec::new(), Vec::new(), None)
+        } else if params.fair {
+            let mut scores: Vec<RecommendScore> = Vec::with_capacity(legal.len());
+            for action in &legal {
+                scores.push(score_action_raw(state, params, action));
+            }
+            // No PV for the fair case — each action has its own tree.
+            (scores, Vec::new(), None)
+        } else if params.threads <= 1 {
+            let mut m = Mcts::with_policy(state.clone(), cfg, policy);
+            let pick = m.search();
+            let outs = m.root_outcomes();
+            let pv: Vec<Action> = m.get_pv().into_iter().take(PV_MAX_DEPTH).collect();
+            (
+                outs.into_iter().map(RecommendScore::from).collect(),
+                pv,
+                Some(pick),
+            )
+        } else {
+            let r = par_search_with_policy(
+                state.clone(),
+                cfg,
+                params.threads,
+                policy,
+                LeafEval::default(),
+            );
+            let scores = r.outcomes.into_iter().map(RecommendScore::from).collect();
+            // Merged counters but no shared tree — the PV is just the best action.
+            (scores, vec![r.best_action.clone()], Some(r.best_action))
+        };
     recommend_output_value(
         scores,
         &pv,
+        engine_pick.as_ref(),
         params.fair,
         params.sims,
         params.threads,
@@ -1225,6 +1255,7 @@ mod tests {
                 s(2, 0, 0.0, false, 3),     // low confidence (below 5% of 100)
             ],
             &[Action::EndTurn],
+            None,
             false,
             113,
             1,
@@ -1243,9 +1274,67 @@ mod tests {
         assert_eq!(acts[0]["bucket"], json!(hint::win_prob_bucket(1.0)));
     }
 
+    /// The boss win-value carry (GH #771) travels from a config dict to the
+    /// search config; absent, the default win value stays.
+    #[test]
+    fn win_carry_reaches_the_search_config() {
+        let none = RecommendParams::default().mcts_config();
+        assert_eq!((none.win_hp_carry, none.win_potion_carry), (None, None));
+        let p = RecommendParams::from_config(
+            &json!({"win_hp_carry": 0.0, "win_potion_carry": 0.0}),
+            "t",
+        )
+        .unwrap();
+        let cfg = p.mcts_config();
+        assert_eq!(
+            (cfg.win_hp_carry, cfg.win_potion_carry),
+            (Some(0.0), Some(0.0))
+        );
+    }
+
+    /// The `is_best` row is the move the search itself picked
+    /// (`pick_root_action`), even when a tie-band / guard rule put it below
+    /// the Q argmax; the rest keep the Q order.
+    #[test]
+    fn engine_pick_is_the_best_row() {
+        let s = |visits: u32, value_sum: f32, idx: u8| RecommendScore {
+            action: Action::PlayCard {
+                hand_index: idx,
+                target: None,
+            },
+            visits,
+            wins: 0,
+            losses: visits,
+            ties: 0,
+            value_sum,
+            hp_sum: 0.0,
+            hp_sq_sum: 0.0,
+            hp_n: 0,
+            terminal_win: false,
+        };
+        let pick = Action::PlayCard {
+            hand_index: 2,
+            target: None,
+        };
+        let out = recommend_output_value(
+            vec![s(100, 50.0, 0), s(100, 49.0, 1), s(100, 48.5, 2)],
+            &[],
+            Some(&pick),
+            false,
+            300,
+            1,
+            true,
+        );
+        let acts = out["actions"].as_array().unwrap();
+        let idx = |i: usize| acts[i]["action"]["card_index"].as_u64().unwrap();
+        assert_eq!([idx(0), idx(1), idx(2)], [2, 0, 1]);
+        assert_eq!(acts[0]["is_best"], json!(true));
+        assert_eq!(acts[1]["is_best"], json!(false));
+    }
+
     #[test]
     fn empty_scores_are_a_valid_result() {
-        let out = recommend_output_value(Vec::new(), &[], false, 0, 1, false);
+        let out = recommend_output_value(Vec::new(), &[], None, false, 0, 1, false);
         assert_eq!(out["actions"], json!([]));
         assert_eq!(out["q_saturated"], json!(false));
         assert_eq!(out["intent_damage_known"], json!(false));

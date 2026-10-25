@@ -742,15 +742,24 @@ def test_rl_upgrades_a_v1_init_to_v3(tmp_path: Path) -> None:
 
 
 def test_gen_records_v3_features(tmp_path: Path) -> None:
-    rows = rollout_learn.gen_fight((ELITE, 0, 1, 50, 16, 24, False, 3))
+    rows = rollout_learn.gen_fight((ELITE, 0, 1, 50, 16, 24, False, 3, 0))
     assert rows["decisions"] and "error" not in rows
     assert all(len(d["state"]) == 32 and "monsters" not in d for d in rows["decisions"])
+
+
+def test_gen_stops_a_fight_past_its_timeout_and_keeps_its_decisions() -> None:
+    full = rollout_learn.gen_fight((ELITE, 0, 2, 50, 16, 24, False, 1, 0))
+    cut = rollout_learn.gen_fight((ELITE, 0, 2, 50, 16, 24, False, 1, 1e-9))
+    assert "timeout" not in full and "error" not in full
+    assert cut["timeout"] and "error" not in cut
+    assert len(cut["decisions"]) <= 1 < len(full["decisions"])
+    assert cut["decisions"] == full["decisions"][: len(cut["decisions"])]
 
 
 def test_gen_and_train_v2_with_the_encounter_embedding(tmp_path: Path) -> None:
     w = rollout_learn.ShardWriter(str(tmp_path / "gen"), 10_000)
     for i, f in enumerate((ELITE, HALL)):
-        rows = rollout_learn.gen_fight((f, i, 1, 50, 16, 24, False, 2))
+        rows = rollout_learn.gen_fight((f, i, 1, 50, 16, 24, False, 2, 0))
         assert rows["decisions"] and "error" not in rows
         assert all(len(d["state"]) == 96 and d["monsters"][0] for d in rows["decisions"])
         w.add(rows["decisions"])
@@ -833,3 +842,71 @@ def test_v4_zero_pads_a_v1_net_and_reads_the_character_block() -> None:
     # an Attack into the Hive.
     for i in (32, 40, 41, 42, 44 + 24, 44 + 26, 44 + 28):
         assert seen[i], i
+
+
+def test_train_init_starts_exactly_at_the_init_net(tmp_path: Path) -> None:
+    """GH #830 playout distillation: `train --init` with no epochs writes the
+    init net's policy back unchanged (the data's new keys appended at zero),
+    and `--kl-init` trains from it."""
+    w = rollout_learn.ShardWriter(str(tmp_path / "gen"), 10_000)
+    for i, f in enumerate((ELITE, HALL)):
+        rows = rollout_learn.gen_fight((f, i, 1, 50, 16, 24, False, 1, 0))
+        assert rows["decisions"] and "error" not in rows
+        w.add(rows["decisions"])
+    w.flush()
+    init = (
+        Path(__file__).resolve().parents[2] / "sts2-rs" / "data" / "rollout_nets" / "ironclad.json"
+    )
+    base = ["train", "--data", str(tmp_path / "gen"), "--init", str(init), "--device", "cpu"]
+    base += ["--val-frac", "0.5"]
+    e0, e1 = tmp_path / "e0.json", tmp_path / "e1.json"
+    assert rollout_learn.main([*base, "--out", str(e0), "--epochs", "0"]) == 0
+    assert rollout_learn.main([*base, "--out", str(e1), "--epochs", "1", "--kl-init", "0.5"]) == 0
+    ref, got = json.loads(init.read_text()), json.loads(e0.read_text())
+    assert got["keys"][: len(ref["keys"])] == ref["keys"]
+    assert np.allclose(got["emb"][: len(ref["emb"])], ref["emb"], atol=1e-6)
+    assert all(not any(r) for r in got["emb"][len(ref["emb"]) :])
+    st = rollout_starts.build_fight(ELITE, 5).combat_state()
+    sts_ref = sts2_rs.LearnedPlayout(init.read_text())
+    sts_e0 = sts2_rs.LearnedPlayout(e0.read_text())
+    a = rollout_learn._unpack_playouts(sts_ref.play_many([st] * 4, [1, 2, 3, 4], temperature=1.0))
+    b = rollout_learn._unpack_playouts(sts_e0.play_many([st] * 4, [1, 2, 3, 4], temperature=1.0))
+    assert (a["chosen"] == b["chosen"]).all() and (a["won"] == b["won"]).all()
+    assert json.loads(e1.read_text())["meta"]["kl_init"] == pytest.approx(0.5)
+
+
+def test_gen_replay_records_the_pilot_from_a_replayed_turn(tmp_path: Path) -> None:
+    """`gen-replay` replays a SpireCodex fight to an in-sync turn start and
+    records the pilot's decisions from there (mode pilot) or after the
+    human's forced turn (mode human)."""
+    from ppo.bc_human import replay
+    from ppo.turnplan.pro import fight_turns
+
+    root = Path(replay.scraper_dir("replays-spire-codex")) / "ironclad"
+    files = sorted(root.glob("*/*.replay.ndjson.gz"))[:40]
+    for path in files:
+        for rec in replay.fights(str(path)):
+            if rec["result"] not in replay.FINISHED or not rec["rng_state"]:
+                continue
+            try:
+                turns, _ = fight_turns(rec)
+            except Exception:
+                continue
+            legal = [t for t, x in enumerate(turns) if x["status"] == "legal"]
+            if len(legal) < 2:
+                continue
+            job = (
+                str(path),
+                rec["combat_id"],
+                [(legal[0], "pilot"), (legal[0], "human")],
+                16,
+                16,
+                1,
+                {},
+            )
+            out = rollout_learn.gen_replay_fight(job)
+            assert "error" not in out and out["decisions"]
+            assert len(out["keys"]) == 2 and out["skipped"] <= 1
+            assert all(len(d["state"]) == 32 for d in out["decisions"])
+            return
+    pytest.skip("no replay with two in-sync turns found")
