@@ -80,6 +80,10 @@ internal sealed class SimAdviceOption
     /// <summary>Hand index for card options (drives the per-card label).</summary>
     public int? CardIndex;
 
+    /// <summary>Enemy index for targeted card options (SimTieBreak re-points
+    /// the recommendation with it).</summary>
+    public int? TargetIndex;
+
     /// <summary>Map-graph coordinate for map options (drives the map marker).</summary>
     public int? Col;
     public int? Row;
@@ -132,6 +136,10 @@ internal sealed class SimAdvice
     public double? PWin;
     public bool LowConfidence;
     public SimBestAction? Best;
+
+    /// <summary>Set by SimTieBreak when the top moves are within the search's
+    /// noise ("about equal: Strike ≈ Inflame+ → Inflame+ first ...").</summary>
+    public string? TieNote;
     public readonly List<SimAdviceOption> Options = new();
     public readonly List<string> Pv = new();
 
@@ -209,6 +217,7 @@ internal sealed class SimAdvice
                     IsBest = ReadBool(o, "is_best") ?? false,
                     LowConfidence = ReadBool(o, "low_confidence") ?? false,
                     CardIndex = ReadInt(o, "card_index"),
+                    TargetIndex = ReadInt(o, "target_index"),
                     Col = ReadInt(o, "col"),
                     Row = ReadInt(o, "row"),
                 });
@@ -727,7 +736,15 @@ internal sealed class SimHud
             // the Qs converge and the order is noise -- printing them without
             // comment invites reading a 0.003 gap as a real preference.
             double? spread = QSpread(ranked, maxRows);
-            if (spread != null && spread.Value < 0.01)
+            if (advice.TieNote != null)
+            {
+                // SimTieBreak names the tied moves and the pick it made.
+                Label tie = SmallLabel(advice.TieNote, new Color(0.85f, 0.85f, 0.6f));
+                tie.CustomMinimumSize = new Vector2(400, 0);
+                tie.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+                _adviceRows.AddChildSafely(tie);
+            }
+            else if (spread != null && spread.Value < 0.01)
             {
                 _adviceRows.AddChildSafely(SmallLabel(
                     "top moves within ±0.01 — the search rates them equivalent",

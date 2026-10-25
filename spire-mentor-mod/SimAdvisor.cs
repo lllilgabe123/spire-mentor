@@ -1447,6 +1447,12 @@ internal sealed class SimAdvisor
                     }
                 }
 
+                if (isCombat)
+                {
+                    // Before anything reads Best: a near-tie moves the
+                    // recommendation to the power / self-buff card in it.
+                    SimTieBreak.Apply(advice, LocalContext.GetMe(RunManager.Instance.DebugOnlyGetState()));
+                }
                 _lastBestLabel = advice.Options.FirstOrDefault(o => o.IsBest)?.Label
                                  ?? advice.Options.FirstOrDefault()?.Label;
                 _lastBest = advice.Best;
