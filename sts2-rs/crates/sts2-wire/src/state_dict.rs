@@ -4166,6 +4166,25 @@ pub fn var_key_from_wire(name: &str) -> Option<VarKey> {
 mod tests {
     use super::*;
     use sts2_content::monster_dispatch::build_ai;
+
+    /// Every v0.111.0-only card resolves from its wire name (a live co-op
+    /// state holding the MP-only Midnight used to fail to parse), and a
+    /// v0.107.1 name is unaffected.
+    #[test]
+    fn card_id_from_python_name_resolves_v0111_only_cards() {
+        for id in CardId::V0111_ONLY {
+            assert_eq!(
+                card_id_from_python_name(id.to_python_name()),
+                Some(id),
+                "{id:?}"
+            );
+        }
+        assert_eq!(card_id_from_python_name("MIDNIGHT"), Some(CardId::Midnight));
+        assert_eq!(
+            card_id_from_python_name("STRIKE_IRONCLAD"),
+            Some(CardId::StrikeIronclad)
+        );
+    }
     /// Every [`WIRE_MOVE_STATE_ALIASES`] target must exist as a move
     /// state on the freshly-built AI of its monster — a content-side
     /// state rename would otherwise silently revive the inert-enemy
