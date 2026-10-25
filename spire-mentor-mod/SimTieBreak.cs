@@ -62,6 +62,10 @@ internal static class SimTieBreak
                 return;
             }
             IReadOnlyList<CardModel> hand = PileType.Hand.GetPile(me).Cards;
+            if (SkipEmptyXCost(advice, best, hand, me))
+            {
+                return;
+            }
             bool endTurnBest = advice.Best.Action == "end_turn";
             double margin = endTurnBest ? EndTurnQ : TieQ;
             List<SimAdviceOption> tied = advice.Options
@@ -128,6 +132,43 @@ internal static class SimTieBreak
         {
             Logger.Log($"[SimTieBreak] skipped: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// An X-cost card at 0 energy plays for X = 0 (Eradicate: 11 damage x0)
+    /// and is gone -- a Retain card that would have hit three times next turn.
+    /// The search rated exactly that level with End turn (1.2168 vs 1.2164,
+    /// Entomancer). Recommend the best other card or End turn instead.
+    /// Returns true when it changed the recommendation.
+    /// </summary>
+    private static bool SkipEmptyXCost(SimAdvice advice, SimAdviceOption best, IReadOnlyList<CardModel> hand, Player me)
+    {
+        static bool IsX(SimAdviceOption o, IReadOnlyList<CardModel> h) =>
+            o.CardIndex is int i && i >= 0 && i < h.Count && h[i].EnergyCost.CostsX;
+
+        if ((me.PlayerCombatState?.Energy ?? 1) != 0 || !IsX(best, hand))
+        {
+            return false;
+        }
+        SimAdviceOption? next = advice.Options
+            .Where(o => !ReferenceEquals(o, best) && o.Q != null && !IsX(o, hand) &&
+                        (o.Label == "End turn" || o.CardIndex is int ci && ci >= 0 && ci < hand.Count))
+            .OrderByDescending(o => o.Q)
+            .FirstOrDefault();
+        if (next == null)
+        {
+            return false;
+        }
+        best.IsBest = false;
+        next.IsBest = true;
+        advice.Best = next.Label == "End turn"
+            ? new SimBestAction { Action = "end_turn", Label = next.Label }
+            : new SimBestAction { Action = "play", CardIndex = next.CardIndex!.Value, TargetIndex = next.TargetIndex ?? -1, Label = next.Label };
+        advice.Pv.Clear();
+        advice.Pv.Add(next.Label);
+        advice.TieNote = $"{CardName(best.Label)} costs X and you have 0 energy: it would do nothing. Keep it; {CardName(next.Label)} instead";
+        Logger.Log($"[SimTieBreak] {best.Label} at 0 energy (X cost): recommending {next.Label} instead.");
+        return true;
     }
 
     /// <summary>An attack, power or self-buff that does not cost HP
