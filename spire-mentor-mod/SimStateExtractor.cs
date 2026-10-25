@@ -1212,6 +1212,8 @@ public static class SimStateExtractor
                 Logger.Log($"[SimStateExtractor] Error resolving boss map point: {ex.Message}");
                 data["boss"] = null;
             }
+            // Personal build's elite check: the next Elite this act will give.
+            data["next_elite"] = SimMapForesight.NextEliteId(runState);
 
             data["visited"] = runState.VisitedMapCoords
                 .Select(c => (object?)new Dictionary<string, object?> { ["col"] = c.col, ["row"] = c.row })

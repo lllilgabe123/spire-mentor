@@ -141,6 +141,9 @@ def card_reward_lines(state: dict[str, Any], character: str) -> list[str]:
         lines.append("Your build: " + ", ".join(f"{k} ({n})" for n, k in active))
     elif builds:
         lines.append("Your build: nothing yet. Pros take strong all-round cards in act 1 and commit in act 2")
+    # The A/B (abtests/run2) nudged this AI's picks toward these rates and it
+    # won less (A10 12% -> 7%): say they are reference, not the call.
+    lines.append("Pick rates below are for reference; steering the AI toward them lost runs in testing, so its pick is the tested one")
     for card in state.get("cards") or []:
         name = card.get("name") or card.get("id") or "?"
         key = _norm(card.get("id") or name)
@@ -225,8 +228,11 @@ def event_lines(state: dict[str, Any]) -> list[str]:
 def rest_site_lines(state: dict[str, Any]) -> list[str]:
     p = state.get("player") or (state.get("run_state") or {})
     hp, max_hp = p.get("hp"), p.get("max_hp")
+    # No lean toward the pros' habit: the beta A/B (abtests/run2) found that
+    # making this AI upgrade from 50% HP like they do LOST runs (A7 76% ->
+    # 67%, A10 12% -> 7%), so the AI's own rest pick is the tested choice.
+    note = (f"{REST_HABIT}, but in our simulator copying that habit lost runs with this AI: "
+            "follow its rest pick.")
     if not hp or not max_hp:
-        return [REST_HABIT + "."]
-    frac = hp / max_hp
-    lean = "they would usually upgrade here" if frac >= 0.5 else "they would usually rest here"
-    return [f"{REST_HABIT}. You're at {frac:.0%} HP: {lean}."]
+        return [note]
+    return [f"You're at {hp / max_hp:.0%} HP. {note}"]

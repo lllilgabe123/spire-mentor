@@ -217,6 +217,25 @@ internal static class SimMapForesight
         return m.Id.Entry;
     }
 
+    /// <summary>The encounter id of the next Elite this act will give
+    /// ("TERROR_EEL_ELITE"): the act's elite queue at its visited counter, read
+    /// without moving it. Null when unknown.</summary>
+    public static string? NextEliteId(RunState rs)
+    {
+        try
+        {
+            var rooms = (RoomSet)Field(typeof(ActModel), rs.Act, "_rooms");
+            return rooms.eliteEncounters.Count == 0
+                ? null
+                : rooms.eliteEncounters[rooms.eliteEncountersVisited % rooms.eliteEncounters.Count].Id.Entry;
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"[SimMapForesight] next elite unknown: {ex.Message}");
+            return null;
+        }
+    }
+
     private static object Field(Type t, object o, string name) =>
         (t.GetField(name, Any) ?? throw new MissingFieldException(t.Name, name)).GetValue(o)
         ?? throw new InvalidOperationException($"{t.Name}.{name} is null");
