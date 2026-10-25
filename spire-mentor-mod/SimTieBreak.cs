@@ -62,7 +62,7 @@ internal static class SimTieBreak
                 return;
             }
             IReadOnlyList<CardModel> hand = PileType.Hand.GetPile(me).Cards;
-            if (SkipEmptyXCost(advice, best, hand, me))
+            if (SkipEmptyXCost(advice, best, hand, me) || HoldIdleBuffPotion(advice, best, hand, me))
             {
                 return;
             }
@@ -168,6 +168,62 @@ internal static class SimTieBreak
         advice.Pv.Add(next.Label);
         advice.TieNote = $"{CardName(best.Label)} costs X and you have 0 energy: it would do nothing. Keep it; {CardName(next.Label)} instead";
         Logger.Log($"[SimTieBreak] {best.Label} at 0 energy (X cost): recommending {next.Label} instead.");
+        return true;
+    }
+
+    /// <summary>Potions that only pay off through cards played after them:
+    /// Strength / Flex / Gigantification need an Attack, Dexterity / Speed a
+    /// Block card. Flex and Speed wear off at the end of the turn.</summary>
+    private static readonly Dictionary<string, bool> BuffPotions = new()
+    {
+        ["STRENGTH_POTION"] = true, ["FLEX_POTION"] = true, ["GIGANTIFICATION_POTION"] = true,
+        ["DEXTERITY_POTION"] = false, ["SPEED_POTION"] = false,
+    };
+
+    /// <summary>
+    /// A Strength or Dexterity potion with no Attack (Block card) playable
+    /// after it this turn: drinking it now gains nothing over drinking it
+    /// once such a card is in hand, and if the fight ends first the potion
+    /// is kept. The search rated live Dexterity Potions within 0.0006 Q of
+    /// End turn with no Block card to follow. Recommend the best card or
+    /// End turn instead. Returns true when it changed the recommendation.
+    /// </summary>
+    private static bool HoldIdleBuffPotion(SimAdvice advice, SimAdviceOption best, IReadOnlyList<CardModel> hand, Player me)
+    {
+        if (advice.Best?.Action != "potion" ||
+            SimCombatHandler.SafeGetPotionAtSlot(me, advice.Best.Slot) is not PotionModel potion ||
+            !BuffPotions.TryGetValue(potion.Id.Entry, out bool wantsAttack))
+        {
+            return false;
+        }
+        bool Helps(CardModel c) => wantsAttack
+            ? c.Type == CardType.Attack
+            : c.DynamicVars.Values.Any(v => v is BlockVar or CalculatedBlockVar);
+        List<SimAdviceOption> playable = advice.Options
+            .Where(o => o.Q != null && o.CardIndex is int i && i >= 0 && i < hand.Count)
+            .ToList();
+        if (playable.Any(o => Helps(hand[o.CardIndex!.Value])))
+        {
+            return false;
+        }
+        SimAdviceOption? next = advice.Options
+            .Where(o => o.Q != null && (o.Label == "End turn" || playable.Contains(o)))
+            .OrderByDescending(o => o.Q)
+            .FirstOrDefault();
+        if (next == null)
+        {
+            return false;
+        }
+        best.IsBest = false;
+        next.IsBest = true;
+        advice.Best = next.Label == "End turn"
+            ? new SimBestAction { Action = "end_turn", Label = next.Label }
+            : new SimBestAction { Action = "play", CardIndex = next.CardIndex!.Value, TargetIndex = next.TargetIndex ?? -1, Label = next.Label };
+        advice.Pv.Clear();
+        advice.Pv.Add(next.Label);
+        string need = wantsAttack ? "an Attack" : "a Block card";
+        advice.TieNote = $"Hold {CardName(best.Label)}: no {need} to play after it this turn. Drink it when you have one";
+        Logger.Log($"[SimTieBreak] {best.Label} with no {need} playable: recommending {next.Label} instead.");
         return true;
     }
 
