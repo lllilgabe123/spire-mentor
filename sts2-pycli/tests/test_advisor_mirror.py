@@ -1805,3 +1805,18 @@ class TestRememberedPicks:
         advisor = self._primed()
         advisor.drop("new fight")
         assert advisor.next_remembered_pick("PREPARED", _offer("DEFEND", "SURVIVOR")) is None
+
+
+def test_note_names_the_desynced_paths() -> None:
+    """The note tallies desyncs by wire path, list keys folded, so a run
+    log says WHAT the mirror failed to follow (co-op: a teammate's moves)."""
+    import copy
+
+    advisor = AdvisorMirror(HONEST)
+    wire = sts2_rs.state_to_dict(_burning_pact_state())
+    advisor.on_combat_board(wire, {"act": 1, "floor": 3})
+    moved = copy.deepcopy(wire)
+    moved["encounter"][0]["hp"] -= 5  # someone else hit the enemy
+    advisor.on_combat_board(moved, {"act": 1, "floor": 3})
+    assert advisor.stats["desyncs"] >= 1
+    assert "desynced: $.encounter[].hp x1" in advisor.note()

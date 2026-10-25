@@ -14,99 +14,99 @@
    "idx": 0,
    "node_id": 0,
    "taken_label": "Choose: Booming Conch",
-   "value": 1.0366
+   "value": 0.9062
   },
   {
    "act": 1,
    "decision": "map_select",
-   "delta_prev": 0.0002,
+   "delta_prev": 0.0037,
    "floor": 0,
    "idx": 1,
    "node_id": 1,
    "taken_label": "Map → (1,1)",
-   "value": 1.0368
+   "value": 0.9099
   },
   {
    "act": 1,
    "decision": "card_reward",
-   "delta_prev": -0.0078,
+   "delta_prev": -0.0054,
    "floor": 1,
    "idx": 19,
    "node_id": 19,
    "taken_label": "Take Blood Wall",
-   "value": 1.029
+   "value": 0.9046
   },
   {
    "act": 1,
    "decision": "card_reward",
-   "delta_prev": -0.0697,
+   "delta_prev": -0.0341,
    "floor": 2,
    "idx": 36,
    "node_id": 36,
    "taken_label": "Take Flame Barrier",
-   "value": 0.9593
+   "value": 0.8704
   },
   {
    "act": 1,
    "decision": "card_reward",
-   "delta_prev": -0.0647,
+   "delta_prev": -0.0362,
    "floor": 3,
    "idx": 44,
    "node_id": 44,
    "taken_label": "Take Headbutt",
-   "value": 0.8946
+   "value": 0.8342
   },
   {
    "act": 1,
    "decision": "shop",
-   "delta_prev": -0.0256,
+   "delta_prev": -0.0261,
    "floor": 4,
    "idx": 46,
    "node_id": 46,
    "taken_label": "Buy Body Slam",
-   "value": 0.869
+   "value": 0.8081
   },
   {
    "act": 1,
    "decision": "shop",
-   "delta_prev": -0.0223,
+   "delta_prev": -0.021,
    "floor": 4,
    "idx": 47,
    "node_id": 47,
    "taken_label": "Buy Vulnerable Potion",
-   "value": 0.8466
+   "value": 0.7871
   },
   {
    "act": 1,
    "decision": "shop",
-   "delta_prev": 0.0188,
+   "delta_prev": 0.0364,
    "floor": 4,
    "idx": 48,
    "node_id": 48,
    "taken_label": "leave_room",
-   "value": 0.8654
+   "value": 0.8235
   }
  ],
  "summary": {
-  "biggest_drop": -0.0697,
-  "biggest_gain": 0.0188,
-  "final_value": 0.8654,
-  "first_value": 1.0366,
+  "biggest_drop": -0.0362,
+  "biggest_gain": 0.0364,
+  "final_value": 0.8235,
+  "first_value": 0.9062,
   "n_points": 8,
   "n_turning_points": 1
  },
  "turning_points": [
   {
    "act": 1,
-   "decision": "card_reward",
-   "floor": 1,
-   "idx": 19,
-   "message": "floor 1 (card_reward): after “Take Blood Wall” your outlook dropped -0.070 (1.029 → 0.959) (spans the fight that followed)",
-   "node_id": 19,
-   "swing": -0.0697,
-   "taken_label": "Take Blood Wall",
-   "value_after": 0.9593,
-   "value_before": 1.029
+   "decision": "shop",
+   "floor": 4,
+   "idx": 47,
+   "message": "floor 4 (shop): after “Buy Vulnerable Potion” your outlook rose +0.036 (0.787 → 0.824)",
+   "node_id": 47,
+   "swing": 0.0364,
+   "taken_label": "Buy Vulnerable Potion",
+   "value_after": 0.8235,
+   "value_before": 0.7871
   }
  ]
 }

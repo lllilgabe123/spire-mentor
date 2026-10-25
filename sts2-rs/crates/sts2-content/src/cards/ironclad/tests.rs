@@ -1620,6 +1620,69 @@ fn thrash_fold_ignores_vulnerable_on_the_player() {
     );
 }
 
+/// Thrash with `stacks` of Gigantification on the player, exhausting a lone
+/// 6-damage attack. Returns (damage the two hits dealt, folded `base_damage`).
+fn thrash_under_gigantification(stacks: i32, version: sts2_core::GameVersion) -> (i32, i32) {
+    install_pool();
+    let (mut state, enemy) = fresh_state_with_enemy(200);
+    state.game_version = version;
+    let pid = NonZeroU32::new(1).expect("non-zero");
+    state.powers.push(Power {
+        id: pid,
+        kind: PowerKind::Gigantification,
+        amount: stacks,
+        counter: 0,
+        applier: None,
+        skip_next_tick: false,
+    });
+    state.player.powers.push(PowerUid(pid));
+    let thrash = push_play_card(&mut state, CardId::Thrash, /*base_damage=*/ 4, 0);
+    push_hand_card(&mut state, CardId::StrikeIronclad);
+    let hp0 = state.creatures[0].current_hp;
+    let _ = dispatch(&mut state, CardId::Thrash, Some(enemy));
+    (
+        hp0 - state.creatures[0].current_hp,
+        state.cards[thrash.0.get() as usize - 1].base_damage,
+    )
+}
+
+/// GH #922: Thrash's attack latches Gigantification, and its `AfterAttack`
+/// decrements it before the fold (`Thrash.cs` OnPlay: Attack.Execute, then
+/// the fold's `Hook.ModifyDamage`; `GigantificationPower.cs` AfterAttack).
+/// With one stack the power is gone by the fold, so the fold banks the
+/// printed 6. Rust consumes at card-play end and folded 6 x 3 = 18 (the
+/// v0.111.0 oracle: a later Thrash hit Soul Nexus for 44 where C# hit 20).
+#[test]
+fn thrash_fold_after_the_last_gigantification_stack_is_unmultiplied() {
+    for version in [
+        sts2_core::GameVersion::V0_107_1,
+        sts2_core::GameVersion::V0_111_0,
+    ] {
+        assert_eq!(
+            thrash_under_gigantification(1, version),
+            (24, 10),
+            "{version}: both hits tripled (4 x 3, twice), fold banks 6"
+        );
+    }
+}
+
+/// GH #922: with two stacks Gigantification survives the attack's
+/// `AfterAttack` with no latched command, so `ModifyDamageMultiplicative`
+/// returns 3 for the fold too (`commandToModify == null`).
+#[test]
+fn thrash_fold_with_a_gigantification_stack_left_is_tripled() {
+    for version in [
+        sts2_core::GameVersion::V0_107_1,
+        sts2_core::GameVersion::V0_111_0,
+    ] {
+        assert_eq!(
+            thrash_under_gigantification(2, version),
+            (24, 22),
+            "{version}: fold banks 6 x 3 = 18"
+        );
+    }
+}
+
 /// Thrash under StrikeDummy exhausting a lone Strike-tagged attack (6 dmg).
 /// Returns the Thrash instance's folded `base_damage`.
 fn thrash_fold_under_strike_dummy(version: sts2_core::GameVersion) -> i32 {

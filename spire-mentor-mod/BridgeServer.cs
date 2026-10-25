@@ -88,6 +88,33 @@ public class BridgeServer
     {
     }
 
+    /// <summary>The port actually listened on (0 until Start succeeds, and
+    /// again after Stop); the
+    /// advisor is launched against this one.</summary>
+    public int Port { get; private set; }
+
+    /// <summary>
+    /// <see cref="Start"/> on <paramref name="port"/>, else the next free one
+    /// of <paramref name="tries"/>: a second game instance on the same machine
+    /// (the co-op test lane) reads the same conf, and its advisor must not
+    /// end up talking to the first instance.
+    /// </summary>
+    public void StartWithFallback(int port, int tries)
+    {
+        for (int i = 0; ; i++)
+        {
+            try
+            {
+                Start(port + i);
+                return;
+            }
+            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse && i + 1 < tries)
+            {
+                Logger.Log($"[BridgeServer] Port {port + i} is taken; trying {port + i + 1}.");
+            }
+        }
+    }
+
     /// <summary>
     /// Starts listening on 127.0.0.1:<paramref name="port"/> and launches the
     /// background accept loop. A bind failure throws to the caller.
@@ -113,6 +140,7 @@ public class BridgeServer
             throw;
         }
         _tcpListener = listener;
+        Port = port;
         Logger.Log($"[BridgeServer] Listening on {IPAddress.Loopback}:{port}");
 
         CancellationToken token = _cts.Token;
@@ -141,6 +169,7 @@ public class BridgeServer
             Logger.Log($"[BridgeServer] Listener stop failed: {ex.Message}");
         }
         _tcpListener = null;
+        Port = 0;
         Logger.Log("[BridgeServer] Stopped");
     }
 

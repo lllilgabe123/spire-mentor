@@ -115,8 +115,13 @@ internal static class SimGameApi
         var args = new object?[p.Length];
         args[0] = selector;
         // v0.111.0's localOnly defaults to false: the shared stack, which is
-        // the only stack v0.107.1 has.
-        for (int i = 1; i < p.Length; i++) args[i] = p[i].DefaultValue;
+        // the only stack v0.107.1 has. In co-op the shared stack answers every
+        // player's choice and skips PlayerChoiceSynchronizer; the local one
+        // answers only ours and syncs it.
+        for (int i = 1; i < p.Length; i++)
+        {
+            args[i] = p[i].Name == "localOnly" && SimMp.IsMultiplayer ? true : p[i].DefaultValue;
+        }
         try
         {
             return (IDisposable)method.Invoke(null, args)!;

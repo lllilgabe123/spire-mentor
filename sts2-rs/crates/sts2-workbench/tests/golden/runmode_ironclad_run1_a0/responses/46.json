@@ -27,7 +27,7 @@
    },
    "is_best": false,
    "label": "Buy Shrug It Off",
-   "prob": 0.2388
+   "prob": 0.0326
   },
   {
    "action": "buy_card",
@@ -43,18 +43,18 @@
    "args": {
     "card_index": 4
    },
-   "is_best": false,
+   "is_best": true,
    "label": "Buy Inflame",
-   "prob": 0.0679
+   "prob": 0.752
   },
   {
    "action": "buy_card",
    "args": {
     "card_index": 5
    },
-   "is_best": true,
+   "is_best": false,
    "label": "Buy Ultimate Strike",
-   "prob": 0.6682
+   "prob": 0.1513
   },
   {
    "action": "buy_potion",
@@ -63,7 +63,7 @@
    },
    "is_best": false,
    "label": "Buy Distilled Chaos",
-   "prob": 0.0002
+   "prob": 0.0
   },
   {
    "action": "buy_potion",
@@ -72,7 +72,7 @@
    },
    "is_best": false,
    "label": "Buy Fruit Juice",
-   "prob": 0.0003
+   "prob": 0.0004
   },
   {
    "action": "buy_potion",
@@ -81,7 +81,7 @@
    },
    "is_best": false,
    "label": "Buy Vulnerable Potion",
-   "prob": 0.0147
+   "prob": 0.0023
   },
   {
    "action": "select_cards",
@@ -90,7 +90,7 @@
    },
    "is_best": false,
    "label": "Remove Strike Ironclad (deck #0)",
-   "prob": 0.0014
+   "prob": 0.01
   },
   {
    "action": "select_cards",
@@ -99,7 +99,7 @@
    },
    "is_best": false,
    "label": "Remove Strike Ironclad (deck #1)",
-   "prob": 0.0014
+   "prob": 0.01
   },
   {
    "action": "select_cards",
@@ -108,7 +108,7 @@
    },
    "is_best": false,
    "label": "Remove Strike Ironclad (deck #2)",
-   "prob": 0.0014
+   "prob": 0.01
   },
   {
    "action": "select_cards",
@@ -117,7 +117,7 @@
    },
    "is_best": false,
    "label": "Remove Strike Ironclad (deck #3)",
-   "prob": 0.0014
+   "prob": 0.01
   },
   {
    "action": "select_cards",
@@ -126,7 +126,7 @@
    },
    "is_best": false,
    "label": "Remove Strike Ironclad (deck #4)",
-   "prob": 0.0014
+   "prob": 0.01
   },
   {
    "action": "select_cards",
@@ -135,7 +135,7 @@
    },
    "is_best": false,
    "label": "Remove Defend Ironclad (deck #5)",
-   "prob": 0.0007
+   "prob": 0.0028
   },
   {
    "action": "select_cards",
@@ -144,7 +144,7 @@
    },
    "is_best": false,
    "label": "Remove Defend Ironclad (deck #6)",
-   "prob": 0.0007
+   "prob": 0.0028
   },
   {
    "action": "select_cards",
@@ -153,7 +153,7 @@
    },
    "is_best": false,
    "label": "Remove Defend Ironclad (deck #7)",
-   "prob": 0.0007
+   "prob": 0.0028
   },
   {
    "action": "select_cards",
@@ -162,7 +162,7 @@
    },
    "is_best": false,
    "label": "Remove Defend Ironclad (deck #8)",
-   "prob": 0.0007
+   "prob": 0.0028
   },
   {
    "action": "select_cards",
@@ -205,10 +205,10 @@
    "args": {},
    "is_best": false,
    "label": "leave_room",
-   "prob": 0.0001
+   "prob": 0.0002
   }
  ],
  "ppo_available": true,
  "surface": "shop",
- "value": 0.869
+ "value": 0.8081
 }

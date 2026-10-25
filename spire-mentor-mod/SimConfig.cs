@@ -31,7 +31,7 @@ public sealed class SimConfig
     private const string ConfigFileName = "SpireMentor.conf";
     private const string TemplateFileName = "SpireMentor.conf.template";
 
-    public int Port { get; init; } = 9002;
+    public int Port { get; private set; } = 9002;
     public string Character { get; init; } = "Ironclad";
     public int Ascension { get; init; } = 0;
     public string? Seed { get; init; } = null;
@@ -59,7 +59,7 @@ public sealed class SimConfig
     /// climb driver writes this flag explicitly (tools/ascension_climb.py),
     /// so the unattended lane is unaffected by the default.
     /// </summary>
-    public bool AutoStart { get; init; } = false;
+    public bool AutoStart { get; private set; } = false;
 
     /// <summary>
     /// Hands-free coached run: once a run is live, hand it from autopilot to
@@ -79,7 +79,7 @@ public sealed class SimConfig
     /// coverage quick. Never use a run recorded this way for anything that
     /// measures play quality.
     /// </summary>
-    public bool AdvisorAutoplay { get; init; } = false;
+    public bool AdvisorAutoplay { get; private set; } = false;
 
     /// <summary>
     /// Where F7 autoplay stops and hands the decision back to the player
@@ -219,7 +219,35 @@ public sealed class SimConfig
     /// </summary>
     public int RunTimeoutMinutes { get; init; } = 360;
 
-    public static readonly SimConfig Instance = Load();
+    public static readonly SimConfig Instance = ApplyCommandLine(Load());
+
+    /// <summary>
+    /// Per-instance overrides from the game's command line (SimMp): two game
+    /// instances on one machine (the co-op test lane) share this conf, so the
+    /// dummy partner's port and hands-free autoplay come from its own
+    /// arguments.
+    /// </summary>
+    private static SimConfig ApplyCommandLine(SimConfig config)
+    {
+        if (SimMp.PortOverride is int port)
+        {
+            GD.Print($"[SpireMentor] --spire-mentor-port {port} overrides port {config.Port}");
+            config.Port = port;
+        }
+        if (SimMp.FastMpLaunch && config.AutoStart)
+        {
+            // The game's --fastmp drives the menus into a co-op lobby; the
+            // autopilot would click Singleplayer over it.
+            GD.Print("[SpireMentor] --fastmp: auto_start ignored");
+            config.AutoStart = false;
+        }
+        if (SimMp.AutoplayOverride)
+        {
+            GD.Print("[SpireMentor] --spire-mentor-autoplay: hands-free advisor autoplay");
+            config.AdvisorAutoplay = true;
+        }
+        return config;
+    }
 
     private static SimConfig Load()
     {

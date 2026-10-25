@@ -1,6 +1,6 @@
 {
  "act": null,
- "best_label": "end turn",
+ "best_label": "Sweeping Beam",
  "best_line": [],
  "best_mean_hp": null,
  "best_win_prob": 1.0,
@@ -10,7 +10,7 @@
  "idx": 50,
  "is_blunder": false,
  "matched_best": false,
- "message": "Turn 1: Strike instead of end turn dropped P(win) 100%→100% (−0 pts)",
+ "message": "Turn 1: Strike instead of Sweeping Beam dropped P(win) 100%→100% (−0 pts)",
  "n_actions": 3,
  "node_id": null,
  "played_label": "Strike",

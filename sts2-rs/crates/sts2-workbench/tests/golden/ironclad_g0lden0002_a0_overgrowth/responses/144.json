@@ -11,10 +11,24 @@
  "pv": null,
  "scores": [
   {
-   "action": "STRIKE_IRONCLAD.title",
+   "action": "BASH.title",
    "hp_n": 0,
    "hp_sd": null,
    "is_best": true,
+   "low_confidence": false,
+   "mean_final_hp": null,
+   "q": 1.2585,
+   "q_saturated": false,
+   "stable_idx": 3,
+   "target_index": null,
+   "visits": 12,
+   "win_prob": 1.0
+  },
+  {
+   "action": "STRIKE_IRONCLAD.title",
+   "hp_n": 0,
+   "hp_sd": null,
+   "is_best": false,
    "low_confidence": false,
    "mean_final_hp": null,
    "q": 1.2641,
@@ -34,20 +48,6 @@
    "q": 1.2635,
    "q_saturated": false,
    "stable_idx": 2,
-   "target_index": null,
-   "visits": 12,
-   "win_prob": 1.0
-  },
-  {
-   "action": "BASH.title",
-   "hp_n": 0,
-   "hp_sd": null,
-   "is_best": false,
-   "low_confidence": false,
-   "mean_final_hp": null,
-   "q": 1.2585,
-   "q_saturated": false,
-   "stable_idx": 3,
    "target_index": null,
    "visits": 12,
    "win_prob": 1.0

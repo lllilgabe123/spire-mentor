@@ -11,7 +11,7 @@
  "pv": null,
  "scores": [
   {
-   "action": "end turn",
+   "action": "TURBO",
    "hp_n": 24,
    "hp_sd": 4.31,
    "is_best": true,
@@ -20,7 +20,7 @@
    "mean_final_hp": 34.0833,
    "q": 1.1215,
    "q_saturated": true,
-   "stable_idx": -1,
+   "stable_idx": 1,
    "target_index": null,
    "ties": 0,
    "visits": 24,
@@ -28,7 +28,7 @@
    "wins": 24
   },
   {
-   "action": "TURBO",
+   "action": "end turn",
    "hp_n": 24,
    "hp_sd": 4.31,
    "is_best": false,
@@ -37,7 +37,7 @@
    "mean_final_hp": 34.0833,
    "q": 1.1215,
    "q_saturated": true,
-   "stable_idx": 1,
+   "stable_idx": -1,
    "target_index": null,
    "ties": 0,
    "visits": 24,

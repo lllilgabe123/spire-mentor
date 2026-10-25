@@ -50,6 +50,7 @@ and at ``game_over`` / ``run_complete``.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -58,6 +59,8 @@ from realgame_adapter import character_display_name, run_ascension, to_headless_
 from sts2_hint.recommender import RecommendConfig
 
 logger = logging.getLogger(__name__)
+
+_INDEX_RE = re.compile(r"\[[^\]]*\]")
 
 
 #: The park INSIDE the end-of-turn flush, one hook before the round increments.
@@ -155,6 +158,11 @@ class AdvisorMirror:
         #: read. Counting the reason is the difference between diagnosing that
         #: and guessing at it.
         self.declines: dict[str, int] = {}
+        #: Desyncs by wire path, list keys folded (``$.encounter[].hp``).
+        #: The total alone cannot say WHAT the mirror fails to follow; a
+        #: co-op run desyncs at 2-3x the solo rate, and only the paths can
+        #: tell a teammate's move from an engine gap.
+        self.desync_paths: dict[str, int] = {}
         self._said: set[str] = set()
         #: The card whose play this advisor REPLAYED to answer a select, and
         #: the seed generation it was replayed under. See
@@ -265,6 +273,9 @@ class AdvisorMirror:
         # advisor's serve loop down with it — the whole point of this class is
         # that a mirror problem degrades the advice, not the session.
         self.stats["desyncs"] += len(desyncs or [])
+        for d in desyncs or []:
+            key = _INDEX_RE.sub("[]", d.path)
+            self.desync_paths[key] = self.desync_paths.get(key, 0) + 1
         return self.live
 
     def _catch_up_turns(self, wire: dict[str, Any]) -> None:
@@ -1506,6 +1517,8 @@ class AdvisorMirror:
         """One-line state summary for the advice note / run log."""
         s = self.stats
         why = ", ".join(f"{k} x{v}" for k, v in sorted(self.declines.items()))
+        top = sorted(self.desync_paths.items(), key=lambda kv: (-kv[1], kv[0]))[:6]
+        paths = ", ".join(f"{k} x{v}" for k, v in top)
         return (
             f"mirror: {s['reconciles']} reconciles, {s['desyncs']} desyncs, "
             f"{s['followed']} plays + {s['turns_followed']} turns followed "
@@ -1518,4 +1531,5 @@ class AdvisorMirror:
                 else ""
             )
             + (f" | declined: {why}" if why else "")
+            + (f" | desynced: {paths}" if paths else "")
         )

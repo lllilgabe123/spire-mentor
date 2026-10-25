@@ -570,7 +570,7 @@ public class SimAutoSlayer
     /// Keyed on the map shape rather than the ascension level, so it holds
     /// for any act that carries a second boss point.
     /// </summary>
-    private static bool IsFirstOfDoubleBoss(RunState? runState)
+    internal static bool IsFirstOfDoubleBoss(RunState? runState)
     {
         if (runState?.Map?.SecondBossMapPoint == null)
             return false;

@@ -1,6 +1,6 @@
 {
  "act": null,
- "best_label": "Strike",
+ "best_label": "Leading Strike",
  "best_line": [],
  "best_mean_hp": null,
  "best_win_prob": 1.0,
@@ -10,7 +10,7 @@
  "idx": 73,
  "is_blunder": false,
  "matched_best": false,
- "message": "Turn 1: Defend instead of Strike dropped P(win) 100%→100% (−0 pts)",
+ "message": "Turn 1: Defend instead of Leading Strike dropped P(win) 100%→100% (−0 pts)",
  "n_actions": 6,
  "node_id": null,
  "played_label": "Defend",

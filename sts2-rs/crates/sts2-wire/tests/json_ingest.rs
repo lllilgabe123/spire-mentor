@@ -249,3 +249,26 @@ fn scenario_builder_threads_game_version() {
     .expect("scenario builds");
     assert_eq!(legacy, build(sts2_core::GameVersion::V0_107_1));
 }
+
+/// GH #929: a v0.111.0 wire whose hand holds a v0.111.0-only card (the
+/// DowsingRod's `DOWSING` quest card, or any of the build's new cards) must
+/// rebuild. The id lookup used to walk only the v0.107.1 universe, so every
+/// live advice request with such a card in a pile failed `UnsupportedStateError`.
+#[test]
+fn v0111_only_cards_parse_from_a_v0111_wire() {
+    use sts2_core::cards::CardId;
+    for id in CardId::V0111_ONLY {
+        let mut value: serde_json::Value = serde_json::from_str(&fixture()).expect("valid JSON");
+        value["game_version"] = serde_json::json!("v0.111.0");
+        value["deck"]["hand"][0] = serde_json::json!({
+            "id": id.to_python_name(),
+            "stable_idx": 4,
+            "kind": "card",
+            "upgraded": false,
+        });
+        let state = sts2_wire::state_from_json(&value)
+            .unwrap_or_else(|e| panic!("{}: {e:?}", id.to_python_name()));
+        let first = state.player.hand[0];
+        assert_eq!(state.cards[first.0.get() as usize - 1].card_id, id);
+    }
+}

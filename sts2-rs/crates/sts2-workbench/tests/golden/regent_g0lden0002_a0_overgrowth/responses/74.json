@@ -1,6 +1,6 @@
 {
  "act": null,
- "best_label": "Glow",
+ "best_label": "Venerate",
  "best_line": [],
  "best_mean_hp": null,
  "best_win_prob": 1.0,
@@ -10,7 +10,7 @@
  "idx": 50,
  "is_blunder": false,
  "matched_best": false,
- "message": "Turn 1: Photon Cut instead of Glow dropped P(win) 100%→100% (−0 pts)",
+ "message": "Turn 1: Photon Cut instead of Venerate dropped P(win) 100%→100% (−0 pts)",
  "n_actions": 6,
  "node_id": null,
  "played_label": "Photon Cut",

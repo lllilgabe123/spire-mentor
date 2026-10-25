@@ -1,6 +1,6 @@
 {
  "act": null,
- "best_label": "Ultimate Strike",
+ "best_label": "Bloodletting",
  "best_line": [],
  "best_mean_hp": null,
  "best_win_prob": 1.0,
@@ -10,7 +10,7 @@
  "idx": 30,
  "is_blunder": false,
  "matched_best": false,
- "message": "Turn 3: Strike instead of Ultimate Strike dropped P(win) 100%→100% (−0 pts)",
+ "message": "Turn 3: Strike instead of Bloodletting dropped P(win) 100%→100% (−0 pts)",
  "n_actions": 5,
  "node_id": null,
  "played_label": "Strike",

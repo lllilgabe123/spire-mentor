@@ -63,6 +63,10 @@ internal static class SimRestore
     /// </summary>
     internal static async Task ReloadRunFromSave(SerializableRun save)
     {
+        if (SimMp.IsMultiplayer)
+        {
+            throw new InvalidOperationException("a co-op run cannot be reloaded as single-player");
+        }
         if (RunManager.Instance.IsInProgress)
         {
             RunManager.Instance.CleanUp();
@@ -86,6 +90,11 @@ internal static class SimRestore
 
     private static async Task RestoreAsync(string snapshotId)
     {
+        if (SimMp.IsMultiplayer)
+        {
+            Fail(snapshotId, "restore_multiplayer", SimMp.RefusedMessage("Rewind"));
+            return;
+        }
         if (!TryBegin())
         {
             Fail(snapshotId, "restore_busy", "another restore is already running");

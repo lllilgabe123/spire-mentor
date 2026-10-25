@@ -3692,6 +3692,8 @@ pub(crate) fn action_score_pydict<'py>(
     endturn_widening_alpha = None,
     leaf_playouts = None,
     dominance_pruning = false,
+    win_hp_carry = None,
+    win_potion_carry = None,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn mcts_recommend<'py>(
@@ -3711,6 +3713,8 @@ fn mcts_recommend<'py>(
     endturn_widening_alpha: Option<f32>,
     leaf_playouts: Option<u32>,
     dominance_pruning: bool,
+    win_hp_carry: Option<f32>,
+    win_potion_carry: Option<f32>,
 ) -> PyResult<Bound<'py, PyDict>> {
     // The search config, the ranking and the dict shape all live in
     // `sts2_wire::emit::mcts` — the same code the browser workbench runs, so
@@ -3731,7 +3735,9 @@ fn mcts_recommend<'py>(
     // `rollout_policy` likewise: `None` keeps the mode's playout (the playout
     // net under beliefdraw), a named one ("heuristic" / "uniform" / "net")
     // always runs. `leaf_playouts` (GH #830): playouts per search leaf,
-    // `None` = the engine's one.
+    // `None` = the engine's one. `win_hp_carry` / `win_potion_carry`
+    // (GH #771): the boss win value the run agent sets from
+    // `boss_win_carry`; `None` keeps the default.
     if leaf_playouts == Some(0) {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "mcts_recommend: leaf_playouts must be >= 1",
@@ -3760,6 +3766,8 @@ fn mcts_recommend<'py>(
         net_expand_order: false,
         fpu_reduction: None,
         dominance_pruning,
+        win_hp_carry,
+        win_potion_carry,
     };
     let root_state = state.inner.clone();
     // Forward the wire-side trust flag so `--mcts-log` consumers can tell
@@ -3772,6 +3780,20 @@ fn mcts_recommend<'py>(
         sts2_wire::emit::mcts::recommend_value(&root_state, &params, intent_damage_known)
     });
     crate::value_to_pydict(py, &out)
+}
+
+/// `(win_hp_carry, win_potion_carry)` for a fight, or `None` for the default
+/// win value — [`sts2_mcts::boss_win_carry`], the rule the run agent applies
+/// under its default `STS2_RUNAI_BOSS_CARRY` (the run's last boss only). The
+/// live advisor reads it here so it values that fight the way the agent does.
+#[pyfunction]
+fn boss_win_carry(
+    is_boss: bool,
+    is_last_act: bool,
+    awaiting_second_boss: bool,
+    ascension: u8,
+) -> Option<(f32, f32)> {
+    sts2_mcts::boss_win_carry(is_boss, is_last_act, awaiting_second_boss, ascension)
 }
 
 /// Price ONE move from the position it is chosen FROM, with every
@@ -3804,6 +3826,8 @@ fn mcts_recommend<'py>(
     endturn_widening_c = None,
     endturn_widening_alpha = None,
     dominance_pruning = false,
+    win_hp_carry = None,
+    win_potion_carry = None,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn mcts_score_action_forced<'py>(
@@ -3820,6 +3844,8 @@ fn mcts_score_action_forced<'py>(
     endturn_widening_c: Option<f32>,
     endturn_widening_alpha: Option<f32>,
     dominance_pruning: bool,
+    win_hp_carry: Option<f32>,
+    win_potion_carry: Option<f32>,
 ) -> PyResult<Option<Bound<'py, PyDict>>> {
     let dict = action.downcast::<PyDict>().map_err(|_| {
         pyo3::exceptions::PyValueError::new_err(
@@ -3850,6 +3876,8 @@ fn mcts_score_action_forced<'py>(
         net_expand_order: false,
         fpu_reduction: None,
         dominance_pruning,
+        win_hp_carry,
+        win_potion_carry,
     };
     let root_state = state.inner.clone();
     let out = py.allow_threads(move || {
@@ -4026,6 +4054,7 @@ pub fn sts2_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Bead sts2-rs-cosb (hint-T4): MCTS recommendation surface +
     // win-probability bucket table.
     m.add_function(wrap_pyfunction!(mcts_recommend, m)?)?;
+    m.add_function(wrap_pyfunction!(boss_win_carry, m)?)?;
     m.add_function(wrap_pyfunction!(mcts_score_action_forced, m)?)?;
     m.add_function(wrap_pyfunction!(mcts_search_tree, m)?)?;
     // Persistent-combat-mirror surface (the rest are `PyCombatState`
@@ -4158,6 +4187,7 @@ fn state_from_dict_py(d: &Bound<'_, PyDict>) -> PyResult<PyCombatState> {
     game_version = None,
     run_seed = None,
     rng_counters = None,
+    encounter_floor = None,
 ))]
 #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
 fn build_scenario_state_py(
@@ -4176,6 +4206,7 @@ fn build_scenario_state_py(
     game_version: Option<&str>,
     run_seed: Option<u64>,
     rng_counters: Option<Vec<(String, u32)>>,
+    encounter_floor: Option<i64>,
 ) -> PyResult<PyCombatState> {
     let potions = potions.unwrap_or_default();
     let rng_counters = rng_counters.unwrap_or_default();
@@ -4184,10 +4215,13 @@ fn build_scenario_state_py(
     // Tight Belt, GH #893); a fight rebuilt from a human run passes the
     // human's belt size (GH #830).
     // `run_seed=` (+ `rng_counters=`) rebuilds a recorded fight on the run's
-    // own RNG streams, e.g. a SpireCodex replay's `combat_start.rng_state`.
+    // own RNG streams, e.g. a SpireCodex replay's `combat_start.rng_state`;
+    // `encounter_floor=` (C#'s `TotalFloor`) also rolls the encounter's
+    // roster off its per-encounter RNG (GH #918).
     let run_rng_init = run_seed.map(|run_seed| sts2_wire::scenario::RunRngInit {
         run_seed,
         counters: &rng_counters,
+        encounter_floor,
     });
     let inner = sts2_wire::scenario::build_scenario_state_with_run_rng(
         game_version,

@@ -10,8 +10,8 @@
 // regular speed" and "play at 2x" want.
 //
 // Never applied automatically at startup -- only ever from an explicit user
-// action -- so a leftover value can never distort a sweep or surprise the
-// player on launch.
+// action (or this launch's own `--spire-mentor-speed`, SimMp) -- so a
+// leftover value can never distort a sweep or surprise the player on launch.
 //
 // Engine.TimeScale is NOT ours alone: the game's hit-stop VFX
 // (NHitStop.HitStopTask) drives it to 0.1 and ramps it back to a HARDCODED

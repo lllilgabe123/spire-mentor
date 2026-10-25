@@ -45,7 +45,7 @@ def run_rows(path: str) -> dict[str, Any]:
     out["desync"] = Counter()
     try:
         for fi, rec in enumerate(replay.fights(path)):
-            if rec["result"] not in ("victory", "defeat") or not rec["rng_state"]:
+            if rec["result"] not in replay.FINISHED or not rec["rng_state"]:
                 continue
             r = sync.replay(rec)
             out["fights"] += 1

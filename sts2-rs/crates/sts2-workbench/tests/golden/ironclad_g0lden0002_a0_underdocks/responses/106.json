@@ -12,26 +12,9 @@
  "scores": [
   {
    "action": "Cinder",
-   "hp_n": 6,
-   "hp_sd": 5.2175,
-   "is_best": true,
-   "losses": 0,
-   "low_confidence": false,
-   "mean_final_hp": 30.6667,
-   "q": 1.1093,
-   "q_saturated": false,
-   "stable_idx": 2,
-   "target_index": 2,
-   "ties": 0,
-   "visits": 6,
-   "win_prob": 1.0,
-   "wins": 6
-  },
-  {
-   "action": "Cinder",
    "hp_n": 7,
    "hp_sd": 6.6486,
-   "is_best": false,
+   "is_best": true,
    "losses": 0,
    "low_confidence": false,
    "mean_final_hp": 30.2857,
@@ -43,6 +26,23 @@
    "visits": 7,
    "win_prob": 1.0,
    "wins": 7
+  },
+  {
+   "action": "Cinder",
+   "hp_n": 6,
+   "hp_sd": 5.2175,
+   "is_best": false,
+   "losses": 0,
+   "low_confidence": false,
+   "mean_final_hp": 30.6667,
+   "q": 1.1093,
+   "q_saturated": false,
+   "stable_idx": 2,
+   "target_index": 2,
+   "ties": 0,
+   "visits": 6,
+   "win_prob": 1.0,
+   "wins": 6
   },
   {
    "action": "Molten Fist",

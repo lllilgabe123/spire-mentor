@@ -11,10 +11,24 @@
  "pv": null,
  "scores": [
   {
-   "action": "STRIKE_SILENT.title",
+   "action": "SURVIVOR.title",
    "hp_n": 0,
    "hp_sd": null,
    "is_best": true,
+   "low_confidence": false,
+   "mean_final_hp": null,
+   "q": 1.2228,
+   "q_saturated": false,
+   "stable_idx": 5,
+   "target_index": null,
+   "visits": 7,
+   "win_prob": 1.0
+  },
+  {
+   "action": "STRIKE_SILENT.title",
+   "hp_n": 0,
+   "hp_sd": null,
+   "is_best": false,
    "low_confidence": false,
    "mean_final_hp": null,
    "q": 1.2366,
@@ -34,20 +48,6 @@
    "q": 1.2279,
    "q_saturated": false,
    "stable_idx": 0,
-   "target_index": null,
-   "visits": 7,
-   "win_prob": 1.0
-  },
-  {
-   "action": "SURVIVOR.title",
-   "hp_n": 0,
-   "hp_sd": null,
-   "is_best": false,
-   "low_confidence": false,
-   "mean_final_hp": null,
-   "q": 1.2228,
-   "q_saturated": false,
-   "stable_idx": 5,
    "target_index": null,
    "visits": 7,
    "win_prob": 1.0

@@ -2280,6 +2280,78 @@ pub fn export_features_spec(state: &CombatState, spec: &FeatureSpec) -> Exported
     }
 }
 
+/// A playout net as the PUCT prior ([`crate::MctsConfig::use_puct_prior`]):
+/// `P = (1 - mix) / n + mix * softmax(logits / temperature)` over the tree's
+/// child edges. Experimental (behaviour cloning from human replays).
+///
+/// The net scores the full legal list at the node, in order, as a playout
+/// would (its state features read that list). A child edge takes the summed
+/// probability of every legal action with its [`crate::EdgeAction`], since
+/// the tree merges identical cards into one edge.
+#[derive(Debug)]
+pub struct RolloutNetPrior {
+    net: RolloutNet,
+    mix: f32,
+    temperature: f32,
+}
+
+impl RolloutNetPrior {
+    /// A prior from `net` at blend weight `mix` (in `[0, 1]`) and softmax
+    /// `temperature` (> 0).
+    #[must_use]
+    pub fn new(net: RolloutNet, mix: f32, temperature: f32) -> Self {
+        Self {
+            net,
+            mix: mix.clamp(0.0, 1.0),
+            temperature: temperature.max(1e-3),
+        }
+    }
+}
+
+impl crate::Policy for RolloutNetPrior {
+    fn prior(&self, state: &CombatState, actions: &[Action]) -> SmallVec<[f32; 16]> {
+        let n = actions.len().max(1);
+        #[allow(clippy::cast_precision_loss)]
+        let uniform = 1.0 / n as f32;
+        let legal = sts2_core::legal_actions(state);
+        let logits = pick_logits(
+            &self.net,
+            state,
+            &legal,
+            crate::expert::END_TURN_PRIORITY,
+            false,
+        );
+        let top = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let w: SmallVec<[f32; 16]> = logits
+            .iter()
+            .map(|l| ((l - top) / self.temperature).exp())
+            .collect();
+        let edges: SmallVec<[crate::EdgeAction; 16]> = legal
+            .iter()
+            .map(|a| crate::EdgeAction::from_action(a, state))
+            .collect();
+        let mass: SmallVec<[f32; 16]> = actions
+            .iter()
+            .map(|a| {
+                let e = crate::EdgeAction::from_action(a, state);
+                edges
+                    .iter()
+                    .zip(&w)
+                    .filter(|(x, _)| **x == e)
+                    .map(|(_, w)| w)
+                    .sum()
+            })
+            .collect();
+        let total: f32 = mass.iter().sum();
+        if total.is_nan() || total <= 1e-12 {
+            return actions.iter().map(|_| uniform).collect();
+        }
+        mass.iter()
+            .map(|m| (1.0 - self.mix) * uniform + self.mix * m / total)
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

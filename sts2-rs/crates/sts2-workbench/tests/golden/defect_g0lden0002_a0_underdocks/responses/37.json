@@ -1,6 +1,6 @@
 {
  "act": null,
- "best_label": "Defend",
+ "best_label": "Go for the Eyes",
  "best_line": [],
  "best_mean_hp": null,
  "best_win_prob": 1.0,
@@ -9,8 +9,8 @@
  "hp_drop": null,
  "idx": 30,
  "is_blunder": false,
- "matched_best": false,
- "message": "Turn 1: Go for the Eyes instead of Defend dropped P(win) 100%→100% (−0 pts)",
+ "matched_best": true,
+ "message": "Turn 1: Go for the Eyes matched the MCTS line (P(win) 100%)",
  "n_actions": 4,
  "node_id": null,
  "played_label": "Go for the Eyes",
@@ -20,6 +20,6 @@
  "regret": 0.0,
  "severity": 0.0,
  "turn": 1,
- "verdict": "uncertain",
+ "verdict": "best",
  "visits": 6
 }

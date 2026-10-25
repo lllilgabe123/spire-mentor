@@ -28,7 +28,8 @@
 // silently listen on a different port than the mod serves) and an explicit
 // `--log-dir` under %LOCALAPPDATA%\SpireMentor.
 //
-// stdout/stderr are appended to `advisor_stdout.log` under
+// stdout/stderr are appended to `advisor_stdout.log` (`advisor_stdout.<port>.log`
+// off the default port; see StdoutLogPath) under
 // %LOCALAPPDATA%\SpireMentor (the MCTS backend is chatty; piping it into
 // godot.log would bury everything, and the mod dir is Program Files on a
 // default Steam install -- not user-writable).
@@ -68,6 +69,15 @@ internal static class SimAdvisorProcess
                 Logger.Log("[SimAdvisorProcess] Auto-launch disabled in settings.");
                 return;
             }
+            if (BridgeServer.Instance.Port == 0)
+            {
+                // Nothing is listening here, so an advisor launched against
+                // the configured port would serve whichever game owns it
+                // (another instance on this machine).
+                Logger.Log("[SimAdvisorProcess] The bridge is not listening; not launching an advisor.");
+                SimHud.Instance.SetAdvisorStatus(SimAdvisorStatus.Crashed);
+                return;
+            }
             if (BridgeServer.Instance.IsClientConnected)
             {
                 // A backend (or a manually started advisor) is already
@@ -99,11 +109,20 @@ internal static class SimAdvisorProcess
 
             string? modDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
             // --port in EVERY branch: the advisor otherwise defaults to 9002
-            // and silently diverges from a non-default SpireMentor.conf port.
+            // and silently diverges from a non-default SpireMentor.conf port
+            // or a fallback port (BridgeServer.StartWithFallback).
             // --log-dir only for the packaged exe below -- the dev lanes keep
             // their historical CWD-relative logs/realgame_advisor (the F7
             // harness and climb tooling read from there).
-            string advisorArgs = $"--port {SimConfig.Instance.Port}";
+            string advisorArgs = $"--port {BridgeServer.Instance.Port}";
+            int bridgePort = BridgeServer.Instance.Port;
+            if (bridgePort != DefaultPort)
+            {
+                // A second instance's advisor would otherwise also bind the
+                // control plane's default 8079, which Windows allows silently;
+                // shift it by the same offset as the bridge (9012 -> 8089).
+                advisorArgs += $" --control-port {DefaultControlPort + bridgePort - DefaultPort}";
+            }
             if (SimConfig.Instance.AdvisorAutoplay)
             {
                 // Unattended lane (climb / F7 harness): never auto-spawn the
@@ -190,7 +209,7 @@ internal static class SimAdvisorProcess
 
             try
             {
-                string logPath = Path.Combine(AppDataDir(), "advisor_stdout.log");
+                string logPath = StdoutLogPath(BridgeServer.Instance.Port);
                 RotateOversizedLog(logPath);
                 var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
                 var stopFlag = new StopFlag();
@@ -300,6 +319,21 @@ internal static class SimAdvisorProcess
             _process = null;
         }
     }
+
+    /// <summary>
+    /// <c>advisor_stdout.log</c>, or <c>advisor_stdout.&lt;port&gt;.log</c> off the
+    /// default port. A second game instance on the same machine (the local
+    /// co-op lane, or a port fallback) launches its own advisor; two writers
+    /// appending to one file each keep their own position and overwrite each
+    /// other, so one advisor's output was lost (2026-10-23 co-op batch).
+    /// </summary>
+    internal static string StdoutLogPath(int port) =>
+        Path.Combine(AppDataDir(), port == 0 || port == DefaultPort
+            ? "advisor_stdout.log"
+            : $"advisor_stdout.{port}.log");
+
+    private const int DefaultPort = 9002;
+    private const int DefaultControlPort = 8079;
 
     /// <summary>
     /// %LOCALAPPDATA%\SpireMentor -- the one user-writable home for advisor

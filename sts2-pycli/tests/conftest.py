@@ -161,6 +161,9 @@ _NEEDS: dict[str, str] = {
     "turnplan/test_root_filter.py::test_a_cell_with_the_knob_reports_a_filtered_root": "combat_bench",
     # --- the rollout-net recipe's boss800 holdout list (private logs/)
     "test_combat_ctx.py::test_jobs_hold_out_every_holdout_run": "rollout_recipe",
+    "test_elite_gap_tools.py::test_takeover_forces_a_human_line_exactly": "combat_bench",
+    "test_elite_gap_tools.py::test_takeover_records_both_first_turns_with_rollouts": "combat_bench",
+    "test_leaf_correction.py::test_play_and_label_rebuilds_the_final_value": "combat_bench",
 }
 
 

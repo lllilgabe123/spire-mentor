@@ -9,7 +9,7 @@
    },
    "is_best": true,
    "label": "Take Flame Barrier",
-   "prob": 0.9211
+   "prob": 0.6547
   },
   {
    "action": "select_card_reward",
@@ -18,7 +18,7 @@
    },
    "is_best": false,
    "label": "Take Shrug It Off",
-   "prob": 0.0787
+   "prob": 0.3428
   },
   {
    "action": "select_card_reward",
@@ -27,17 +27,17 @@
    },
    "is_best": false,
    "label": "Take Sword Boomerang",
-   "prob": 0.0001
+   "prob": 0.002
   },
   {
    "action": "skip_card_reward",
    "args": {},
    "is_best": false,
    "label": "Skip card reward",
-   "prob": 0.0
+   "prob": 0.0005
   }
  ],
  "ppo_available": true,
  "surface": "card-pick",
- "value": 0.9593
+ "value": 0.8704
 }

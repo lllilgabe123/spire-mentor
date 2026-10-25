@@ -1,6 +1,6 @@
 {
  "act": null,
- "best_label": "Leading Strike",
+ "best_label": "Deadly Poison",
  "best_line": [],
  "best_mean_hp": null,
  "best_win_prob": 1.0,
@@ -10,7 +10,7 @@
  "idx": 73,
  "is_blunder": false,
  "matched_best": false,
- "message": "Turn 1: Strike instead of Leading Strike dropped P(win) 100%→100% (−0 pts)",
+ "message": "Turn 1: Strike instead of Deadly Poison dropped P(win) 100%→100% (−0 pts)",
  "n_actions": 7,
  "node_id": null,
  "played_label": "Strike",

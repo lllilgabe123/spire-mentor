@@ -205,3 +205,18 @@ def test_scraper_dir_honours_the_env_override(monkeypatch) -> None:
 
     monkeypatch.setenv("STS2_RUN_SCRAPER", "/x/scraper")
     assert Path(scraper_dir("replays-spire-codex")) == Path("/x/scraper/data/replays-spire-codex")
+
+
+def test_hand_matches_tolerates_only_off_window_generated_cards() -> None:
+    h = pro.HandLog()
+    h.feed({"t": "draw", "c": 1, "id": "STRIKE_IRONCLAD", "turn_start": True})
+    h.decision()
+    h.feed({"t": "end_turn", "side": "player"})
+    h.feed({"t": "generate", "c": 7, "id": "BURN"})  # enemy turn: pile unknown
+    h.feed({"t": "generate", "c": 8, "id": "BURN"})
+    h.feed({"t": "turn", "side": "player"})
+    h.feed({"t": "draw", "c": 2, "id": "BASH", "turn_start": True})
+    assert pro.hand_matches(Counter({"BASH": 1, "BURN": 2}), h)
+    assert pro.hand_matches(Counter({"BASH": 1}), h)  # the Burns went elsewhere
+    assert not pro.hand_matches(Counter({"BASH": 1, "BURN": 3}), h)
+    assert not pro.hand_matches(Counter({"BURN": 2}), h)  # a drawn card missing

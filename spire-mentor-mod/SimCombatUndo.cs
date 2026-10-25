@@ -106,6 +106,13 @@ internal static class SimCombatUndo
 
     private static async Task UndoTurnAsync(int targetTurn, string? tapeId)
     {
+        if (SimMp.IsMultiplayer)
+        {
+            // The reload is single-player only: it would drop this peer out of
+            // the session and roll back state the other players already have.
+            Fail("undo_multiplayer", SimMp.RefusedMessage("Undo"));
+            return;
+        }
         if (!SimRestore.TryBegin())
         {
             Fail("undo_busy", "another rewind is already running");

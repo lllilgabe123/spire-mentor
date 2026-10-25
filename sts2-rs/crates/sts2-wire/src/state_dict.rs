@@ -1910,14 +1910,21 @@ pub fn card_id_from_python_name(s: &str) -> Option<CardId> {
     // (e.g. `RUPTURE`, `VICIOUS`) resolve against the canonical
     // `RUPTURE_CARD` / `VICIOUS_CARD` ids. Mirrors the same fallback
     // wired into `names::card_id_from_str` via `sts2-rs-u5zc`.
-    if let Some(c) = CardId::all()
-        .iter()
-        .copied()
-        .find(|k| k.to_python_name() == s)
-    {
+    //
+    // GH #929: the v0.111.0-only ids sit outside `CardId::all()` (the
+    // v0.107.1 universe), so they are chained on last, as the powers and
+    // potions are. Such a name can only come from a v0.111.0 state; every
+    // v0.107.1 parse is unchanged.
+    let ids = || {
+        CardId::all()
+            .iter()
+            .chain(CardId::V0111_ONLY.iter())
+            .copied()
+    };
+    if let Some(c) = ids().find(|k| k.to_python_name() == s) {
         return Some(c);
     }
-    CardId::all().iter().copied().find(|k| {
+    ids().find(|k| {
         let canonical = k.to_python_name();
         canonical.strip_suffix("_CARD") == Some(s)
     })

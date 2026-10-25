@@ -646,15 +646,27 @@ def per_ascension_winrate(rows: list[dict]) -> dict:
 
     Keys ``win_rate/A{n}`` and ``n_runs/A{n}`` so each ascension is its own
     wandb series and the A9/A10 trajectory is visible during training.
+
+    A10 runs also yield ``win_rate/A9_from_A10``: the share that entered the
+    DoubleBoss second-boss room, i.e. beat the first act-3 boss (A10 = A9 +
+    that fight). An ESTIMATE, not the A9 win rate: the policy is
+    ascension-conditioned, and on Ironclad it read ~5pp below a true A9 sweep
+    (2026-08-24). A run that died before act 3 reports None and counts as lost.
     """
     by_asc: collections.defaultdict[int, list[bool]] = collections.defaultdict(list)
+    a9_from_a10: list[bool] = []
     for r in rows:
-        by_asc[int(r.get("ascension", 0))].append(bool(r.get("won")))
+        asc = int(r.get("ascension", 0))
+        by_asc[asc].append(bool(r.get("won")))
+        if asc == 10:
+            a9_from_a10.append(bool(r.get("won")) or r.get("reached_second_boss") is True)
     out: dict[str, float] = {}
     for asc in sorted(by_asc):
         wl = by_asc[asc]
         out[f"win_rate/A{asc}"] = round(sum(wl) / max(1, len(wl)), 4)
         out[f"n_runs/A{asc}"] = len(wl)
+    if a9_from_a10:
+        out["win_rate/A9_from_A10"] = round(sum(a9_from_a10) / len(a9_from_a10), 4)
     return out
 
 

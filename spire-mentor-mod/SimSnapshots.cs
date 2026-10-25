@@ -84,7 +84,19 @@ internal static class SimSnapshots
     {
         try
         {
-            if (isMultiplayer || save == null || SimRestore.InProgress)
+            if (isMultiplayer)
+            {
+                // No rewinds in co-op; forget the previous single-player
+                // run's snapshots so nothing offers them as this run's.
+                lock (Lock)
+                {
+                    Metas.Clear();
+                    JsonById.Clear();
+                    _currentStartTime = -1;
+                }
+                return;
+            }
+            if (save == null || SimRestore.InProgress)
             {
                 return;
             }

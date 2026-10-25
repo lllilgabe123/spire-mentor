@@ -11,7 +11,7 @@
  "pv": null,
  "scores": [
   {
-   "action": "UNLEASH.title",
+   "action": "BODYGUARD.title",
    "hp_n": 0,
    "hp_sd": null,
    "is_best": true,
@@ -19,13 +19,13 @@
    "mean_final_hp": null,
    "q": 1.2314,
    "q_saturated": false,
-   "stable_idx": 2,
+   "stable_idx": 1,
    "target_index": null,
    "visits": 12,
    "win_prob": 1.0
   },
   {
-   "action": "BODYGUARD.title",
+   "action": "UNLEASH.title",
    "hp_n": 0,
    "hp_sd": null,
    "is_best": false,
@@ -33,7 +33,7 @@
    "mean_final_hp": null,
    "q": 1.2314,
    "q_saturated": false,
-   "stable_idx": 1,
+   "stable_idx": 2,
    "target_index": null,
    "visits": 12,
    "win_prob": 1.0

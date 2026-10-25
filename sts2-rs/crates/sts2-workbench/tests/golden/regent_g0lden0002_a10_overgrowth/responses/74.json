@@ -1,6 +1,6 @@
 {
  "act": null,
- "best_label": "Strike",
+ "best_label": "Photon Cut",
  "best_line": [],
  "best_mean_hp": null,
  "best_win_prob": 1.0,
@@ -10,7 +10,7 @@
  "idx": 50,
  "is_blunder": false,
  "matched_best": false,
- "message": "Turn 2: Defend instead of Strike dropped P(win) 100%→100% (−0 pts)",
+ "message": "Turn 2: Defend instead of Photon Cut dropped P(win) 100%→100% (−0 pts)",
  "n_actions": 4,
  "node_id": null,
  "played_label": "Defend",

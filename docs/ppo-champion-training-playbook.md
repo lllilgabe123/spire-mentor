@@ -817,6 +817,53 @@ exact net it was measured against with one variable moving. Both were
 promoted; only the second carries a causal claim. Write the distinction into
 the provenance file so the next reader does not inherit an overclaim.
 
+### 2.6 The standard strength eval — run it after every training
+
+Adopted 2026-10-23. After a campaign ends (and after a promotion), run one
+fixed A10 measurement at the strong combat setting, so every net has a
+number on the same panel and the same settings:
+
+```bash
+cd sts2-pycli
+STS2_RUNAI_MCTS_OVERRIDES="removed_counts_forms=1,endturn_widening_c=23.148,draw_widening_c=4.0" \
+  OMP_NUM_THREADS=1 PYTHONPATH=python \
+  .venv/bin/python -m ppo.probe --ckpt <net.pt> --policy net_greedy \
+    --character <Character> --ascension 10 --act1 roll \
+    --seeds 400 --seed-start 91000000 --procs 30 \
+    --sims 4000 --boss-sims 16000 --run-timeout 14400 --out <cell>.jsonl
+python ../docs/experiments/ironclad-a10/a10_score.py <cell>.jsonl
+```
+
+- **Settings: forms + combo at 4× sims.** `removed_counts_forms` scores
+  multi-form enemies by what is left of them; the two widening constants open
+  the EndTurn and draw chance nodes. 4000/16000 is 4× the deployed 1000/4000.
+  Leave every other `STS2_*` variable unset, and use a fresh PGO wheel (§0.4).
+- **Panel: A10 × 400, seeds 91,000,000–91,000,399, always the same.** This is
+  the one place where comparing win *rates* across nets is allowed (§2.1):
+  the panel never changes, so the seed-quality variance is held fixed.
+- **Report the A10 win rate and the A9 estimate** read off the same runs
+  (`reached_second_boss`; `a10_score.py` prints both). The estimate ran ~5pp
+  below a true A9 sweep on Ironclad.
+- **Cost:** ~41 min on 30 procs, 0 errored rows in 800.
+- **It is not a gate.** It measures a setting that does not ship (the
+  deployed search runs the defaults: forms off, widening 0.5/1.0), at 4× the
+  deployed budget. Promotion still follows §2.1–2.3 at 1000/4000.
+
+**Why these settings.** On Ironclad `a10_it700`, paired on this panel
+(`~/ppo-ironclad-a10/evalmode/`): forms + combo at 4× scored 23.0% A10 / 49.8%
+A9-est; defaults at 4× scored 21.5% / 47.2%. The +1.5pp is not significant
+(discordant 43/37, p = 0.58), and on `plr_it550` at 1×, forms + combo was
+flat (+0.25pp A10, −2.0pp A9-est). It costs only ~7% more wall time, so it was
+adopted as the strongest setting measured. 16× sims (16000/64000) added only
++1.5pp over 4× for 4× the cost, so the budget stops at 4×.
+
+**Reference numbers** (add a row per champion):
+
+| net | A10 | A9 estimate | date |
+|---|---|---|---|
+| Ironclad `plr_it550` (older wheel, pre-#771) | 17.0% | 45.2% | 2026-10-21 |
+| Ironclad `a10_it700` | 23.0% | 49.8% | 2026-10-23 |
+
 ---
 
 ## 3. Promotion — one manifest, one command

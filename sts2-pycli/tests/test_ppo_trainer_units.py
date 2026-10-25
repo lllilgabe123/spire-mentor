@@ -206,6 +206,25 @@ def test_running_moments_batch_invariance():
     assert a.std > 1.0
 
 
+def test_a10_runs_also_report_an_a9_estimate():
+    from ppo.trainer import per_ascension_winrate
+
+    rows = [
+        {"ascension": 10, "won": True, "reached_second_boss": True},
+        {"ascension": 10, "won": False, "reached_second_boss": True},
+        {"ascension": 10, "won": False, "reached_second_boss": False},
+        {"ascension": 10, "won": False, "reached_second_boss": None},  # died before act 3
+        {"ascension": 9, "won": True, "reached_second_boss": None},
+    ]
+    out = per_ascension_winrate(rows)
+    assert out["win_rate/A10"] == pytest.approx(0.25)
+    assert out["win_rate/A9_from_A10"] == pytest.approx(
+        0.5
+    )  # A10 runs only; the true A9 row is not mixed in
+    assert out["win_rate/A9"] == pytest.approx(1.0)
+    assert "win_rate/A9_from_A10" not in per_ascension_winrate(rows[4:])
+
+
 def test_parse_ascension_weights():
     from ppo.trainer import parse_ascension_weights
 

@@ -1,6 +1,6 @@
 {
  "act": null,
- "best_label": "Negative Pulse",
+ "best_label": "Bodyguard",
  "best_line": [],
  "best_mean_hp": null,
  "best_win_prob": 1.0,
@@ -10,7 +10,7 @@
  "idx": 30,
  "is_blunder": false,
  "matched_best": false,
- "message": "Turn 2: Strike instead of Negative Pulse dropped P(win) 100%→100% (−0 pts)",
+ "message": "Turn 2: Strike instead of Bodyguard dropped P(win) 100%→100% (−0 pts)",
  "n_actions": 5,
  "node_id": null,
  "played_label": "Strike",

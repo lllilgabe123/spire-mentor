@@ -2,7 +2,7 @@
  "act": 1,
  "candidates": [
   {
-   "is_best": false,
+   "is_best": true,
    "key": "choice:0",
    "label": "SUCKER_PUNCH",
    "q": -1.3141,
@@ -26,7 +26,7 @@
    "win_prob": 0.0
   },
   {
-   "is_best": true,
+   "is_best": false,
    "key": "choice:3",
    "label": "SNAKEBITE",
    "q": -1.3111,

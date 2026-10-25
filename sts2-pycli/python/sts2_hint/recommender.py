@@ -218,6 +218,12 @@ class RecommendConfig:
     # proven at least as good. Off here, matching the run agent; the browser
     # workbench turns it on (``DEFAULT_MCTS_CONFIG``).
     dominance_pruning: bool = False
+    # Boss win value by what the fight carries forward (GH #771): the run
+    # agent's `boss_win_carry`, applied by default to the run's last boss
+    # only, where winning is all that counts. `None` keeps the default win
+    # value; the live advisor fills these per fight (`sts2_rs.boss_win_carry`).
+    win_hp_carry: float | None = None
+    win_potion_carry: float | None = None
     # Optional path to a JSONL log file. When set, every recommend()
     # call appends one line with the full per-action MCTS output plus
     # a state digest, for post-hoc analysis.

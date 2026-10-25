@@ -1,17 +1,17 @@
 {
  "alternative": {
   "error": "verify arm hit the 12-step cap without ending",
-  "label": "Take Battle Trance",
+  "label": "Buy Inflame",
   "over": false,
   "steps": 12,
   "won": false
  },
- "decision": "card_reward",
- "node_id": 19,
+ "decision": "shop",
+ "node_id": 47,
  "note": "inconclusive — a continuation didn't finish; one agent-played continuation per line (same-seeded combat search) — a paired spot check, not a probability",
  "played": {
   "error": "verify arm hit the 12-step cap without ending",
-  "label": "Take Blood Wall",
+  "label": "Buy Vulnerable Potion",
   "over": false,
   "steps": 12,
   "won": false

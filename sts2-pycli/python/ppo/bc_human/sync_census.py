@@ -32,7 +32,7 @@ def eligible(path: str, character: str | None) -> bool:
         and (h.get("replay_version") or 0) >= 6
         and (h.get("player_count") or 1) == 1
         and h.get("game_mode") == "standard"
-        and not any(m.get("affects_gameplay") for m in h.get("mods", []))
+        and sync.mods_ok(h)
         and (character is None or h.get("character") == character)
     )
 
@@ -49,7 +49,7 @@ def one(path: str) -> list[dict[str, Any]]:
     rows = []
     try:
         for rec in replay.fights(path):
-            if rec["result"] not in ("victory", "defeat") or not rec["rng_state"]:
+            if rec["result"] not in replay.FINISHED or not rec["rng_state"]:
                 continue
             r = sync.replay(rec, MAI_OFFSET)
             rows.append(

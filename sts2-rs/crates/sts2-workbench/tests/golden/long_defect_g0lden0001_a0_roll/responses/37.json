@@ -1,6 +1,6 @@
 {
  "act": null,
- "best_label": "Defend",
+ "best_label": "Zap",
  "best_line": [],
  "best_mean_hp": null,
  "best_win_prob": 1.0,
@@ -10,7 +10,7 @@
  "idx": 30,
  "is_blunder": false,
  "matched_best": false,
- "message": "Turn 1: Boost Away instead of Defend dropped P(win) 100%→100% (−0 pts)",
+ "message": "Turn 1: Boost Away instead of Zap dropped P(win) 100%→100% (−0 pts)",
  "n_actions": 5,
  "node_id": null,
  "played_label": "Boost Away",

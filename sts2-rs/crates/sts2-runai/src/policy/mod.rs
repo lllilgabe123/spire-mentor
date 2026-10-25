@@ -151,6 +151,74 @@ pub(crate) fn combat_prior_net_from_env() -> Option<Arc<LearnedValueNet>> {
     combat_net_from_env()
 }
 
+/// `STS2_RUNAI_PRIOR_NET=<playout net json>` ⇒ that net drives PUCT priors
+/// ([`sts2_mcts::rollout_net::RolloutNetPrior`]), blended with uniform at
+/// `STS2_RUNAI_PRIOR_MIX` (default 0.5), softmax temperature
+/// `STS2_RUNAI_PRIOR_TEMP` (default 1). Experimental (behaviour cloning from
+/// human replays); off when unset.
+///
+/// # Panics
+/// When the file can't be read or parsed, or a knob is not a number — a
+/// silent fallback would measure the uniform search instead.
+pub(crate) fn rollout_prior_from_env() -> Option<sts2_mcts::SharedPolicy> {
+    static PRIOR: OnceLock<Option<sts2_mcts::SharedPolicy>> = OnceLock::new();
+    PRIOR
+        .get_or_init(|| {
+            let path = std::env::var("STS2_RUNAI_PRIOR_NET").ok()?;
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("STS2_RUNAI_PRIOR_NET={path}: {e}"));
+            let net = sts2_mcts::rollout_net::RolloutNet::from_json(&text)
+                .unwrap_or_else(|e| panic!("STS2_RUNAI_PRIOR_NET={path}: {e}"));
+            let knob = |name: &str, default: f32| {
+                std::env::var(name).map_or(default, |v| {
+                    v.parse::<f32>()
+                        .unwrap_or_else(|_| panic!("{name}={v:?} is not a number"))
+                })
+            };
+            Some(sts2_mcts::SharedPolicy::new(
+                sts2_mcts::rollout_net::RolloutNetPrior::new(
+                    net,
+                    knob("STS2_RUNAI_PRIOR_MIX", 0.5),
+                    knob("STS2_RUNAI_PRIOR_TEMP", 1.0),
+                ),
+            ))
+        })
+        .clone()
+}
+
+/// `STS2_RUNAI_PRIOR_ROOMS=<comma list of common|elite|boss>`: the combat
+/// tiers [`rollout_prior_from_env`]'s prior applies in (default all). On the
+/// GH #830 pro set the behaviour-cloned prior helped boss and elite fights
+/// and cost a little in hallway fights.
+///
+/// # Panics
+/// On an unknown tier name.
+pub(crate) fn rollout_prior_applies(tier: BudgetTier) -> bool {
+    static ROOMS: OnceLock<Option<Vec<BudgetTier>>> = OnceLock::new();
+    ROOMS
+        .get_or_init(|| {
+            let v = std::env::var("STS2_RUNAI_PRIOR_ROOMS").ok()?;
+            Some(
+                parse_prior_rooms(&v)
+                    .unwrap_or_else(|t| panic!("STS2_RUNAI_PRIOR_ROOMS: unknown tier {t:?}")),
+            )
+        })
+        .as_ref()
+        .map_or(true, |rooms| rooms.contains(&tier))
+}
+
+/// `"elite,boss"` → those tiers; `Err(name)` on an unknown one.
+fn parse_prior_rooms(v: &str) -> Result<Vec<BudgetTier>, String> {
+    v.split(',')
+        .map(|t| match t.trim() {
+            "common" => Ok(BudgetTier::Common),
+            "elite" => Ok(BudgetTier::Elite),
+            "boss" => Ok(BudgetTier::Boss),
+            other => Err(other.to_owned()),
+        })
+        .collect()
+}
+
 /// Rollout ply cap for run-context combat MCTS (and fight_delta probes).
 /// `MctsConfig::default()`'s 10 truncates every act-1 rollout before the
 /// fight ends — the exact failure mode documented at
@@ -843,32 +911,9 @@ fn resolve_boss_carry(env_value: Option<&str>) -> BossCarry {
     }
 }
 
-/// `(hp_carry, potion_carry)` for a boss fight's win value
-/// ([`MctsConfig::win_hp_carry`], GH #771), or `None` for the deployed one.
-///
-/// - The run's last boss (the final act's boss, or the second one under A10
-///   DoubleBoss): nothing carries, so only winning counts.
-/// - The first act-3 boss under A10 DoubleBoss: its end HP is the second
-///   boss's entry HP, with no rest site between, so it keeps the deployed
-///   value.
-/// - An act-1 or act-2 boss: the next act's Ancient heals the missing HP,
-///   all of it below A2 and 80% from A2 (WearyTraveler,
-///   `AncientEventModel.BeforeEventStarted`), so HP carries 0 or 0.2.
-///   Potions stay in the belt and carry fully.
-fn boss_win_carry(
-    is_boss: bool,
-    is_last_act: bool,
-    awaiting_second_boss: bool,
-    ascension: u8,
-) -> Option<(f32, f32)> {
-    if !is_boss {
-        return None;
-    }
-    if is_last_act {
-        return (!awaiting_second_boss).then_some((0.0, 0.0));
-    }
-    Some((if ascension >= 2 { 0.2 } else { 0.0 }, 1.0))
-}
+/// Re-exported from [`sts2_mcts`], which owns it so the advisor's search
+/// (`sts2-wire`, which does not depend on this crate) applies the same rule.
+use sts2_mcts::boss_win_carry;
 
 /// Parsed `STS2_RUNAI_MCTS_OVERRIDES` bundle — one optional slot per
 /// tunable [`MctsConfig`] search knob, shared vocabulary with
@@ -1910,12 +1955,18 @@ impl<M: RunPolicy> MctsCombatPolicy<M> {
         // production path is unchanged by routing through `with_policy`.
         // (`use_puct_prior` is not an override knob, so setting it after the
         // override bundle in `search_config` is the same as before it.)
-        let prior = match combat_prior_net_from_env() {
-            Some(net) => {
+        let tier = BudgetTier::from_room(rm.run_state.current_room.as_ref().map(|r| r.room_type));
+        let rollout_prior = rollout_prior_from_env().filter(|_| rollout_prior_applies(tier));
+        let prior = match (combat_prior_net_from_env(), rollout_prior) {
+            (Some(net), _) => {
                 config.use_puct_prior = true;
                 sts2_mcts::SharedPolicy::new(sts2_mcts::LearnedPolicyPrior::new(net))
             }
-            None => sts2_mcts::SharedPolicy::uniform(),
+            (None, Some(prior)) => {
+                config.use_puct_prior = true;
+                prior
+            }
+            (None, None) => sts2_mcts::SharedPolicy::uniform(),
         };
         // Root-level potion opportunity-cost charge (GH #447 follow-up).
         // Slot-indexed from the CURRENT combat belt: each searched ply
@@ -2459,6 +2510,22 @@ mod mcts_fixtures;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parse_prior_rooms_reads_tier_lists() {
+        assert_eq!(
+            super::parse_prior_rooms("elite, boss"),
+            Ok(vec![super::BudgetTier::Elite, super::BudgetTier::Boss])
+        );
+        assert_eq!(
+            super::parse_prior_rooms("common"),
+            Ok(vec![super::BudgetTier::Common])
+        );
+        assert_eq!(
+            super::parse_prior_rooms("elite,hallway"),
+            Err("hallway".to_owned())
+        );
+    }
+
     use super::*;
     use sts2_content::run_callbacks::new_run_manager_for_character;
     use sts2_core::potions::CharacterId;
