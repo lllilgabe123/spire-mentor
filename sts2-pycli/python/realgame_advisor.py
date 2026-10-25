@@ -58,6 +58,7 @@ import realgame_fighttips
 import realgame_foresight
 import realgame_hand_select
 import realgame_proguide
+import realgame_turnplan
 import runtime_paths
 from enemy_labels import enemy_label
 from realgame_adapter import (
@@ -517,6 +518,25 @@ def compute_combat_advice(
     rows = combat_rows(result, headless, advice)
     if foresight:
         _add_foresight(advice, state, real_wire, coop, share, cfg, sims)
+        # Personal build: number this turn's plays (1, 2, 3...) by playing
+        # the turn out on a copy of the fight (realgame_turnplan).
+        try:
+            names = {str(c.get("id")): str(c.get("name")) for c in state.get("hand") or [] if c.get("id") and c.get("name")}
+            order, line = realgame_turnplan.plan_turn(
+                sts2_rs, cs, advice.get("best") or {}, wire["deck"]["hand"], names,
+                sims=max(400, sims // 10), seed=call_cfg.seed or 1, hidden_info=call_cfg.hidden_info,
+            )
+            if order:
+                advice["plan_order"] = order
+                advice["pv"] = line
+        except Exception as exc:
+            logger.warning("turn plan failed: %s", exc)
+        try:
+            core = realgame_combos.combat_lines(state)
+            if core:
+                advice["forecast_lines"] = list(advice.get("forecast_lines") or []) + core
+        except Exception as exc:
+            logger.warning("combat combo hint failed: %s", exc)
     if kill_note:
         advice.setdefault("forecast_lines", []).append(kill_note)
     return advice, cs, call_cfg, rows

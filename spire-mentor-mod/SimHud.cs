@@ -162,6 +162,11 @@ internal sealed class SimAdvice
     public readonly List<SimAdviceOption> Options = new();
     public readonly List<string> Pv = new();
 
+    /// <summary>`advice.plan_order`: hand card index -> its step in this
+    /// turn's planned order (1 = play first), from the advisor playing the
+    /// turn out on a copy of the fight. Shown on the cards as "1.", "2.".</summary>
+    public readonly Dictionary<int, int> PlanStep = new();
+
     /// <summary>
     /// `advice.hand_back`: the advisor's own word that this answer is not
     /// really a decision (unranked, a borrowed head, an error), as a short
@@ -299,6 +304,17 @@ internal sealed class SimAdvice
                 if (p.ValueKind == JsonValueKind.String)
                 {
                     advice.Pv.Add(p.GetString() ?? "");
+                }
+            }
+        }
+
+        if (el.TryGetProperty("plan_order", out JsonElement planEl) && planEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement p in planEl.EnumerateArray())
+            {
+                if (p.ValueKind == JsonValueKind.Object && ReadInt(p, "card_index") is int ci && ReadInt(p, "step") is int st)
+                {
+                    advice.PlanStep[ci] = st;
                 }
             }
         }
@@ -670,7 +686,7 @@ internal sealed class SimHud
         {
             return;
         }
-        RenderOneCardLabel(best, PileType.Hand.GetPile(player), handUi);
+        RenderOneCardLabel(best, PileType.Hand.GetPile(player), handUi, new Dictionary<int, int>());
     }
 
     private bool PeekMapMarker(SimAdviceOption best)
@@ -1054,7 +1070,7 @@ internal sealed class SimHud
             }
             try
             {
-                RenderOneCardLabel(o, hand, handUi);
+                RenderOneCardLabel(o, hand, handUi, advice.PlanStep);
             }
             catch (Exception ex)
             {
@@ -1063,7 +1079,7 @@ internal sealed class SimHud
         }
     }
 
-    private void RenderOneCardLabel(SimAdviceOption o, CardPile hand, NPlayerHand handUi)
+    private void RenderOneCardLabel(SimAdviceOption o, CardPile hand, NPlayerHand handUi, Dictionary<int, int> planStep)
     {
         int index = o.CardIndex!.Value;
         // Same hand indexing as the "play" verb's card_index -- Nth card of
@@ -1105,6 +1121,10 @@ internal sealed class SimHud
         if (o.IsBest)
         {
             text = "★ " + text;
+        }
+        if (planStep.TryGetValue(index, out int step))
+        {
+            text = $"{step}. " + text;
         }
 
         const float labelWidth = 90f;

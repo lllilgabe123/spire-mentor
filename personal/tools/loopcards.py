@@ -1,5 +1,5 @@
 """Per-card loop data from the decompiled beta: cost, energy gained, cards
-drawn, cards discarded, exhaust. Output: loopcards.json {norm name: [...]}."""
+drawn, cards discarded, exhaust, display name, breaks-a-loop. Output: loopcards.json {norm name: [...]}."""
 import json, os, re, sys
 D = os.path.join(os.environ["LOCALAPPDATA"], "Temp", "claude-sts2-decomp", "MegaCrit.Sts2.Core.Models")
 pools = {}
@@ -29,6 +29,9 @@ for name, pool in pools.items():
     discard = 1 if "FromHandForDiscard" in play else 0
     exhaust = "CardKeyword.Exhaust)" in s.split("CanonicalKeywords")[1][:300] if "CanonicalKeywords" in s else False
     cond = bool(re.search(r"if \(|IsPlayable", play))
-    out[name.lower()] = [pool, cost, ctype, xcost, energy, draw, discard, exhaust, cond, re.sub(r"(?<!^)(?=[A-Z])", " ", name)]
+    # Breaks a loop: stops further draws this turn (Battle Trance, Bullet
+    # Time), adds junk cards (Overclock's Burn), or raises costs (Borrowed Time).
+    noloop = bool(re.search(r"NoDrawPower|<(Burn|Wound|Dazed|Slimed|Void|Infection)>|BorrowedTimePower", s))
+    out[name.lower()] = [pool, cost, ctype, xcost, energy, draw, discard, exhaust, cond, re.sub(r"(?<!^)(?=[A-Z])", " ", name), noloop]
 json.dump(out, open(sys.argv[1], "w"), separators=(",", ":"))
 print(len(out))

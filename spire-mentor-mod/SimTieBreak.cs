@@ -106,6 +106,7 @@ internal static class SimTieBreak
                     Label = chosen.Label,
                 };
                 advice.Pv.Clear();
+                MoveToFront(advice.PlanStep, ci);
                 advice.Pv.Add(chosen.Label);
                 advice.TieNote = $"about equal: {tie} → {CardName(chosen.Label)} first (powers, buffs and debuffs before other moves)";
                 Logger.Log($"[SimTieBreak] {tie}: recommending {chosen.Label} over {best.Label} " +
@@ -118,6 +119,7 @@ internal static class SimTieBreak
                 chosen.IsBest = true;
                 advice.Best = new SimBestAction { Action = "end_turn", Label = chosen.Label };
                 advice.Pv.Clear();
+                advice.PlanStep.Clear(); // ending the turn: no plays to number
                 advice.Pv.Add(chosen.Label);
                 advice.TieNote = $"about equal: {tie} → End turn (keep {best.Label} for a fight where it matters)";
                 Logger.Log($"[SimTieBreak] {tie}: keeping {best.Label}, recommending End turn " +
@@ -131,6 +133,22 @@ internal static class SimTieBreak
         catch (Exception ex)
         {
             Logger.Log($"[SimTieBreak] skipped: {ex.Message}");
+        }
+    }
+
+    /// <summary>The planned order with <paramref name="card"/> played first:
+    /// the cards before it move down one step. A card outside the plan
+    /// leaves no order to trust, so the numbers go.</summary>
+    private static void MoveToFront(Dictionary<int, int> plan, int card)
+    {
+        if (!plan.TryGetValue(card, out int was))
+        {
+            plan.Clear();
+            return;
+        }
+        foreach (int k in plan.Keys.ToList())
+        {
+            plan[k] = k == card ? 1 : plan[k] < was ? plan[k] + 1 : plan[k];
         }
     }
 
@@ -165,6 +183,7 @@ internal static class SimTieBreak
             ? new SimBestAction { Action = "end_turn", Label = next.Label }
             : new SimBestAction { Action = "play", CardIndex = next.CardIndex!.Value, TargetIndex = next.TargetIndex ?? -1, Label = next.Label };
         advice.Pv.Clear();
+        advice.PlanStep.Clear(); // the planned order started with the move just replaced
         advice.Pv.Add(next.Label);
         advice.TieNote = $"{CardName(best.Label)} costs X and you have 0 energy: it would do nothing. Keep it; {CardName(next.Label)} instead";
         Logger.Log($"[SimTieBreak] {best.Label} at 0 energy (X cost): recommending {next.Label} instead.");
@@ -220,6 +239,7 @@ internal static class SimTieBreak
             ? new SimBestAction { Action = "end_turn", Label = next.Label }
             : new SimBestAction { Action = "play", CardIndex = next.CardIndex!.Value, TargetIndex = next.TargetIndex ?? -1, Label = next.Label };
         advice.Pv.Clear();
+        advice.PlanStep.Clear(); // the planned order started with the move just replaced
         advice.Pv.Add(next.Label);
         string need = wantsAttack ? "an Attack" : "a Block card";
         advice.TieNote = $"Hold {CardName(best.Label)}: no {need} to play after it this turn. Drink it when you have one";

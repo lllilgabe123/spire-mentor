@@ -7,7 +7,8 @@ toward outside advice lost runs). Two parts:
   themselves back and pay for themselves: over the cards that stay in the
   deck (not Exhaust), draws minus discards >= the number of cards, and energy
   gained >= energy spent. Unceasing Top (draw when the hand is empty) waives
-  the draw half. Per-card cost / energy / draw come from the beta's own card
+  the draw half. Cards that break a loop (Battle Trance stops further draws,
+  Overclock adds a Burn) count as dead weight. Per-card cost / energy / draw come from the beta's own card
   code (``loopcards.json.gz``, made by tools/loopcards.py from the decompiled
   v0.111.0 game), so every number is the real card's, unupgraded.
 * Engines: card sets checked against the beta card text (the community lists
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import gzip
 import json
+from itertools import combinations
 from typing import Any
 
 from realgame_proguide import _data_dir, _deck, _norm
@@ -27,7 +29,7 @@ from realgame_proguide import _data_dir, _deck, _norm
 #: card names; "relic:" pieces are relic ids.
 ENGINES: list[tuple[str, str, list[str], str]] = [
     ("Bloodletting engine", "ironclad",
-     ["bloodletting", "pommelstrike", "shrugitoff", "battletrance", "spite"],
+     ["bloodletting", "pommelstrike", "shrugitoff", "spite"],
      "Bloodletting is 0 cost, +2 energy and stays in your deck; draw cards cycle back to it. "
      "Spite hits more after you lose HP. Costs 3 HP a loop: keep the deck thin"),
     ("Corruption exhaust engine", "ironclad",
@@ -69,7 +71,7 @@ _CARDS: dict[str, list[Any]] | None = None
 
 
 def _cards() -> dict[str, list[Any]]:
-    """{normalized card: [pool, cost, type, x, energy, draw, discard, exhaust, conditional, name]}."""
+    """{normalized card: [pool, cost, type, x, energy, draw, discard, exhaust, conditional, name, breaks_loop]}."""
     global _CARDS
     if _CARDS is None:
         _CARDS = {}
@@ -86,8 +88,8 @@ def _cards() -> dict[str, list[Any]]:
 
 
 def _relics(state: dict[str, Any]) -> set[str]:
-    p = state.get("player") or (state.get("run_state") or {})
-    return {str(r.get("id") or "").upper() for r in p.get("relics") or [] if isinstance(r, dict)}
+    rows = [*((state.get("player") or {}).get("relics") or []), *((state.get("run_state") or {}).get("relics") or [])]
+    return {str(r.get("id") or "").upper() for r in rows if isinstance(r, dict)}
 
 
 def _key(card: dict[str, Any]) -> str:
@@ -108,6 +110,8 @@ def loop_gaps(keys: list[str], relics: set[str]) -> tuple[int, int, int] | None:
             cost += 1
             continue
         _pool, c, ctype, x, e, dr, disc, exhaust, _cond = row[:9]
+        if len(row) > 10 and row[10]:
+            dr = e = 0  # breaks a loop (Battle Trance's no-draw, Overclock's Burn): count it as dead weight
         if exhaust:
             draw += dr - disc  # one-shot: helps once, then leaves the cycle
             energy += e - max(c, 0)
@@ -169,6 +173,9 @@ def card_reward_lines(state: dict[str, Any], character: str) -> list[str]:
     relics = _relics(state)
     offered = [_key(c) for c in state.get("cards") or [] if isinstance(c, dict)]
     out = _engine_lines(character, set(deck), relics, offered)
+    core = core_line(deck, relics)
+    if core:
+        out.append(core)
     meter = _meter_line(deck, relics)
     if meter:
         out.append(meter)
@@ -189,6 +196,9 @@ def deck_lines(state: dict[str, Any], character: str) -> list[str]:
     deck = [_key(c) for c in _deck(state)]
     relics = _relics(state)
     out = _engine_lines(character, set(deck), relics, [])
+    core = core_line(deck, relics)
+    if core:
+        out.append(core)
     meter = _meter_line(deck, relics)
     if meter:
         out.append(meter)
@@ -196,3 +206,64 @@ def deck_lines(state: dict[str, Any], character: str) -> list[str]:
     if owned and out:
         out.append("Your loop relics: " + "; ".join(owned))
     return out
+
+
+def find_core(keys: list[str], relics: set[str], max_size: int = 4) -> list[str] | None:
+    """The smallest set of cards (instances from ``keys``) that loops on its
+    own: draws >= its size (waived with Unceasing Top), energy gained >=
+    energy spent, no Exhaust, and something that deals damage (an Attack,
+    or Skills with Letter Opener). None when no such set exists."""
+    table = _cards()
+    counts: dict[str, int] = {}
+    for k in keys:
+        row = table.get(k)
+        # Loops need cards that stay (no Exhaust), a known cost (no X) and
+        # nothing that stops the loop (no-draw, junk cards, cost increases).
+        if row and not row[7] and not row[3] and not (len(row) > 10 and row[10]):
+            counts[k] = counts.get(k, 0) + 1
+    pool = [k for k, n in sorted(counts.items()) for _ in range(min(n, max_size))]
+    top = "UNCEASING_TOP" in relics
+    letter = "LETTER_OPENER" in relics
+    best: tuple[int, int, list[str]] | None = None
+
+    for size in range(1, max_size + 1):
+        for combo in set(combinations(pool, size)):
+            rows = [table[k] for k in combo]
+            draw = sum(r[5] - r[6] for r in rows)
+            energy = sum(r[4] for r in rows) - sum(max(r[1], 0) for r in rows)
+            hits = any(r[2] == "Attack" for r in rows) or (letter and any(r[2] == "Skill" for r in rows))
+            if hits and energy >= 0 and (top or draw >= size):
+                slack = energy + (draw - size)
+                if best is None or slack > best[1]:
+                    best = (size, slack, list(combo))
+        if best is not None:
+            return best[2]
+    return None
+
+
+def core_line(keys: list[str], relics: set[str], in_fight: bool = False) -> str | None:
+    """"Infinite potential: A + B + C" with what stands in the way."""
+    core = find_core(keys, relics)
+    if not core:
+        return None
+    names = " + ".join(_pretty(k) for k in core)
+    gaps = loop_gaps(keys, relics)
+    if gaps and gaps[0] <= 0 and gaps[1] <= 0:
+        return (f"INFINITE: your whole {'fight cycle' if in_fight else 'deck'} pays for itself ({names} is the core). "
+                "Play draw and energy cards first, attacks as energy allows")
+    rest = len([k for k in keys if k not in core]) if gaps else 0
+    where = "in this fight's cards" if in_fight else "in your deck"
+    verb = "loops" if len(core) == 1 else "loop"
+    return (f"Infinite potential {where}: {names} {verb} on their own. The other {rest} cards clog the cycle; "
+            "each one you exhaust or remove brings the loop closer")
+
+
+def combat_lines(state: dict[str, Any]) -> list[str]:
+    """In a fight: the infinite hint over the cards still in play (hand,
+    draw and discard piles; exhausted cards are gone)."""
+    cards = [*(state.get("hand") or []),
+             *((state.get("draw_pile") or {}).get("cards") or []),
+             *((state.get("discard_pile") or {}).get("cards") or [])]
+    keys = [_key(c) for c in cards if isinstance(c, dict)]
+    line = core_line(keys, _relics(state), in_fight=True)
+    return [line] if line else []
