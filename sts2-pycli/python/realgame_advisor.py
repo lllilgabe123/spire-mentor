@@ -60,6 +60,7 @@ import realgame_fighttips
 import realgame_foresight
 import realgame_hand_select
 import realgame_proguide
+import realgame_topup
 import realgame_turnplan
 import runtime_paths
 from enemy_labels import enemy_label
@@ -542,7 +543,20 @@ def compute_combat_advice(
     advice = build_advice(tags, state, sims=sims, pv=pv)
     rows = combat_rows(result, headless, advice)
     if foresight:
+        # Personal build: re-search under-visited runner-ups on their own
+        # budget and switch when one clearly wins more (realgame_topup).
+        checked = None
+        if not kill_note:
+            try:
+                checked = realgame_topup.double_check(
+                    sts2_rs, cs, advice, wire["deck"]["hand"], sims=max(2000, sims // 4),
+                    hidden_info=call_cfg.hidden_info,
+                )
+            except Exception as exc:
+                logger.warning("double-check failed: %s", exc)
         _add_foresight(advice, state, real_wire, coop, share, cfg, sims)
+        if checked:
+            advice["forecast_lines"] = [checked, *(advice.get("forecast_lines") or [])]
         # Personal build: number this turn's plays (1, 2, 3...) by playing
         # the turn out on a copy of the fight (realgame_turnplan).
         try:
