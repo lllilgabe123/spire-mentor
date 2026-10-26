@@ -447,6 +447,14 @@ internal sealed class SimHud
     private VBoxContainer? _adviceRows;
     private readonly List<CardLabelAnchor> _cardLabels = new();
     private readonly Dictionary<Creature, Label> _enemyTags = new();
+
+    /// <summary>The enemy the shown recommendation targets (index into the
+    /// combat's enemy list, as `target_index` is), -1 for none, and the
+    /// marker drawn over its health bar ("▼ Strike"). Set with the card
+    /// labels and cleared with them, so it never outlives its advice.</summary>
+    private int _targetIndex = -1;
+    private string _targetText = "";
+    private Label? _targetMarker;
     private readonly List<MapMarkerAnchor> _mapMarkers = new();
     private readonly List<Control> _routePoints = new();
     private Line2D? _routeLine;
@@ -687,6 +695,7 @@ internal sealed class SimHud
             return;
         }
         RenderOneCardLabel(best, PileType.Hand.GetPile(player), handUi, new Dictionary<int, int>());
+        SetTarget(new SimBestAction { Action = "play", TargetIndex = best.TargetIndex ?? -1, Label = best.Label }, best.Label);
     }
 
     private bool PeekMapMarker(SimAdviceOption best)
@@ -1061,6 +1070,7 @@ internal sealed class SimHud
             Logger.Log($"[SimHud] Could not resolve hand pile: {ex.Message}");
             return;
         }
+        SetTarget(advice.Best, advice.Best?.Label);
 
         foreach (SimAdviceOption o in advice.Options)
         {
@@ -1318,6 +1328,7 @@ internal sealed class SimHud
         finally
         {
             _cardLabels.Clear();
+            _targetIndex = -1;
         }
     }
 
@@ -1733,6 +1744,64 @@ internal sealed class SimHud
         }
     }
 
+    /// <summary>Point at the recommendation's target: with two same-looking
+    /// enemies (or a crowd of Wrigglers) "Strike → Nibbit #2" was hard to
+    /// match to the board, so the card name sits over that enemy's bar.</summary>
+    private void SetTarget(SimBestAction? best, string? label)
+    {
+        _targetIndex = best is { Action: "play" or "potion" } ? best.TargetIndex : -1;
+        string name = label ?? best?.Label ?? "";
+        int arrow = name.IndexOf(" → ", StringComparison.Ordinal);
+        _targetText = "▼ " + (arrow >= 0 ? name[..arrow] : name).Trim();
+    }
+
+    private void RepositionTargetMarker()
+    {
+        try
+        {
+            NCombatRoom? room = NCombatRoom.Instance;
+            IReadOnlyList<Creature>? enemies =
+                _targetIndex >= 0 && HudVisible && CombatManager.Instance?.IsInProgress == true &&
+                room != null && GodotObject.IsInstanceValid(room)
+                    ? CombatManager.Instance.DebugOnlyGetState()?.Enemies
+                    : null;
+            Rect2? bar = null;
+            if (enemies != null && _targetIndex < enemies.Count && enemies[_targetIndex].IsAlive)
+            {
+                bar = HealthBarRect(room!.GetCreatureNode(enemies[_targetIndex]));
+            }
+            if (bar == null)
+            {
+                if (_targetMarker != null && GodotObject.IsInstanceValid(_targetMarker))
+                {
+                    _targetMarker.Visible = false;
+                }
+                return;
+            }
+            if (_targetMarker == null || !GodotObject.IsInstanceValid(_targetMarker))
+            {
+                _targetMarker = SmallLabel("", new Color(1f, 0.85f, 0.3f));
+                _targetMarker.Name = "SpireMentorTargetMarker";
+                _targetMarker.AddThemeColorOverride("font_outline_color", Colors.Black);
+                _targetMarker.AddThemeConstantOverride("outline_size", 8);
+                _targetMarker.AddThemeFontSizeOverride("font_size", 26);
+                _targetMarker.HorizontalAlignment = HorizontalAlignment.Center;
+                _targetMarker.MouseFilter = Control.MouseFilterEnum.Ignore;
+                _layer!.AddChildSafely(_targetMarker);
+            }
+            _targetMarker.Text = _targetText;
+            _targetMarker.Size = new Vector2(Math.Max(160f, bar.Value.Size.X), 34f);
+            _targetMarker.GlobalPosition = new Vector2(
+                bar.Value.Position.X + bar.Value.Size.X / 2f - _targetMarker.Size.X / 2f,
+                bar.Value.Position.Y - _targetMarker.Size.Y - 6f);
+            _targetMarker.Visible = true;
+        }
+        catch (Exception ex)
+        {
+            LogEnemyTagFailure(ex);
+        }
+    }
+
     private void ClearEnemyTags()
     {
         foreach (Creature enemy in new List<Creature>(_enemyTags.Keys))
@@ -1799,6 +1868,7 @@ internal sealed class SimHud
                 RepositionCardLabels();
                 RepositionMapMarkers();
                 RepositionEnemyTags();
+                RepositionTargetMarker();
             }));
             layer.AddChild(ticker);
 
