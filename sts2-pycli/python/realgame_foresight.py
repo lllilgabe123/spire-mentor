@@ -169,6 +169,27 @@ def _block_to_survive(sts2_rs: Any, wire: dict[str, Any], hp_now: int) -> int | 
     return lo
 
 
+def hand_notes(state: dict[str, Any], advice: dict[str, Any]) -> list[str]:
+    """Why cards in hand are not in the advice, when the screen does not say.
+
+    Two live cases on the Queen fight: Pull Aggro and Bone Shards looked
+    playable but were Bound with this turn's one Bound card already played
+    (Chains of Binding), and End turn kept Wisp+ because it Retains."""
+    hand = [c for c in state.get("hand") or [] if isinstance(c, dict)]
+    p = state.get("player") or {}
+    lines = []
+    bound = [str(c.get("name")) for c in hand if str(c.get("affliction") or "").lower() == "bound"]
+    if bound and p.get("bound_card_played_this_turn"):
+        lines.append(f"Bound: you already played this turn's one Bound card, so {', '.join(bound)} "
+                     f"{'is' if len(bound) == 1 else 'are'} locked until next turn")
+    if str((advice.get("best") or {}).get("action")) == "end_turn":
+        kept = [str(c.get("name")) for c in hand
+                if c.get("will_retain") or c.get("retain") or "retain" in (c.get("keywords") or [])]
+        if kept:
+            lines.append(f"Ending the turn keeps {', '.join(kept)} (Retain): saved for next turn, not wasted")
+    return lines
+
+
 def forecast(sts2_rs: Any, cs: Any, wire: dict[str, Any], names: list[str]) -> dict[str, Any]:
     """Lethal check and enemy timeline for the board ``cs`` (built from ``wire``).
 

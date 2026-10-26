@@ -597,6 +597,13 @@ def _add_foresight(
     except Exception as exc:
         logger.warning("forecast failed: %s", exc)
     try:
+        notes = realgame_foresight.hand_notes(state, advice)
+        if notes:
+            lines = list(advice.get("forecast_lines") or [])
+            advice["forecast_lines"] = lines[:1] + notes + lines[1:]
+    except Exception as exc:
+        logger.warning("hand notes failed: %s", exc)
+    try:
         tips = realgame_fighttips.combat_lines(state)
         if tips:
             advice["forecast_lines"] = list(advice.get("forecast_lines") or []) + tips
