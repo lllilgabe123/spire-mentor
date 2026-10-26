@@ -328,7 +328,7 @@ fn build_encounter_state(
         combat_log: TurnEvents::default(),
         swipe_stolen: Vec::new(),
         escaped_creatures: 0,
-        ally_threat_round: None,
+        coop: sts2_core::coop::CoopState::default(),
         heist_recovered_gold: 0,
         event_combat_timed_out: false,
         gold: 0,
@@ -4116,6 +4116,9 @@ pub fn sts2_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // (`sts2-cli/src/lib.rs`).
     sts2_content::relics::dispatch::ensure_installed();
     sts2_content::potions::dispatch::ensure_installed();
+    // Co-op teammates play their remaining hand inside `apply(EndTurn)`, also
+    // for a plain `state.apply` (the search registers it on its own).
+    sts2_core::coop::register_teammate_policy(sts2_mcts::expert::teammate_policy);
 
     m.add_function(wrap_pyfunction!(resolve_potion_swap_flag, m)?)?;
     m.add_function(wrap_pyfunction!(potion_swap_is_rule_side, m)?)?;

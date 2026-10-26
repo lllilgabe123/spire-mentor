@@ -20,7 +20,7 @@
 use std::sync::OnceLock;
 
 /// Every declared feature name. Mirrors `ppo.schema.KNOWN_FEATURES`.
-pub const KNOWN: &[&str] = &[Features::REWARD_UPGRADE];
+pub const KNOWN: &[&str] = &[Features::REWARD_UPGRADE, Features::CARD_MODS];
 
 /// Which experiment features are on for this featurization.
 ///
@@ -37,11 +37,22 @@ pub struct Features {
     /// BACKWARDS if it were handed the truth mid-life. Hence: off by default,
     /// on for the campaign that retrains with it.
     pub reward_upgrade: bool,
+    /// Every card token carries the card's own enchantment (GH #947): its id
+    /// in the enchantment column (`cat[11]`) and its amount in
+    /// [`super::encoder::C_ENCH_AMT`]. Covers deck tokens, the deck-op
+    /// targets (remove / upgrade / transform / enchant / shop-remove / grant)
+    /// and relic-stamped reward options. Without it an enchanted card
+    /// featurizes as the bare card. Off by default: no champion was trained
+    /// on it, and the enchantment table it writes into was only ever trained
+    /// on the state token and the enchant-pick action tokens.
+    pub card_mods: bool,
 }
 
 impl Features {
     /// The `STS2_PPO_FEATURES` token for [`Self::reward_upgrade`].
     pub const REWARD_UPGRADE: &'static str = "reward_upgrade";
+    /// The `STS2_PPO_FEATURES` token for [`Self::card_mods`].
+    pub const CARD_MODS: &'static str = "card_mods";
 
     /// Parse a comma-separated `STS2_PPO_FEATURES` spec.
     ///
@@ -71,6 +82,7 @@ impl Features {
         for name in spec.split(',').map(str::trim).filter(|t| !t.is_empty()) {
             match name {
                 Self::REWARD_UPGRADE => out.reward_upgrade = true,
+                Self::CARD_MODS => out.card_mods = true,
                 _ => {
                     return Err(format!(
                         "unknown STS2_PPO_FEATURES entry {name:?} (known: {KNOWN:?})"
@@ -102,11 +114,14 @@ mod tests {
     fn default_is_every_feature_off() {
         assert_eq!(Features::default(), Features::parse(""));
         assert!(!Features::default().reward_upgrade);
+        assert!(!Features::default().card_mods);
     }
 
     #[test]
     fn parse_reads_a_comma_separated_spec_with_whitespace() {
         assert!(Features::parse(" reward_upgrade , ").reward_upgrade);
+        let both = Features::parse("reward_upgrade,card_mods");
+        assert!(both.reward_upgrade && both.card_mods);
     }
 
     #[test]

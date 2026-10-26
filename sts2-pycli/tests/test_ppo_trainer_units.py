@@ -523,3 +523,74 @@ def test_dag_aggregates_same_row_edge_no_keyerror():
     # (0, 1)'s only child was the un-aggregated same-row sibling → treated as
     # a leaf: just its own elite flag, capped dist-to-rest.
     assert agg[0, 1][0] == 1 and agg[0, 1][1] == 1
+
+
+def test_update_precision_defaults_to_fp32_and_rejects_unknown():
+    import torch
+    from ppo.trainer import PPOConfig, update_autocast
+
+    assert PPOConfig().update_precision == "fp32"
+    assert not update_autocast(PPOConfig(), torch.device("cpu"))._enabled
+    with pytest.raises(ValueError, match="update-precision"):
+        update_autocast(PPOConfig(update_precision="fp16"), torch.device("cpu"))
+
+
+def _tiny_transitions(n: int, seed: int = 0) -> list:
+    from ppo.schema import N_CAT, N_CONT, Featurized
+    from ppo.trainer import Transition
+
+    rng = np.random.default_rng(seed)
+    out = []
+    for _ in range(n):
+        n_obs, n_act = int(rng.integers(4, 9)), int(rng.integers(2, 5))
+        feat = Featurized(
+            obs_cat=np.zeros((n_obs, N_CAT), dtype=np.int64),
+            obs_cont=rng.random((n_obs, N_CONT), dtype=np.float32),
+            obs_sec=np.zeros(n_obs, dtype=np.int64),
+            act_cat=np.zeros((n_act, N_CAT), dtype=np.int64),
+            act_cont=rng.random((n_act, N_CONT), dtype=np.float32),
+            act_sec=np.ones(n_act, dtype=np.int64),
+            aux_room=np.zeros(n_act, dtype=np.int64),
+            n_actions=n_act,
+        )
+        out.append(
+            Transition(
+                feat=feat,
+                action_idx=int(rng.integers(0, n_act)),
+                old_logprob=float(-np.log(n_act)),
+                value=0.0,
+                advantage=float(rng.normal()),
+                ret=float(rng.random()),
+            )
+        )
+    return out
+
+
+def test_bf16_update_trains_in_fp32_weights_and_leaves_fp32_bit_identical():
+    """`update_precision=bf16` must engage autocast (the weights move
+    differently) while the weights stay fp32; the fp32 default must be the
+    pre-flag update, bit for bit."""
+    import torch
+    from ppo.model import RunPolicyNet
+    from ppo.trainer import PPOConfig, RunningMoments, make_optimizer, ppo_update
+
+    trans = _tiny_transitions(24)
+
+    def run(precision: str) -> tuple[dict, dict]:
+        torch.manual_seed(0)
+        net = RunPolicyNet(dim=32, n_layers=1, n_heads=2)
+        cfg = PPOConfig(epochs=1, minibatch=8, update_precision=precision)
+        opt = make_optimizer(net, cfg)
+        st = ppo_update(net, opt, trans, cfg, RunningMoments(), 0.01, np.random.default_rng(0))
+        return st, {k: v.clone() for k, v in net.state_dict().items()}
+
+    st32, w32 = run("fp32")
+    st32b, w32b = run("fp32")
+    assert all(torch.equal(w32[k], w32b[k]) for k in w32)
+    assert st32 == st32b
+
+    st16, w16 = run("bf16")
+    assert st16["nb"] == st32["nb"] == 3
+    assert all(np.isfinite(v) for v in st16.values())
+    assert all(w.dtype == w32[k].dtype for k, w in w16.items())
+    assert any(not torch.equal(w16[k], w32[k]) for k in w32)

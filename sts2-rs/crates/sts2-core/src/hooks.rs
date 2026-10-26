@@ -5640,6 +5640,12 @@ pub fn modify_card_cost(
     };
     let power = state.powers.get_by_id(uid.0)?;
     let card_type = ctx.card_type?;
+    // Every arm here re-prices only its owner's cards (C#
+    // `card.Owner.Creature != Owner → false`): a teammate's Corruption does
+    // not make our Skills free.
+    if owner_of_listener(state, listener) != Some(ctx.owner) {
+        return None;
+    }
     match power.kind {
         PowerKind::Corruption => {
             if card_type == CardType::Skill {
@@ -5701,7 +5707,7 @@ pub fn modify_card_cost(
             // to all cards this turn), removed at the player's turn end (see the
             // `PowerKind::BorrowedTime` arm in [`after_turn_end`]). Additive,
             // hence `CardCostMod::Add`.
-            if power.amount > 0 && owner_of_listener(state, listener) == Some(CreatureRef::Player) {
+            if power.amount > 0 {
                 Some(CardCostMod::Add(power.amount))
             } else {
                 None
@@ -5722,8 +5728,7 @@ pub fn modify_card_cost(
             // instance via its uid and reuse the canonical ethereal predicate
             // (`card_ethereal_inst` — keyword OR per-instance EtherealThisCombat).
             // Bead `sts2-rs-4wppb`.
-            if power.amount <= 0 || owner_of_listener(state, listener) != Some(CreatureRef::Player)
-            {
+            if power.amount <= 0 {
                 return None;
             }
             let cuid = ctx.card_uid?;
@@ -5749,11 +5754,8 @@ pub fn modify_card_cost(
             // iteration. Reading it burned free cards on Mayhem auto-plays and
             // Bombardment's self-auto-play from exhaust (8 records, all
             // mirror-low, on the 2026-08-03 live Regent A1 corpus). Read the
-            // instance tally that `combat_loop` now maintains instead. Owner-
-            // gated to the player. Bead `sts2-rs-jxz`.
-            if owner_of_listener(state, listener) != Some(CreatureRef::Player) {
-                return None;
-            }
+            // instance tally that `combat_loop` now maintains instead. Bead
+            // `sts2-rs-jxz`.
             let played = crate::combat_loop::void_form_cards_played_this_turn(state);
             crate::powers::regent::void_form_cost_override(power.amount, played, true)
                 .map(CardCostMod::Override)
@@ -5780,11 +5782,7 @@ pub fn modify_card_cost(
             // `FreeUntilPlayed`) into `base_cost` before the global walk, the
             // same order as C# `CardEnergyCost.GetWithModifiers` (local
             // modifiers, then `Hook.ModifyEnergyCostInCombat`).
-            if power.amount > 0
-                && card_type == CardType::Power
-                && ctx.base_cost > 0
-                && owner_of_listener(state, listener) == Some(CreatureRef::Player)
-            {
+            if power.amount > 0 && card_type == CardType::Power && ctx.base_cost > 0 {
                 Some(CardCostMod::Add(-power.amount))
             } else {
                 None
@@ -8309,7 +8307,9 @@ pub fn after_side_turn_start(
             // of player Accelerant — under-dealing poison and under-decrementing
             // the stack (Silent seeds 296/142: monster hp + poison-amount skew).
             let accel_sum: i32 = match owner_side {
-                Side::Enemy => state.player_power_amount(PowerKind::Accelerant).max(0),
+                Side::Enemy => {
+                    crate::coop::players_power_amount(state, PowerKind::Accelerant).max(0)
+                }
                 Side::Player => state
                     .enemy_uids
                     .iter()
@@ -9373,10 +9373,13 @@ pub fn update_surrounded_facing(state: &mut CombatState, target: CreatureUid) {
 /// The body of [`update_surrounded_facing`], run when its liveness bit is
 /// set.
 fn update_surrounded_facing_body(state: &mut CombatState, target: CreatureUid) {
+    // The seated player's instance: each player turns to face what THEY
+    // target (C# `SurroundedPower.cs:74-88`).
+    let seated = state.player_power_uids();
     let Some((puid, facing)) = state
         .powers
         .iter()
-        .find(|p| p.kind == PowerKind::Surrounded)
+        .find(|p| p.kind == PowerKind::Surrounded && seated.contains(&PowerUid(p.id)))
         .map(|p| (p.id, p.counter))
     else {
         return;
@@ -9396,6 +9399,15 @@ fn update_surrounded_facing_body(state: &mut CombatState, target: CreatureUid) {
 /// Fire [`after_death`] on every power listener for a single death and apply
 /// any deferred effects. Called from the `just_died` damage chokepoint.
 pub fn dispatch_after_death(state: &mut CombatState, ctx: &AfterDeathCtx) {
+    dispatch_after_death_seated(state, ctx);
+    crate::coop::seat_pass(state, ctx, |state, ctx| {
+        dispatch_after_death_seated(state, ctx);
+    });
+}
+
+/// [`dispatch_after_death`] for the seated player (and, outside a co-op seat pass,
+/// the enemies). Co-op teammates hear it in [`crate::coop::seat_pass`].
+fn dispatch_after_death_seated(state: &mut CombatState, ctx: &AfterDeathCtx) {
     let mut effects: SmallVec<[Effect; 4]> = SmallVec::new();
     for listener in iter_power_listeners(state) {
         if let Some(listener_effects) = after_death(state, listener, ctx) {
@@ -9796,7 +9808,15 @@ pub fn iter_power_listeners(state: &CombatState) -> impl Iterator<Item = Listene
             .filter(move |uid| !creature_powers.contains(uid)),
     );
     let ally_powers = state.allies.iter().flat_map(|a| a.powers.iter().copied());
-    let enemy_powers = state.enemy_uids.iter().flat_map(move |uid| {
+    // In a co-op seat pass the enemies already heard the event in the main
+    // walk; the pass is for the seated teammate's own listeners
+    // (`crate::coop::seat_pass`).
+    let enemy_uids: &[CreatureUid] = if state.coop.seat_pass {
+        &[]
+    } else {
+        &state.enemy_uids
+    };
+    let enemy_powers = enemy_uids.iter().flat_map(move |uid| {
         crate::creature_by_id(&state.creatures, uid.0)
             .map(|c| c.powers.iter().copied())
             .into_iter()
@@ -13638,7 +13658,32 @@ fn dispatch_before_card_played_powers_body(
     // these powers read `counter` for anything else, and the after-play disarm
     // keeps it 0 at every action boundary, so no observable state carries the
     // transient flag.
+    //
+    // Co-op: only the seated player's own powers and the enemy debuffs THEY
+    // applied arm (C# guards every one on the card's owner); a teammate's
+    // instance waits for their own cards.
+    let foreign: SmallVec<[std::num::NonZeroU32; 2]> = if crate::coop::has_seats(state) {
+        state
+            .powers
+            .iter()
+            .filter(|p| {
+                crate::coop::tracks_applier_seat(p.kind)
+                    && !crate::coop::applied_by_seated(state, p.id)
+            })
+            .map(|p| p.id)
+            .collect()
+    } else {
+        SmallVec::new()
+    };
     for p in &mut state.powers {
+        if foreign.contains(&p.id) {
+            continue;
+        }
+        if matches!(p.kind, PowerKind::SerpentForm | PowerKind::Afterimage)
+            && !player_power_uids.contains(&PowerUid(p.id))
+        {
+            continue;
+        }
         match p.kind {
             // Strangle / SerpentForm / Oblivion arm with a boolean flag (their
             // after-play bodies read the live `amount`). Oblivion (Necrobinder)
@@ -13725,8 +13770,13 @@ fn dispatch_before_card_played_powers_body(
 /// (gain energy per Power card) use the same BeforeCardPlayed/AfterCardPlayed
 /// snapshot dictionary in C#, so they share this transient `counter` lane.
 pub fn arm_storm_snapshot(state: &mut CombatState) {
+    // The seated player's instances only: a teammate's Storm waits for their
+    // own Power cards (C# `StormPower.cs:41`).
+    let seated = state.player_power_uids();
     for p in &mut state.powers {
-        if matches!(p.kind, PowerKind::Storm | PowerKind::Subroutine) {
+        if matches!(p.kind, PowerKind::Storm | PowerKind::Subroutine)
+            && seated.contains(&PowerUid(p.id))
+        {
             p.counter = p.amount;
         }
     }
@@ -15953,6 +16003,15 @@ pub fn dispatch_on_card_drawn(state: &CombatState, ctx: &CardDrawnCtx) {
 #[allow(clippy::inline_always)]
 #[inline(always)]
 pub fn dispatch_before_turn_end(state: &mut CombatState, ctx: &TurnSideCtx) {
+    dispatch_before_turn_end_seated(state, ctx);
+    crate::coop::seat_pass(state, ctx, |state, ctx| {
+        dispatch_before_turn_end_seated(state, ctx);
+    });
+}
+
+/// [`dispatch_before_turn_end`] for the seated player (and, outside a co-op seat pass,
+/// the enemies). Co-op teammates hear it in [`crate::coop::seat_pass`].
+fn dispatch_before_turn_end_seated(state: &mut CombatState, ctx: &TurnSideCtx) {
     power_hook_dispatch(state, PowerHook::BeforeTurnEnd, |state| {
         let effects = collect_before_turn_end(state, ctx);
         apply_effects(state, &effects);
@@ -16553,6 +16612,15 @@ const AFTER_TURN_END_ARMS: crate::PowerKindSet =
 #[allow(clippy::inline_always)]
 #[inline(always)]
 pub fn dispatch_after_turn_end(state: &mut CombatState, ctx: &TurnSideCtx) {
+    dispatch_after_turn_end_seated(state, ctx);
+    crate::coop::seat_pass(state, ctx, |state, ctx| {
+        dispatch_after_turn_end_seated(state, ctx);
+    });
+}
+
+/// [`dispatch_after_turn_end`] for the seated player (and, outside a co-op seat pass,
+/// the enemies). Co-op teammates hear it in [`crate::coop::seat_pass`].
+fn dispatch_after_turn_end_seated(state: &mut CombatState, ctx: &TurnSideCtx) {
     power_hook_dispatch(state, PowerHook::AfterTurnEnd, |state| {
         dispatch_after_turn_end_body(state, ctx);
     });
@@ -16716,10 +16784,14 @@ fn dispatch_after_turn_end_body(state: &mut CombatState, ctx: &TurnSideCtx) {
     // `if side == CombatSide.ENEMY` around the introspective method-table
     // check; Rust collapses the introspection into a separate listener fn
     // and gates it on the same condition.
+    // In a co-op seat pass the walk yields only the seated teammate's
+    // listeners, so their Weak / Vulnerable / Frail tick here like ours.
     if ctx.side == Side::Enemy {
         let effects = collect_on_turn_end_enemy_side(state, &TurnSelfCtx::default());
         apply_effects(state, &effects);
-
+    }
+    // The enemies' own turn-end lanes: once, never in a co-op seat pass.
+    if ctx.side == Side::Enemy && !state.coop.seat_pass {
         // SlumberPower tick (SlumberingBeetle): C# `SlumberPower.AfterTurnEnd`
         // decrements once per enemy turn-end and wakes the beetle at 0. Inline
         // (not an Effect arm) because the wake removes a SECOND power (Plating)
@@ -16842,6 +16914,15 @@ const ON_TURN_END_ENEMY_SIDE_KINDS: crate::PowerKindSet = crate::PowerKindSet::f
 #[allow(clippy::inline_always)]
 #[inline(always)]
 pub fn dispatch_before_side_turn_start(state: &mut CombatState, ctx: &TurnSideCtx) {
+    dispatch_before_side_turn_start_seated(state, ctx);
+    crate::coop::seat_pass(state, ctx, |state, ctx| {
+        dispatch_before_side_turn_start_seated(state, ctx);
+    });
+}
+
+/// [`dispatch_before_side_turn_start`] for the seated player (and, outside a co-op seat pass,
+/// the enemies). Co-op teammates hear it in [`crate::coop::seat_pass`].
+fn dispatch_before_side_turn_start_seated(state: &mut CombatState, ctx: &TurnSideCtx) {
     power_hook_dispatch(state, PowerHook::BeforeSideTurnStart, |state| {
         let effects = collect_before_side_turn_start(state, ctx);
         apply_effects(state, &effects);
@@ -16906,6 +16987,15 @@ const BEFORE_SIDE_TURN_START_KINDS: crate::PowerKindSet = crate::PowerKindSet::f
 #[allow(clippy::inline_always)]
 #[inline(always)]
 pub fn dispatch_after_side_turn_start(state: &mut CombatState, ctx: &TurnSideCtx) {
+    dispatch_after_side_turn_start_seated(state, ctx);
+    crate::coop::seat_pass(state, ctx, |state, ctx| {
+        dispatch_after_side_turn_start_seated(state, ctx);
+    });
+}
+
+/// [`dispatch_after_side_turn_start`] for the seated player (and, outside a co-op seat pass,
+/// the enemies). Co-op teammates hear it in [`crate::coop::seat_pass`].
+fn dispatch_after_side_turn_start_seated(state: &mut CombatState, ctx: &TurnSideCtx) {
     power_hook_dispatch(state, PowerHook::AfterSideTurnStart, |state| {
         dispatch_after_side_turn_start_body(state, ctx);
     });
@@ -16932,7 +17022,11 @@ fn dispatch_after_side_turn_start_body(state: &mut CombatState, ctx: &TurnSideCt
     // a loss, `RemoveAllPowersAfterDeath` teardown. Bead `sts2-rs-ytgbq`
     // (coverage-sweep `encounter:THE_INSATIABLE_BOSS`).
     // present_kinds lane gate (perf): no live Sandpit ⇒ nothing to tick.
-    if ctx.side == Side::Enemy && power_kind_live(state, PowerKind::Sandpit) {
+    // Enemy-owned: never re-run in a co-op seat pass.
+    if ctx.side == Side::Enemy
+        && !state.coop.seat_pass
+        && power_kind_live(state, PowerKind::Sandpit)
+    {
         let sandpits: SmallVec<[(PowerUid, CreatureUid); 2]> = state
             .enemy_uids
             .iter()
@@ -31433,7 +31527,7 @@ mod power_hook_liveness {
         },
         HookSource {
             hook: PowerHook::BeforeTurnEnd,
-            wrapper: "dispatch_before_turn_end",
+            wrapper: "dispatch_before_turn_end_seated",
             bodies: &["collect_before_turn_end"],
             gates: &[("BEFORE_TURN_END_ARMS", super::BEFORE_TURN_END_ARMS)],
             applied_only: &[],
@@ -31441,7 +31535,7 @@ mod power_hook_liveness {
         },
         HookSource {
             hook: PowerHook::AfterTurnEnd,
-            wrapper: "dispatch_after_turn_end",
+            wrapper: "dispatch_after_turn_end_seated",
             bodies: &[
                 "dispatch_after_turn_end_body",
                 "collect_on_turn_end_enemy_side",
@@ -31458,7 +31552,7 @@ mod power_hook_liveness {
         },
         HookSource {
             hook: PowerHook::BeforeSideTurnStart,
-            wrapper: "dispatch_before_side_turn_start",
+            wrapper: "dispatch_before_side_turn_start_seated",
             bodies: &["collect_before_side_turn_start"],
             gates: &[(
                 "BEFORE_SIDE_TURN_START_KINDS",
@@ -31469,7 +31563,7 @@ mod power_hook_liveness {
         },
         HookSource {
             hook: PowerHook::AfterSideTurnStart,
-            wrapper: "dispatch_after_side_turn_start",
+            wrapper: "dispatch_after_side_turn_start_seated",
             bodies: &[
                 "dispatch_after_side_turn_start_body",
                 "collect_after_side_turn_start",

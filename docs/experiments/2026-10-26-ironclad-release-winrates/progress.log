@@ -1,0 +1,24 @@
+2026-10-26T09:26:26+01:00 driver start pid 4153596 head=0181fa552a78053f260f0796e1cb086d770c7cef so=823fa393eab74db57d0cffd6f71c4a5c873a74d345a354adfca8458bf1333ba2 ckpt=data/ppo/ppo_fullrun_ironclad_a10_it700.pt
+2026-10-26T09:26:26+01:00 START Ironclad A10 n=500 load 2.79 1.96 1.96
+2026-10-26T10:14:28+01:00 DONE  Ironclad A10 rc=0 win rate: 136/500 = 0.272 wall/run: mean 162.4s  median 158.3s  max 464.4s; batch wall 2882s → 10.4 runs/min
+2026-10-26T10:14:28+01:00 START Ironclad A9 n=500 load 5.37 20.98 28.46
+2026-10-26T10:58:17+01:00 DONE  Ironclad A9 rc=0 win rate: 282/500 = 0.564 wall/run: mean 150.7s  median 145.5s  max 490.5s; batch wall 2628s → 11.4 runs/min
+2026-10-26T10:58:17+01:00 START Ironclad A0 n=200 load 8.94 23.30 29.10
+2026-10-26T11:20:30+01:00 DONE  Ironclad A0 rc=0 win rate: 192/200 = 0.960 wall/run: mean 177.9s  median 176.3s  max 411.0s; batch wall 1333s → 9.0 runs/min
+2026-10-26T11:20:30+01:00 START Ironclad A6 n=200 load 5.33 23.29 30.16
+2026-10-26T11:40:41+01:00 DONE  Ironclad A6 rc=0 win rate: 187/200 = 0.935 wall/run: mean 167.9s  median 158.0s  max 349.4s; batch wall 1210s → 9.9 runs/min
+2026-10-26T11:40:41+01:00 START Ironclad A3 n=200 load 9.75 24.21 28.88
+2026-10-26T12:01:43+01:00 DONE  Ironclad A3 rc=0 win rate: 188/200 = 0.940 wall/run: mean 167.9s  median 162.7s  max 334.9s; batch wall 1262s → 9.5 runs/min
+2026-10-26T12:01:43+01:00 START Ironclad A8 n=200 load 7.03 21.39 27.85
+2026-10-26T12:23:40+01:00 DONE  Ironclad A8 rc=0 win rate: 169/200 = 0.845 wall/run: mean 179.8s  median 170.4s  max 374.0s; batch wall 1317s → 9.1 runs/min
+2026-10-26T12:23:40+01:00 START Ironclad A1 n=200 load 10.95 25.76 30.45
+2026-10-26T12:46:44+01:00 DONE  Ironclad A1 rc=0 win rate: 198/200 = 0.990 wall/run: mean 173.7s  median 166.4s  max 456.1s; batch wall 1384s → 8.7 runs/min
+2026-10-26T12:46:44+01:00 START Ironclad A5 n=200 load 3.96 16.49 26.26
+2026-10-26T13:07:08+01:00 DONE  Ironclad A5 rc=0 win rate: 183/200 = 0.915 wall/run: mean 169.0s  median 164.6s  max 479.6s; batch wall 1224s → 9.8 runs/min
+2026-10-26T13:07:08+01:00 START Ironclad A2 n=200 load 10.07 24.36 28.51
+2026-10-26T13:26:50+01:00 DONE  Ironclad A2 rc=0 win rate: 187/200 = 0.935 wall/run: mean 161.9s  median 150.7s  max 300.1s; batch wall 1182s → 10.2 runs/min
+2026-10-26T13:26:50+01:00 START Ironclad A4 n=200 load 9.16 23.31 27.99
+2026-10-26T13:47:05+01:00 DONE  Ironclad A4 rc=0 win rate: 190/200 = 0.950 wall/run: mean 167.0s  median 158.0s  max 324.5s; batch wall 1215s → 9.9 runs/min
+2026-10-26T13:47:05+01:00 START Ironclad A7 n=200 load 8.63 24.26 28.85
+2026-10-26T14:08:09+01:00 DONE  Ironclad A7 rc=0 win rate: 177/200 = 0.885 wall/run: mean 173.1s  median 165.1s  max 344.4s; batch wall 1264s → 9.5 runs/min
+2026-10-26T14:08:09+01:00 ALL DONE

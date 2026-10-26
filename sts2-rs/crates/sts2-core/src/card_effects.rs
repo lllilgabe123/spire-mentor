@@ -1069,8 +1069,19 @@ fn apply_power_to_creature_inner(
     // C# `PowerModel.IsInstanced` kinds skip the merge entirely — each
     // apply is a FRESH instance with its own amount/counter (see
     // [`power_kind_is_instanced`]).
+    // C# `InstancedPerApplier` kinds merge only into the instance the same
+    // player applied (`crate::coop::tracks_applier_seat`).
     let existing_uid = if power_kind_is_instanced(kind) {
         None
+    } else if crate::coop::tracks_applier_seat(kind) && crate::coop::has_seats(state) {
+        state.creatures[creature_idx]
+            .powers
+            .iter()
+            .copied()
+            .find(|&u| {
+                state.powers.get_by_id(u.0).is_some_and(|p| p.kind == kind)
+                    && crate::coop::applied_by_seated(state, u.0)
+            })
     } else {
         existing_power_uid_unioned(state, creature_idx, target_uid, kind)
     };
@@ -1142,6 +1153,7 @@ fn apply_power_to_creature_inner(
         skip_next_tick: arm_skip_next_tick(state, target_uid, kind),
     });
     state.creatures[creature_idx].powers.push(PowerUid(new_id));
+    crate::coop::stamp_power_seat(state, new_id, kind);
     fire_power_amount_observer_channels(
         state,
         None,

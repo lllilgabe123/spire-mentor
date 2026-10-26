@@ -185,7 +185,7 @@ pub fn build_state_with_ascension(
         combat_log: TurnEvents::default(),
         swipe_stolen: Vec::new(),
         escaped_creatures: 0,
-        ally_threat_round: None,
+        coop: sts2_core::coop::CoopState::default(),
         heist_recovered_gold: 0,
         event_combat_timed_out: false,
         // The player's run gold, carried into combat. NOT zero: the C# parity

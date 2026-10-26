@@ -64,13 +64,29 @@ the whole pairing mechanism, and it is mirrored in Rust
 (``sts2-runai::ppo::features::Features``) because a campaign trains through
 this encoder and then serves the champion through that one.
 
+``card_mods`` (GH #947) stamps a card's OWN enchantment onto its token: the id
+into the enchantment column (``cat[11]``, the table #545 added for the pending
+pick) and the amount into the appended cont slot 25. It covers deck tokens,
+the deck-op targets (remove / upgrade / transform / enchant / shop-remove /
+grant) and relic-stamped reward options, read from the obs's parallel
+``*_enchantments`` lists. C# keeps at most one enchantment per card and
+persists nothing else per instance beyond the upgrade (``SerializableCard``:
+id, upgrade level, one enchantment, a few card-specific counters), so this is
+the card's whole modifier state. The column keeps its meaning on the
+enchant-pick action tokens: ``CanEnchant`` admits only a target that is bare
+or already holds the same (stackable) enchantment, so the target's own id
+never disagrees with the pending one, and the amount says how many stacks it
+already has. Gated for the ``reward_upgrade`` reason: the enchantment table
+was only ever trained on the state token and the enchant-pick tokens, so a
+champion handed it on every deck token would read noise.
+
 Continuous schema (per token, zeros where N/A), index → meaning:
   0 hp_frac · 1 gold_scaled · 2 act_index · 3 deck_size_s · 4 n_upgraded_s
   5 n_relics_s · 6 dx · 7 dy · 8 reachable · 9 min_elites · 10 max_elites
   11 dist_rest · 12 price_scaled · 13 gold_delta_scaled · 14 hp_delta_frac
   15 enabled · 16 total_floor_frac · 17 act_floor_s · 18 ascension_scaled
   19 relics_gained · 20 relics_lost · 21 potions_gained · 22 potions_lost
-  23 cards_gained · 24 cards_lost
+  23 cards_gained · 24 cards_lost · 25 enchant_amount_s (``card_mods``)
 
 (16/17 added after the first BC round: the state token carried NO floor
 signal — act_index only — so card/shop/rest decisions couldn't condition
@@ -108,7 +124,8 @@ N_SECTION = 11
 
 #: Candidate encoder inputs, off by default. See the module docstring.
 REWARD_UPGRADE = "reward_upgrade"
-KNOWN_FEATURES: frozenset[str] = frozenset({REWARD_UPGRADE})
+CARD_MODS = "card_mods"
+KNOWN_FEATURES: frozenset[str] = frozenset({REWARD_UPGRADE, CARD_MODS})
 
 
 def parse_features(spec: str) -> frozenset[str]:
@@ -130,7 +147,7 @@ N_CAT = 12
 CAT_BOSS = 9  # act-boss identity; see the module docstring
 CAT_DECK_OP = 10  # which deck operation a card token belongs to (GH #545)
 CAT_ENCHANT = 11  # which enchantment a pending deck-enchant pick stamps
-N_CONT = 25
+N_CONT = 26
 GOLD_SCALE = 0.01  # gold * 0.01 keeps it ~O(1)
 ACT_SCALE = 1.0
 DECK_SCALE = 0.05  # deck size * 0.05
@@ -148,6 +165,10 @@ C_ASC = 18  # ascension level (state token only); appended slot ⇒ warm-start s
 C_RELIC_GAIN, C_RELIC_LOSS = 19, 20
 C_POTION_GAIN, C_POTION_LOSS = 21, 22
 C_CARD_GAIN, C_CARD_LOSS = 23, 24
+# The card's own enchantment amount (GH #947); card/deck tokens, `card_mods`
+# feature only. Appended slot ⇒ a 25-cont champion drops it.
+C_ENCH_AMT = 25
+ENCH_AMT_SCALE = 0.1  # stacks run 1..~10 (Sharp / Nimble carry their payload)
 FLOOR_SCALE = 1.0 / 45.0  # total_floor → [0,1] over a 3-act run
 ACT_FLOOR_SCALE = 0.05  # act_floor (0..~15) → ~[0,0.75]
 

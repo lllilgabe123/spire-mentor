@@ -1260,10 +1260,44 @@ def translate(
     # board yields the wire it always did.
     allies = state.get("allies")
     if allies:
-        out["allies"] = [
-            {"hp": int(a["hp"]), "max_hp": int(a["max_hp"]), "block": int(a["block"])}
-            for a in allies
-        ]
+        out["allies"] = [_translate_ally(a, i) for i, a in enumerate(allies)]
+    return out
+
+
+_CLASS_OF_CHARACTER = {
+    "Ironclad": "ironclad",
+    "Silent": "silent",
+    "Defect": "defect",
+    "Necrobinder": "necrobinder",
+    "Regent": "regent",
+}
+
+
+def _translate_ally(ally: dict[str, Any], index: int) -> dict[str, Any]:
+    """One ``$.allies`` entry: HP and block, plus -- when the teammate came
+    with a hand -- the whole seat the engine plays out (``sts2_core::coop``)."""
+    out: dict[str, Any] = {
+        "hp": int(ally["hp"]),
+        "max_hp": int(ally["max_hp"]),
+        "block": int(ally["block"]),
+    }
+    if "hand" not in ally:
+        return out
+    path = f"$.allies[{index}]"
+
+    def _hand_translator(raw: dict[str, Any], card_path: str) -> dict[str, Any]:
+        return _translate_card(raw, card_path, hand=True)
+
+    cls = _CLASS_OF_CHARACTER.get(ally.get("character") or "")
+    if cls is not None:
+        out["class"] = cls
+    out["energy"] = int(ally.get("energy") or 0)
+    out["max_energy"] = int(ally.get("max_energy") or 0)
+    out["powers"] = _soft_translate_list(
+        ally.get("powers") or [], _translate_power, f"{path}.powers"
+    )
+    out["hand"] = _soft_translate_list(ally["hand"], _hand_translator, f"{path}.hand")
+    out["ended_turn"] = bool(ally.get("ended_turn"))
     return out
 
 

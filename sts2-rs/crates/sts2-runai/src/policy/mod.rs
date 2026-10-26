@@ -1122,6 +1122,7 @@ struct MctsKnobOverrides {
     loss_turns_half_life: Option<f32>,
     loss_span: Option<f32>,
     loot_weight: Option<f32>,
+    persistent_weight: Option<f32>,
     loss_gradient: Option<bool>,
     root_guards: Option<bool>,
     chance_closed_stops_widening: Option<bool>,
@@ -1148,7 +1149,7 @@ struct MctsKnobOverrides {
 const MCTS_OVERRIDE_KNOB_NAMES: &str = "chance_widening_c, chance_widening_alpha, \
     draw_widening_c, draw_widening_alpha, endturn_widening_c, endturn_widening_alpha, \
     tie_eps, c_puct, loss_w_removed, loss_w_hp, loss_w_turns, \
-    loss_turns_half_life, loss_span, loot_weight, loss_gradient, root_guards, \
+    loss_turns_half_life, loss_span, loot_weight, persistent_weight, loss_gradient, root_guards, \
     chance_closed_stops_widening, rollout_policy (heuristic | uniform | net; net, the \
     honest-mode default, plays the built-in Ironclad playout net, or the STS2_ROLLOUT_NET \
     weights when set), belief_dialect (true: apply the BeliefDraw dialect even under \
@@ -1222,6 +1223,9 @@ impl MctsKnobOverrides {
         if let Some(v) = self.loot_weight {
             config.loot_weight = v;
         }
+        if let Some(v) = self.persistent_weight {
+            config.persistent_weight = v;
+        }
         if let Some(v) = self.loss_gradient {
             config.loss_gradient = v;
         }
@@ -1280,6 +1284,7 @@ impl MctsKnobOverrides {
             loss_turns_half_life,
             loss_span,
             loot_weight,
+            persistent_weight,
             loss_gradient,
             root_guards,
             chance_closed_stops_widening,
@@ -1310,6 +1315,7 @@ impl MctsKnobOverrides {
             loss_turns_half_life: loss_turns_half_life.or(fallback.loss_turns_half_life),
             loss_span: loss_span.or(fallback.loss_span),
             loot_weight: loot_weight.or(fallback.loot_weight),
+            persistent_weight: persistent_weight.or(fallback.persistent_weight),
             loss_gradient: loss_gradient.or(fallback.loss_gradient),
             root_guards: root_guards.or(fallback.root_guards),
             chance_closed_stops_widening: chance_closed_stops_widening
@@ -1465,6 +1471,7 @@ fn parse_mcts_overrides(env_value: Option<&str>) -> MctsKnobOverrides {
             "loss_turns_half_life" => out.loss_turns_half_life = Some(f32_of(key, val)),
             "loss_span" => out.loss_span = Some(f32_of(key, val)),
             "loot_weight" => out.loot_weight = Some(f32_of(key, val)),
+            "persistent_weight" => out.persistent_weight = Some(f32_of(key, val)),
             "win_hp_carry" => out.win_hp_carry = Some(carry_of(key, val)),
             "win_potion_carry" => out.win_potion_carry = Some(carry_of(key, val)),
             "loss_gradient" => out.loss_gradient = Some(bool_of(key, val)),

@@ -544,6 +544,55 @@ pub fn card_grant_options(rm: &RunManager) -> Vec<(String, bool)> {
         .unwrap_or_default()
 }
 
+/// One card's enchantment as `(UPPER_SNAKE id, amount)`, or `None` when the
+/// card carries none. The engine stores a stack but C# holds at most one
+/// enchantment per card (`EnchantmentModel.CanEnchant` refuses a second
+/// type), so the first entry is the whole state. GH #947.
+#[must_use]
+pub fn card_enchantment(e: &sts2_core::cards::CardEnchantments) -> Option<(String, i64)> {
+    e.first()
+        .map(|(id, amount)| (id.python_name().to_string(), i64::from(*amount)))
+}
+
+/// `RunManager.master_deck_enchantments()` — each deck card's enchantment,
+/// index-aligned with [`master_deck_detailed`] (same SwipePower-filtered
+/// view). The PPO deck token used to carry only `(id, upgraded)`, so an
+/// enchanted card read as the bare card (GH #947).
+#[must_use]
+pub fn master_deck_enchantments(rm: &RunManager) -> Vec<Option<(String, i64)>> {
+    effective_master_deck_indices(rm)
+        .into_iter()
+        .map(|i| card_enchantment(&rm.run_state.master_deck[i].enchantments))
+        .collect()
+}
+
+/// `RunManager.card_removal_option_enchantments()` — index-aligned with
+/// [`card_removal_options`]. GH #947.
+#[must_use]
+pub fn card_removal_option_enchantments(rm: &RunManager) -> Vec<Option<(String, i64)>> {
+    rm.run_state
+        .removal_offer_order()
+        .into_iter()
+        .map(|i| card_enchantment(&rm.run_state.master_deck[i].enchantments))
+        .collect()
+}
+
+/// `RunManager.card_grant_option_enchantments()` — index-aligned with
+/// [`card_grant_options`]. GH #947.
+#[must_use]
+pub fn card_grant_option_enchantments(rm: &RunManager) -> Vec<Option<(String, i64)>> {
+    rm.run_state
+        .pending_card_grants
+        .first()
+        .map(|g| {
+            g.options
+                .iter()
+                .map(|c| card_enchantment(&c.enchantments))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// `RunManager.relics()` — owned relics as the C# game-style
 /// `RELIC.<UPPER_SNAKE>` identifiers — matches the format emitted by
 /// scraped `.run` files at `../sts2_run_scraper/data/files/`. Bead
@@ -666,6 +715,18 @@ pub fn smith_options(rm: &RunManager) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// `RunManager.smith_option_enchantments()` — index-aligned with
+/// [`smith_options`], through `RunState::card_select_option_deck_indices`
+/// (an option it cannot place reads as unenchanted). GH #947.
+#[must_use]
+pub fn smith_option_enchantments(rm: &RunManager) -> Vec<Option<(String, i64)>> {
+    let rs = &rm.run_state;
+    rs.card_select_option_deck_indices()
+        .into_iter()
+        .map(|i| i.and_then(|i| card_enchantment(&rs.master_deck[i].enchantments)))
+        .collect()
+}
+
 /// `RunManager.neow_offers()` — 3-tuple of `SCREAMING_SNAKE_CASE` relic ids
 /// `(positive_1, positive_2, cursed)` rolled for the run-start Neow event,
 /// or `None` if the run was not started at Neow. Bead `sts2-rs-k8z6m`.
@@ -718,6 +779,18 @@ pub fn card_reward_option_ids(rm: &RunManager) -> Vec<String> {
 #[must_use]
 pub fn card_reward_option_upgraded(rm: &RunManager) -> Vec<bool> {
     rm.card_reward_upgraded_flags().to_vec()
+}
+
+/// `RunManager.card_reward_option_enchantments()` — per-option enchantment
+/// (a relic stamp, GH #806), index-aligned with [`card_reward_option_ids`].
+/// Same shape rule as [`card_reward_option_upgraded`]: shorter than the ids
+/// (or empty) means "not enchanted". GH #947.
+#[must_use]
+pub fn card_reward_option_enchantments(rm: &RunManager) -> Vec<Option<(String, i64)>> {
+    rm.card_reward_enchantments()
+        .iter()
+        .map(card_enchantment)
+        .collect()
 }
 
 /// `RunManager.card_reward_bundles()` — when the current `CardReward`

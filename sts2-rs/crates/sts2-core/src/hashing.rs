@@ -352,11 +352,43 @@ fn hash_scalars<H: Hasher>(state: &CombatState, h: &mut H) {
         0x0Eu8.hash(h);
         state.game_version.hash(h);
     }
-    // Co-op: whether the next enemy turn still lands on the teammates. Folded
-    // in only when set so every solo digest is byte-identical.
-    if let Some(round) = state.ally_threat_round {
+    // Co-op: whether the next enemy turn still lands on the teammates, and
+    // which of them have yet to play. The seat stashes are fixed by the root
+    // (a teammate's relics and log change only while seated, inside one
+    // transition). Folded in only when set so every solo digest is
+    // byte-identical.
+    if let Some(round) = state.coop.threat_round {
         0x2Eu8.hash(h);
         round.hash(h);
+        state.coop.to_play.hash(h);
+    }
+    // A whole co-op fight runs the teammates' turns too, so their stashes
+    // change between transitions: fold in what the seated player's own
+    // sections fold in for them (relic ids, the per-turn log flags), plus
+    // which powers are theirs.
+    if state.coop.full {
+        0x30u8.hash(h);
+        state.coop.to_play.hash(h);
+        for seat in &state.coop.stash {
+            seat.seat.hash(h);
+            (seat.relics.len() as u64).hash(h);
+            for r in &seat.relics {
+                r.id.get().hash(h);
+            }
+            seat.powers.as_slice().hash(h);
+            seat.combat_log.chains_bound_card_played_this_turn.hash(h);
+            seat.combat_log.doom_applied_by_player_this_turn.hash(h);
+            seat.combat_log.osty_attacks_this_turn.hash(h);
+        }
+    }
+    // Which seat applied each Strangle / Oblivion: it decides whose cards
+    // tick it and whether the next apply stacks or opens an instance.
+    if !state.coop.power_seat.is_empty() {
+        0x2Fu8.hash(h);
+        for (id, seat) in &state.coop.power_seat {
+            id.hash(h);
+            seat.hash(h);
+        }
     }
 }
 

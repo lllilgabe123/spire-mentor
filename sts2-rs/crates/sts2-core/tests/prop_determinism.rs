@@ -132,7 +132,7 @@ fn make_combat(seed: u64, kind: MonsterKind, hp: i32) -> CombatState {
         combat_log: TurnEvents::default(),
         swipe_stolen: Vec::new(),
         escaped_creatures: 0,
-        ally_threat_round: None,
+        coop: sts2_core::coop::CoopState::default(),
         heist_recovered_gold: 0,
         event_combat_timed_out: false,
         gold: 0,

@@ -55,8 +55,8 @@ use smallvec::SmallVec;
 use sts2_core::StepResult;
 use sts2_core::{
     apply as core_apply, evaluate_victory, evaluate_victory_carry, is_terminal, legal_actions,
-    loot_at_risk_hp_equiv, state_hash, terminal_value, victory_hp_equiv_to_q, victory_hp_surplus,
-    Action, CombatState,
+    loot_at_risk_hp_equiv, persistent_gain_hp_equiv, state_hash, terminal_value,
+    victory_hp_equiv_to_q, victory_hp_surplus, Action, CombatState, PersistentBaseline,
 };
 
 pub mod action_index;
@@ -477,6 +477,19 @@ pub struct MctsConfig {
     /// aggressively. Swept through `STS2_RUNAI_MCTS_OVERRIDES`
     /// (`loot_weight=…`).
     pub loot_weight: f32,
+    /// Multiplier on the persistent-gain bonus ([`persistent_gain_q`])
+    /// added at RichBoth win terminals: max HP, gold and run-scaling card
+    /// growth gained since the search root, all of which outlast the fight
+    /// (GH #839). Default `0.0` — off, byte-identical to the pre-#839
+    /// search — until a paired run A/B prices it. Swept through
+    /// `STS2_RUNAI_MCTS_OVERRIDES` (`persistent_weight=…`).
+    pub persistent_weight: f32,
+    /// The search root's run-level values that [`persistent_gain_q`]
+    /// measures gains against. Per-search state, not a knob:
+    /// [`prepare_search_root`] overwrites it from the root state (a fresh
+    /// search and a reused tree alike), so callers leave it at the default.
+    /// GH #839.
+    pub persistent_baseline: PersistentBaseline,
     /// Multiplier on the co-op teammate penalty ([`teammate_penalty_q`]):
     /// HP-equivalents per point of teammate HP missing. Default `1.0` — a
     /// teammate's HP is worth what ours is. Inert solo (no `state.allies`).
@@ -1241,6 +1254,8 @@ impl Default for MctsConfig {
             loss_turns_half_life: LOSS_QUALITY_TURNS_HALF_LIFE,
             loss_span: LOSS_GRADIENT_LEAF_SPAN,
             loot_weight: 1.0,
+            persistent_weight: 0.0,
+            persistent_baseline: PersistentBaseline::default(),
             teammate_weight: 1.0,
             root_guards: true,
             potion_charge_q: None,
@@ -2507,6 +2522,9 @@ fn prepare_search_root(root_state: &mut CombatState, config: &mut MctsConfig) {
     // (`CHANCE_TT_SIZE_LOG2`) since chance trees are small and the table is
     // reallocated per move in closed-loop play.
     config.use_transposition_table = true;
+    // GH #839: persistent gains are priced against the root, whatever
+    // the caller left in the field.
+    config.persistent_baseline = PersistentBaseline::of(root_state);
 }
 
 /// The PUCT prior of decision node `node_id` (`node`, holding `state`): its
@@ -2687,6 +2705,8 @@ pub struct RerootKept {
 impl<P: Policy> Mcts<P> {
     /// Construct an MCTS engine with a custom policy.
     pub fn with_policy(mut root_state: CombatState, mut config: MctsConfig, policy: P) -> Self {
+        // Co-op teammates play their remaining hand inside `apply(EndTurn)`.
+        sts2_core::coop::register_teammate_policy(expert::teammate_policy);
         prepare_search_root(&mut root_state, &mut config);
         let mut tree = MctsTree::new(root_state, config.use_lethal_detector);
         // Reserve the node arena up front from the simulation budget so the
@@ -4550,6 +4570,7 @@ impl<P: Policy> Mcts<P> {
                 TerminalEvalMode::Binary | TerminalEvalMode::RichLoss => 1.0,
                 TerminalEvalMode::RichBoth => {
                     win_value(state, &self.config) - run_penalty_q(state, &self.config)
+                        + persistent_gain_q(state, &self.config)
                 }
             }
         } else if leaf_proven_loss {
@@ -6132,7 +6153,7 @@ pub fn terminal_state_value_with(
         }
         TerminalEvalMode::RichBoth => {
             if state.player_won {
-                win_value(state, cfg) - run_penalty_q(state, cfg)
+                win_value(state, cfg) - run_penalty_q(state, cfg) + persistent_gain_q(state, cfg)
             } else {
                 -1.0 + 0.5 * loss_leaf_value(state, leaf_eval, cfg)
             }
@@ -6188,6 +6209,36 @@ pub fn loot_penalty_q(state: &CombatState, cfg: &MctsConfig) -> f32 {
     }
 }
 
+/// Hard cap on [`persistent_gain_q`]'s magnitude, in root-Q units. The
+/// RichBoth win band bottoms out at `+1.0` and `Bucket::from_value` splits
+/// wins from ties at `+0.5`, so a loss-signed term under `0.5` (Debt's
+/// gold, Brightest Flame's max HP) keeps a won combat bucketing as a win;
+/// the same bound on the gain side stops a far-future growth estimate from
+/// swamping the HP the fight actually costs. Mirrors [`LOOT_PENALTY_Q_CAP`].
+const PERSISTENT_GAIN_Q_CAP: f32 = 0.45;
+
+/// The persistent-gain bonus, in root-Q units, for a WON combat: what the
+/// position gained since the search root that outlasts the fight
+/// ([`sts2_core::persistent_gain_hp_equiv`]), at the victory band's HP
+/// exchange rate. Scaled by [`MctsConfig::persistent_weight`] and clamped
+/// to `±`[`PERSISTENT_GAIN_Q_CAP`]. Charged at win terminals only, not at
+/// depth-cut leaves: a leaf's value is tanh-bounded under `1.0` so every
+/// win outranks it, and a bonus there could lift an unresolved line above
+/// a certain win. GH #839.
+#[must_use]
+pub fn persistent_gain_q(state: &CombatState, cfg: &MctsConfig) -> f32 {
+    if cfg.persistent_weight == 0.0 {
+        return 0.0;
+    }
+    let q = victory_hp_equiv_to_q(persistent_gain_hp_equiv(state, &cfg.persistent_baseline))
+        * cfg.persistent_weight;
+    if q.is_finite() {
+        q.clamp(-PERSISTENT_GAIN_Q_CAP, PERSISTENT_GAIN_Q_CAP)
+    } else {
+        0.0
+    }
+}
+
 /// The co-op teammates' missing HP, in root-Q units at the victory band's HP
 /// exchange rate, scaled by [`MctsConfig::teammate_weight`]. Always `>= 0`
 /// and `0` solo.
@@ -6195,7 +6246,7 @@ pub fn loot_penalty_q(state: &CombatState, cfg: &MctsConfig) -> f32 {
 /// The search scores our HP and the fight's outcome; without this a card
 /// that blocks or heals a teammate (Lift, Demonic Shield, Intercept's cover)
 /// buys nothing. The enemy turn the board was read on hits the teammates
-/// (see `CombatState::ally_threat_round`), so what this charges is the damage
+/// (see `CoopState::threat_round`), so what this charges is the damage
 /// that turn lands on them, on top of what they were already missing — a
 /// constant across one root's lines, so it ranks them by the HP they lose.
 #[must_use]
@@ -7515,7 +7566,7 @@ mod tests {
             is_over: true,
             player_won: true,
             escaped_creatures: 1,
-            ally_threat_round: None,
+            coop: sts2_core::coop::CoopState::default(),
             ..CombatState::default()
         };
         fled.player.current_hp = 40;
@@ -7806,7 +7857,7 @@ mod tests {
                 combat_log: TurnEvents::default(),
                 swipe_stolen: Vec::new(),
                 escaped_creatures: 0,
-                ally_threat_round: None,
+                coop: sts2_core::coop::CoopState::default(),
                 heist_recovered_gold: 0,
                 event_combat_timed_out: false,
                 gold: 0,
@@ -8087,7 +8138,7 @@ mod tests {
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
-            ally_threat_round: None,
+            coop: sts2_core::coop::CoopState::default(),
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,
@@ -8444,7 +8495,7 @@ mod tests {
                 combat_log: TurnEvents::default(),
                 swipe_stolen: Vec::new(),
                 escaped_creatures: 0,
-                ally_threat_round: None,
+                coop: sts2_core::coop::CoopState::default(),
                 heist_recovered_gold: 0,
                 event_combat_timed_out: false,
                 gold: 0,
@@ -8638,7 +8689,7 @@ mod tests {
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
-            ally_threat_round: None,
+            coop: sts2_core::coop::CoopState::default(),
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,
@@ -8812,7 +8863,7 @@ mod tests {
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
-            ally_threat_round: None,
+            coop: sts2_core::coop::CoopState::default(),
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,
@@ -12290,7 +12341,7 @@ mod tests {
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
-            ally_threat_round: None,
+            coop: sts2_core::coop::CoopState::default(),
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,

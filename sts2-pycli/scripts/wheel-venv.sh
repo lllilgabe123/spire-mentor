@@ -274,11 +274,14 @@ build_into() {
   [ -x "$mutex" ] && prefix=("$mutex")
   # The `build_info()` PGO stamps are pgo_wheel.sh's alone: strip any that
   # leaked into the caller's env so a plain build can never claim PGO.
+  # Run from $src: rustup picks the toolchain from the cwd's
+  # rust-toolchain.toml, and the caller's cwd (sts2-pycli) has none, so the
+  # build otherwise compiles with the default toolchain instead of the pin.
   run_maturin() {
     echo "wheel-venv: maturin develop --release ($src) -> $venv" >&2
-    env -u STS2_WHEEL_PGO_PROFDATA_SHA256 -u STS2_WHEEL_PGO_INSTRUMENTED -u STS2_WHEEL_TARGET_CPU \
-      VIRTUAL_ENV="$venv" PATH="$venv/bin:$PATH" \
-      "${prefix[@]}" maturin develop --release -m "$manifest" >&2
+    ( cd "$src" && env -u STS2_WHEEL_PGO_PROFDATA_SHA256 -u STS2_WHEEL_PGO_INSTRUMENTED \
+      -u STS2_WHEEL_TARGET_CPU VIRTUAL_ENV="$venv" PATH="$venv/bin:$PATH" \
+      "${prefix[@]}" maturin develop --release -m "$manifest" >&2 )
   }
   run_maturin
 

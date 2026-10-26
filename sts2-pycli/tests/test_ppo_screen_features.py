@@ -40,6 +40,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
@@ -67,8 +68,9 @@ def test_declared_features_are_exactly_the_ones_gated_here() -> None:
     """
     from ppo.schema import KNOWN_FEATURES
 
-    assert {"reward_upgrade"} == set(KNOWN_FEATURES), (
-        f"undeclared feature(s) {sorted(set(KNOWN_FEATURES) - {'reward_upgrade'})} — "
+    gated = {"reward_upgrade", "card_mods"}
+    assert gated == set(KNOWN_FEATURES), (
+        f"undeclared feature(s) {sorted(set(KNOWN_FEATURES) - gated)} — "
         "add the default-unchanged / one-column-moves gates for them here"
     )
 
@@ -205,3 +207,99 @@ def test_a_short_flag_list_reads_as_not_upgraded() -> None:
         frozenset({REWARD_UPGRADE}),
     )
     assert feat.act_cat[0][1] == 0
+
+
+# ── card_mods (GH #947) ──────────────────────────────────────────────────
+#
+# Same shape as `reward_upgrade`: the feature moves values into columns that
+# exist either way. The enchantment column (`cat[11]`) is #545's; the amount
+# slot (`C_ENCH_AMT`, cont 25) is an unconditional APPEND, gated for warm
+# start by `test_ppo_trainer_units.py::test_load_compat_*` and for serving by
+# `test_ppo_appended_slots_are_free.py`. So the checkable properties are the
+# same two: OFF is byte-identical even with the new obs keys present, and ON
+# moves only the enchanted tokens' enchantment cells.
+
+
+def _card_mods_row():
+    obs = {
+        "deck": [["STRIKE_IRONCLAD", False], ["BASH", False], ["DEFEND_IRONCLAD", True]],
+        "deck_enchantments": [None, ["SHARP", 3], None],
+        "card_reward_option_ids": ["CARD.BASH", "CARD.SHRUG_IT_OFF"],
+        "card_reward_option_enchantments": [None, ["NIMBLE", 2]],
+        "card_removal_options": [["BASH", False]],
+        "card_removal_option_enchantments": [["SHARP", 3]],
+        "upgrade_select_deck_indices": [0, 1],
+        "smith_options": ["STRIKE_IRONCLAD", "BASH"],
+        "smith_option_enchantments": [None, ["SHARP", 3]],
+        "max_hp": 80,
+    }
+    actions = [
+        {"action": "pick_card_reward", "idx": 0},
+        {"action": "pick_card_reward", "idx": 1},
+        {"action": "remove_deck_card", "idx": 0},
+        {"action": "upgrade_deck_card", "idx": 1},
+        {"action": "shop_remove_card", "deck_idx": 0},
+        {"action": "smith_card", "idx": 0},
+        {"action": "smith_card", "idx": 1},
+    ]
+    return obs, actions
+
+
+_ENCH_KEYS = (
+    "deck_enchantments",
+    "smith_option_enchantments",
+    "card_reward_option_enchantments",
+    "card_removal_option_enchantments",
+    "card_grant_option_enchantments",
+)
+
+
+def test_card_mods_appends_no_slot() -> None:
+    off = _run("from ppo import schema; print(schema.N_CAT, schema.N_CONT)", features="")
+    on = _run(
+        "from ppo import schema; print(schema.N_CAT, schema.N_CONT, sorted(schema.ACTIVE_FEATURES))",
+        features="card_mods",
+    )
+    on_cat, on_cont, on_features = on.split(" ", 2)
+    assert on_features == "['card_mods']"
+    assert off == f"{on_cat} {on_cont}"
+
+
+def test_the_default_arm_ignores_enchantments_even_when_they_are_present() -> None:
+    """Producers ship the `*_enchantments` lists unconditionally, so every
+    committed champion sees them from now on; off, they must change nothing."""
+    from ppo.encoder import featurize_row
+
+    obs, actions = _card_mods_row()
+    bare = featurize_row({k: v for k, v in obs.items() if k not in _ENCH_KEYS}, actions, {})
+    full = featurize_row(obs, actions, {})
+    for name in ("obs_cat", "obs_cont", "act_cat", "act_cont"):
+        assert (getattr(bare, name) == getattr(full, name)).all(), name
+
+
+def test_card_mods_moves_only_the_enchanted_tokens_enchantment_cells() -> None:
+    from ppo import schema, vocab
+    from ppo.encoder import featurize_row
+
+    obs, actions = _card_mods_row()
+    off = featurize_row(obs, actions, {})
+    on = featurize_row(obs, actions, {}, frozenset({schema.CARD_MODS}))
+    sharp, nimble = vocab.enchantments().index("SHARP"), vocab.enchantments().index("NIMBLE")
+    want_obs = {2: (sharp, 3)}  # obs row 0 is the state token; deck rows are 1..3
+    want_act = {1: (nimble, 2), 2: (sharp, 3), 3: (sharp, 3), 6: (sharp, 3)}
+    for cat_on, cont_on, cat_off, cont_off, want in (
+        (on.obs_cat, on.obs_cont, off.obs_cat, off.obs_cont, want_obs),
+        (on.act_cat, on.act_cont, off.act_cat, off.act_cont, want_act),
+    ):
+        for t in range(len(cat_on)):
+            if t in want:
+                ench, amount = want[t]
+                assert cat_on[t][schema.CAT_ENCHANT] == ench
+                assert cont_on[t][schema.C_ENCH_AMT] == np.float32(amount * schema.ENCH_AMT_SCALE)
+            # Everything outside those two cells is unchanged on every token.
+            c_on, c_off = list(cat_on[t]), list(cat_off[t])
+            k_on, k_off = list(cont_on[t]), list(cont_off[t])
+            if t in want:
+                c_on[schema.CAT_ENCHANT] = c_off[schema.CAT_ENCHANT]
+                k_on[schema.C_ENCH_AMT] = k_off[schema.C_ENCH_AMT]
+            assert c_on == c_off and k_on == k_off, t

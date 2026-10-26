@@ -172,6 +172,14 @@ decision is still open: this run does not settle it. The pages
 before" note until then. The protocol that would settle it is the release
 sweep at 8,000 sims (first row above) on `a10_it700` with the default.
 
+> **Update, later on 2026-10-26: that sweep has run**
+> (`2026-10-26-ironclad-release-winrates.md`: Ironclad `a10_it700`
+> `net_greedy`, 8,000 sims in one tree, the #830 default, engine `0181fa552`,
+> seeds 81,000,000+; A10 27.2% and A9 56.4% on 500 seeds each, mean A0–A10
+> 83.6%). The three pages now carry its Ironclad row in place of the
+> "measured before" note, and the first row of the table above no longer
+> applies.
+
 ## Caveats
 
 - **The arm labels rest on `scripts/run_eval.sh`.** No row, stdout or stderr

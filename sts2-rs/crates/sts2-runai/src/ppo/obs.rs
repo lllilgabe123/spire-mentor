@@ -249,6 +249,22 @@ pub struct EventOptionObs {
     pub cards_lost: Option<i64>,
 }
 
+/// One card's enchantment as `(UPPER_SNAKE id, amount)`, `None` when it
+/// carries none — `sts2_wire::emit::run_manager::card_enchantment`'s shape.
+/// C# allows at most one enchantment per card, so this is its whole
+/// run-persistent modifier state apart from the upgrade flag (GH #947).
+pub type CardEnchantObs = Option<(String, i64)>;
+
+/// [`CardEnchantObs`] of one engine card's enchantment stack: the first
+/// entry, since C# holds at most one. Mirrors
+/// `sts2_wire::emit::run_manager::card_enchantment` (the PyO3 side `env.py`
+/// reads), which Gate A2 holds byte-identical to this.
+#[must_use]
+pub fn card_enchant_obs(e: &sts2_core::cards::CardEnchantments) -> CardEnchantObs {
+    e.first()
+        .map(|(id, amount)| (id.python_name().to_string(), i64::from(*amount)))
+}
+
 /// `env.py::observe()`'s full observation dict — the encoder's (Task
 /// 6) only input besides the raw action list. The surface-gated
 /// extras are `Option`-wrapped and skip serialization when absent, so
@@ -262,6 +278,13 @@ pub struct PpoObs {
     pub seed: i64,
     pub ascension: i64,
     pub deck: Vec<(String, bool)>,
+    /// Each deck card's enchantment, index-aligned with [`Self::deck`]
+    /// (GH #947). `deck` carries only `(id, upgraded)`, so without this an
+    /// enchanted card reads as the bare card on every run decision. Absent
+    /// (a recording that predates the field) reads as "nothing enchanted";
+    /// only the `card_mods` feature ([`super::features::Features`]) reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deck_enchantments: Option<Vec<CardEnchantObs>>,
     pub relics: Vec<String>,
     pub potions: Vec<String>,
     pub map: Option<FullMapObs>,
@@ -290,6 +313,12 @@ pub struct PpoObs {
     /// the flag stays a pure encoder decision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card_reward_option_upgraded: Option<Vec<bool>>,
+    /// Per-option enchantment (a relic stamp: FresnelLens's Nimble,
+    /// SilkenTress's Glam, …; GH #806), index-aligned with
+    /// `card_reward_option_ids`. Shorter (or absent) means "not enchanted".
+    /// Read only under the `card_mods` feature. GH #947.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_reward_option_enchantments: Option<Vec<CardEnchantObs>>,
     /// Double-`Option`: the outer gates on surface (`"card-pick"`
     /// only, mirrors every other extra below); the inner is Python's
     /// `card_reward_bundles() -> list[list[str]] | None`. `Some(None)`
@@ -310,10 +339,22 @@ pub struct PpoObs {
     pub boss_relic_options: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smith_options: Option<Vec<String>>,
+    /// Index-aligned with `smith_options` (each Smith option is the k-th
+    /// upgradable deck card). Read only under `card_mods`. GH #947.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smith_option_enchantments: Option<Vec<CardEnchantObs>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card_removal_options: Option<Vec<(String, bool)>>,
+    /// Index-aligned with `card_removal_options` (and the grant twin below
+    /// with `card_grant_options`). Read only under the `card_mods` feature.
+    /// GH #947. Declared in `env.py::observe()`'s key order, which is the
+    /// order this struct serializes in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_removal_option_enchantments: Option<Vec<CardEnchantObs>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card_grant_options: Option<Vec<(String, bool)>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_grant_option_enchantments: Option<Vec<CardEnchantObs>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transform_select_deck_indices: Option<Vec<i64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

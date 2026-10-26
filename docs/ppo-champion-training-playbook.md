@@ -1031,6 +1031,14 @@ Follow `sts2-rs/docs/ppo-rust-inference.md` §Checkpoint-swap procedure, then:
       *resolver* path rather than the env override the gate used. 5 seeds,
       expect all runs to complete with no panic.
 - [ ] Overflow headroom checked (below)
+- [ ] **Published win rates updated** if the headline numbers moved: the
+      public README's win-rate table (`release/public-overlay/README.md`) and
+      the project's external directory entry,
+      [slaythespire.dev/projects/spire-mentor](https://slaythespire.dev/projects/spire-mentor/)
+      — a PR to `src/content/projects/spire-mentor.md` in
+      [`ptrlrd/slaythespire-dev`](https://github.com/ptrlrd/slaythespire-dev)
+      (first added in its PR #8, 2026-10-26). Say which runs a number comes
+      from (n, sims, date), as that entry does.
 
 ### Overflow headroom
 

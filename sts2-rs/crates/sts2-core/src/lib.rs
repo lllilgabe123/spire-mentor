@@ -96,6 +96,8 @@ pub mod event_log;
 // extend with player turn-start, end-turn pipeline, enemy turn execution,
 // and `check_combat_end`.
 pub mod combat_loop;
+// Co-op: teammates as whole players, seated one at a time.
+pub mod coop;
 
 // Phase 4 (bead sts2-rs-pg5 P4-3): stub monster system + 5 Act-1 enemies.
 // Hand-coded `roll_intent(rng, history) -> Intent` per enemy; Phase 5's
@@ -3851,15 +3853,10 @@ pub struct CombatState {
     /// (`CombatRoom.cs:216`) at `exit_combat`. Bead `sts2-rs-RP15`.
     pub escaped_creatures: u32,
 
-    /// The round whose enemy turn also hits the co-op teammates
-    /// (`state.allies`). C# monster attacks target every living player
-    /// (`AttackCommand.FromMonster` → `TargetingAllOpponents`), but the
-    /// teammates' own turns are not simulated: past the turn the board was
-    /// read on they would stand there unblocking until they died, and every
-    /// line would end with the same dead teammate. So only the enemy turn we
-    /// can see lands on them; set by the wire loader when `$.allies` is
-    /// present, `None` solo.
-    pub ally_threat_round: Option<u16>,
+    /// Co-op seats: the round the teammates are simulated for, who still has
+    /// a play phase ahead, and what each seat owns off [`PlayerCombatState`].
+    /// `Default` solo. See [`coop`].
+    pub coop: coop::CoopState,
 
     /// Gold recovered this combat by KILLING a `HeistPower` carrier (C#
     /// `HeistPower.BeforeDeath` → `CombatRoom.AddExtraReward(player, new
@@ -4099,7 +4096,7 @@ impl Default for CombatState {
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
-            ally_threat_round: None,
+            coop: crate::coop::CoopState::default(),
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,
@@ -5240,6 +5237,24 @@ impl CombatState {
             }
         }
         out
+    }
+
+    /// Remove power `pid` from the arena and from every list that names it:
+    /// the player's legacy list, each creature's, and each co-op seat's
+    /// (an ally's list and its [`coop::SeatStash`]), so a teammate's
+    /// instance leaves no dangling uid behind.
+    pub fn drop_power(&mut self, pid: NonZeroU32) {
+        self.powers.retain(|p| p.id != pid);
+        self.player.powers.retain(|u| u.0 != pid);
+        for c in &mut self.creatures {
+            c.powers.retain(|u| u.0 != pid);
+        }
+        for a in &mut self.allies {
+            a.powers.retain(|u| u.0 != pid);
+        }
+        for s in &mut self.coop.stash {
+            s.powers.retain(|u| u.0 != pid);
+        }
     }
 
     /// Count living player-side **ally** creatures (NOT counting the
@@ -7633,8 +7648,14 @@ impl CombatState {
             // Skipped entirely when no Automation is live (`present_kinds`
             // superset gate hoisted above — the walk could never match).
             if automation_present {
+                // Co-op: only the drawer's instances count their draws
+                // (C# `AutomationPower.cs:38`); a waiting teammate's row
+                // stays in the arena.
+                let seated = crate::coop::has_seats(self).then(|| self.player_power_uids());
                 for p in &mut self.powers {
-                    if p.kind == PowerKind::Automation {
+                    if p.kind == PowerKind::Automation
+                        && seated.as_ref().is_none_or(|s| s.contains(&PowerUid(p.id)))
+                    {
                         let new_counter = p.counter.saturating_add(1);
                         if new_counter >= 10 {
                             p.counter = 0;
@@ -10371,19 +10392,20 @@ fn resolve_foregone_conclusion_from_draw(
     }
     // C# `PowerCmd.Remove(this)`: strip the foregone power(s) now that the
     // (deferred) select has resolved. Re-scan by kind — the surfacing hook
-    // intentionally did NOT remove them.
+    // intentionally did NOT remove them. The drawer's own only: a waiting
+    // teammate's row stays in the arena.
+    let seated = state.player_power_uids();
     let foregone_ids: Vec<_> = state
         .powers
         .iter()
-        .filter(|p| p.kind == crate::powers::PowerKind::ForegoneConclusion)
+        .filter(|p| {
+            p.kind == crate::powers::PowerKind::ForegoneConclusion
+                && seated.contains(&PowerUid(p.id))
+        })
         .map(|p| p.id)
         .collect();
     for pid in foregone_ids {
-        state.powers.retain(|p| p.id != pid);
-        state.player.powers.retain(|u| u.0 != pid);
-        for c in &mut state.creatures {
-            c.powers.retain(|u| u.0 != pid);
-        }
+        state.drop_power(pid);
     }
 }
 
@@ -11299,6 +11321,116 @@ pub fn loot_at_risk_hp_equiv(state: &CombatState) -> f32 {
     };
 
     cards + gold + escape
+}
+
+/// HP-equivalent of one point of max HP beyond the current-HP gain that
+/// [`evaluate_victory`] already counts: a higher ceiling lets later rest-site
+/// and percentage heals restore more. A rough half-HP per point. GH #839.
+pub const PERSISTENT_MAX_HP_HP_EQUIV: f32 = 0.5;
+
+/// HP-equivalent of one point of permanent card growth (a Genetic Algorithm
+/// block point or a Scythe damage point) per future play. Block overflows and
+/// damage only shortens fights, so a point is worth under one HP. GH #839.
+pub const PERSISTENT_GROWTH_HP_EQUIV: f32 = 0.5;
+
+/// Expected plays per future fight of a run-scaling card. Both scalers
+/// Exhaust, so it is at most one play per fight, less the fights it is not
+/// drawn in. GH #839.
+pub const PERSISTENT_SCALER_PLAYS_PER_FIGHT: f32 = 0.7;
+
+/// Rough combats per act (hallway fights, elites and the boss) for the
+/// remaining-run estimate in [`persistent_combats_left`]. GH #839.
+pub const PERSISTENT_COMBATS_PER_ACT: f32 = 9.0;
+
+/// Acts in a run, for [`persistent_combats_left`]. A10's second final boss
+/// is ignored: it is one fight. GH #839.
+const PERSISTENT_RUN_ACTS: u8 = 3;
+
+/// Run-level values a search measures persistent gains against: the search
+/// ROOT's max HP, theft-adjusted gold and run-scaling card stats. Siblings
+/// share the root, so pricing the change from it ranks actions exactly as a
+/// combat-start baseline would, and it needs no extra `CombatState` field
+/// (live-bridge and fixture states carry no combat-start snapshot). GH #839.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PersistentBaseline {
+    pub max_hp: i32,
+    pub gold: i32,
+    pub scaled_stat_total: i32,
+}
+
+impl PersistentBaseline {
+    #[must_use]
+    pub fn of(state: &CombatState) -> Self {
+        Self {
+            max_hp: state.player.max_hp,
+            gold: gold_excluding_theft(state),
+            scaled_stat_total: run_scaled_stat_total(state),
+        }
+    }
+}
+
+/// `state.gold` with every coin a thief took added back. Theft lowers
+/// `state.gold` directly (`ThieveryPower`), and [`loot_at_risk_hp_equiv`]
+/// already charges the gold still outstanding, so the persistent-gain term
+/// must not see it a second time. Outstanding plus recovered is the full
+/// amount taken whether or not the thief's power outlives its death.
+fn gold_excluding_theft(state: &CombatState) -> i32 {
+    state.gold + stolen_gold_outstanding(state) + state.heist_recovered_gold.max(0)
+}
+
+/// Sum of the run-persistent stat over every run-scaling card in the combat
+/// arena ([`cards::run_persistent_scaled_stat`]). The arena keeps exhausted
+/// cards, so a played Genetic Algorithm still counts.
+fn run_scaled_stat_total(state: &CombatState) -> i32 {
+    state
+        .cards
+        .iter()
+        .filter_map(|c| cards::run_persistent_scaled_stat(c.card_id).map(|s| s.get(c)))
+        .sum()
+}
+
+/// Estimated combats left in the run after this one: the acts after this
+/// one, plus half of this act unless this is its boss. Zero at the final
+/// boss, so a gain there is worth nothing. GH #839.
+#[must_use]
+pub fn persistent_combats_left(state: &CombatState) -> f32 {
+    let act = state.act_index.clamp(1, PERSISTENT_RUN_ACTS);
+    let acts_after = f32::from(PERSISTENT_RUN_ACTS - act);
+    let this_act = if state.is_boss {
+        0.0
+    } else {
+        PERSISTENT_COMBATS_PER_ACT / 2.0
+    };
+    acts_after * PERSISTENT_COMBATS_PER_ACT + this_act
+}
+
+/// HP-equivalent value of the gains this position has made since the search
+/// root that outlast the combat. Signed: Debt's gold loss and Brightest
+/// Flame's max-HP loss count against. Three terms:
+///
+/// * **Max HP** (Feed): the change times [`PERSISTENT_MAX_HP_HP_EQUIV`].
+/// * **Gold** (Hand of Greed, Debt), theft excluded: the change times
+///   [`LOOT_GOLD_HP_EQUIV`].
+/// * **Card growth** (Genetic Algorithm, The Scythe; GH #838 carries it to
+///   the next fight): the change times [`PERSISTENT_GROWTH_HP_EQUIV`] times
+///   the expected future plays.
+///
+/// The first two shrink linearly with the run left; growth scales with the
+/// combats left directly. GH #839.
+#[must_use]
+pub fn persistent_gain_hp_equiv(state: &CombatState, baseline: &PersistentBaseline) -> f32 {
+    let combats_left = persistent_combats_left(state);
+    let run_left = combats_left / (f32::from(PERSISTENT_RUN_ACTS) * PERSISTENT_COMBATS_PER_ACT);
+    #[allow(clippy::cast_precision_loss)]
+    let max_hp = (state.player.max_hp - baseline.max_hp) as f32 * PERSISTENT_MAX_HP_HP_EQUIV;
+    #[allow(clippy::cast_precision_loss)]
+    let gold = (gold_excluding_theft(state) - baseline.gold) as f32 * LOOT_GOLD_HP_EQUIV;
+    #[allow(clippy::cast_precision_loss)]
+    let growth = (run_scaled_stat_total(state) - baseline.scaled_stat_total).max(0) as f32
+        * PERSISTENT_GROWTH_HP_EQUIV
+        * PERSISTENT_SCALER_PLAYS_PER_FIGHT
+        * combats_left;
+    (max_hp + gold) * run_left + growth
 }
 
 /// In-progress (depth-cap leaf) player-HP weight — the tuned base

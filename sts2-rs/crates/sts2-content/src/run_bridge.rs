@@ -671,13 +671,13 @@ pub fn exit_combat(rs: &mut RunState, combat: &CombatState) {
     }
 
     // Run-master propagation for scaling cards (C# `DeckVersion.BuffFromPlay`).
-    // The Scythe's `OnPlay` buffs BOTH its combat copy AND the run-master deck
-    // card (`(base.DeckVersion as TheScythe)?.BuffFromPlay(intValue)`,
-    // `TheScythe.cs:73`) — `IncreasedDamage` / `CurrentDamage` are
+    // The Scythe and Genetic Algorithm `OnPlay` buff BOTH the combat copy AND
+    // the run-master deck card (`(base.DeckVersion as TheScythe)?.BuffFromPlay`,
+    // `TheScythe.cs:73`; `GeneticAlgorithm.cs:69`) — the increase is a
     // `[SavedProperty]`, so the growth persists for the whole run. In this
-    // two-layer split the combat copy's run-persistent `base_damage` carries
-    // the accumulated value; fold it back onto the corresponding master-deck
-    // card so the next combat starts boosted. Bead `sts2-rs-RP114`.
+    // two-layer split the combat copy's run-persistent stat carries the
+    // accumulated value; fold it back onto the corresponding master-deck card
+    // so the next combat starts boosted. Bead `sts2-rs-RP114`, GH #838.
     propagate_scaling_cards_to_master_deck(rs, combat);
 
     // Flush the combat's RNG streams back to the run. C# uses ONE
@@ -796,28 +796,6 @@ pub fn exit_combat(rs: &mut RunState, combat: &CombatState) {
     }
 }
 
-/// Cards whose run-persistent `base_damage` accumulates mid-combat and must be
-/// folded back onto the master-deck card at `exit_combat` (C#
-/// `DeckVersion.BuffFromPlay`). At this pin the only such card is The Scythe
-/// (`TheScythe.cs`); add new ids here as more `DeckVersion`-buffing scalers are
-/// ported.
-const fn is_run_persistent_damage_scaler(id: sts2_core::cards::CardId) -> bool {
-    matches!(id, sts2_core::cards::CardId::TheScythe)
-}
-
-/// Fold each combat-side scaling card's accumulated run-persistent `base_damage`
-/// back onto its master-deck source (C# `DeckVersion.BuffFromPlay`).
-///
-/// The combat copy and its master-deck source carry no explicit back-link, so
-/// instances are paired by `(card_id, upgraded)` in master-deck order. The
-/// combat arena (`combat.cards`) holds the original deck cards reversed (the
-/// deck is fed to the draw pile via `.rev()` front-inserts — see
-/// [`enter_combat_from_roster`]), and mid-combat-generated cards are appended
-/// after; pairing same-`(id, upgraded)` instances by their respective stable
-/// orders matches the combat copy back to its master row. For each pair the
-/// master card's `base_damage` is set to the combat copy's accumulated value
-/// (which started equal to the master's at `enter_combat` and only grew),
-/// guarded by `max` so a never-played Scythe can't shrink the master value.
 /// Remove each card stolen by a surviving/escaped `SwipePower` thief
 /// (`ThievingHopper`) from the run `master_deck`, mirroring C#
 /// `SwipePower.Steal` → `CardPileCmd.RemoveFromDeck(card.DeckVersion)`. Entries
@@ -845,20 +823,37 @@ fn remove_swiped_cards_from_master_deck(rs: &mut RunState, combat: &CombatState)
     }
 }
 
+/// Fold each combat-side scaling card's accumulated run-persistent stat (`base_damage` or
+/// `base_block`, per
+/// [`sts2_core::cards::run_persistent_scaled_stat`])
+/// back onto its master-deck source (C# `DeckVersion.BuffFromPlay`).
+///
+/// The combat copy and its master-deck source carry no explicit back-link, so
+/// instances are paired by `(card_id, upgraded)` in master-deck order. The
+/// combat arena (`combat.cards`) holds the original deck cards reversed (the
+/// deck is fed to the draw pile via `.rev()` front-inserts — see
+/// [`enter_combat_from_roster`]), and mid-combat-generated cards are appended
+/// after; pairing same-`(id, upgraded)` instances by their respective stable
+/// orders matches the combat copy back to its master row. For each pair the
+/// master card's stat is set to the combat copy's accumulated value
+/// (which started equal to the master's at `enter_combat` and only grew),
+/// guarded by `max` so a never-played scaler can't shrink the master value.
 fn propagate_scaling_cards_to_master_deck(rs: &mut RunState, combat: &CombatState) {
     use sts2_core::cards::CardId;
 
     // Distinct scaler ids present in the master deck (tiny set; usually 0–1).
-    let mut scaler_ids: SmallVec<[CardId; 2]> = SmallVec::new();
+    let mut scaler_ids: SmallVec<[(CardId, sts2_core::cards::RunScaledStat); 2]> = SmallVec::new();
     for c in &rs.master_deck {
-        if is_run_persistent_damage_scaler(c.card_id) && !scaler_ids.contains(&c.card_id) {
-            scaler_ids.push(c.card_id);
+        if let Some(stat) = sts2_core::cards::run_persistent_scaled_stat(c.card_id) {
+            if !scaler_ids.iter().any(|&(id, _)| id == c.card_id) {
+                scaler_ids.push((c.card_id, stat));
+            }
         }
     }
 
-    for id in scaler_ids {
+    for (id, stat) in scaler_ids {
         // Combat copies of this id, in combat-arena (reverse master) order,
-        // bucketed by upgrade flag so an upgraded and non-upgraded Scythe in
+        // bucketed by upgrade flag so an upgraded and non-upgraded scaler in
         // the same deck pair to their own kind.
         let mut combat_base_up: SmallVec<[i32; 2]> = SmallVec::new();
         let mut combat_base_down: SmallVec<[i32; 2]> = SmallVec::new();
@@ -867,9 +862,9 @@ fn propagate_scaling_cards_to_master_deck(rs: &mut RunState, combat: &CombatStat
                 continue;
             }
             if c.upgraded {
-                combat_base_up.push(c.base_damage);
+                combat_base_up.push(stat.get(c));
             } else {
-                combat_base_down.push(c.base_damage);
+                combat_base_down.push(stat.get(c));
             }
         }
 
@@ -891,7 +886,8 @@ fn propagate_scaling_cards_to_master_deck(rs: &mut RunState, combat: &CombatStat
                 // Only grow — never shrink. The combat copy started at the
                 // master value and accumulated; a missing/unplayed copy leaves
                 // the master untouched.
-                m.base_damage = m.base_damage.max(combat_base);
+                let master = stat.get_mut(m);
+                *master = (*master).max(combat_base);
             }
         }
     }
@@ -2025,6 +2021,64 @@ mod tests {
         );
     }
 
+    /// GH #838: Genetic Algorithm's `IncreasedBlock` is run-persistent (C#
+    /// `[SavedProperty]` + `(base.DeckVersion as GeneticAlgorithm)?.BuffFromPlay`,
+    /// `GeneticAlgorithm.cs:69`). Its growth lives in `base_block`, not
+    /// `base_damage`, so the fold-back must copy the block stat; before the fix
+    /// every combat restarted GA at 1 block.
+    #[test]
+    fn genetic_algorithm_growth_persists_across_combat_round_trip() {
+        use crate::cards::defect::genetic_algorithm::play_genetic_algorithm;
+        use sts2_core::cards::CardId;
+
+        crate::cards::dispatch::ensure_installed();
+
+        let mut rs = fresh_run();
+        rs.master_deck.push(
+            crate::cards::spec_index::card_pod_from_id(CardId::GeneticAlgorithm, false)
+                .expect("genetic algorithm spec"),
+        );
+        assert_eq!(
+            rs.master_deck[0].base_block, 1,
+            "C# CurrentBlock starts at 1"
+        );
+
+        // === Combat 1: two plays, 1 -> 4 -> 7 ===
+        let mut state = enter_combat(&rs, select_first(act1_normal_pool()));
+        let ga_idx = state
+            .cards
+            .iter()
+            .position(|c| c.card_id == CardId::GeneticAlgorithm)
+            .expect("GA cloned into combat");
+        assert_eq!(state.cards[ga_idx].base_block, 1);
+        let uid = state.cards[ga_idx].uid;
+        for _ in 0..2 {
+            state.player.play.push(uid);
+            play_genetic_algorithm(&mut state, None);
+            state.player.play.pop();
+        }
+        assert_eq!(state.cards[ga_idx].base_block, 7, "two plays: 1 -> 4 -> 7");
+
+        exit_combat(&mut rs, &state);
+        assert_eq!(
+            rs.master_deck[0].base_block, 7,
+            "growth folded back onto the master-deck GA"
+        );
+        assert_eq!(rs.master_deck[0].base_damage, 0, "damage stat untouched");
+
+        // === Combat 2 starts boosted ===
+        let state2 = enter_combat(&rs, select_first(act1_normal_pool()));
+        let ga2 = state2
+            .cards
+            .iter()
+            .find(|c| c.card_id == CardId::GeneticAlgorithm)
+            .expect("GA cloned into combat 2");
+        assert_eq!(
+            ga2.base_block, 7,
+            "next combat's GA starts from the accumulated value"
+        );
+    }
+
     /// Bead `sts2-rs-nfoh0`: ForbiddenGrimoirePower.AfterCombatEnd. A player
     /// carrying ForbiddenGrimoire(N) at combat end stages N card-removal picks
     /// on the run-state reward queue via the `exit_combat` seam.
@@ -2466,8 +2520,8 @@ mod tests {
         );
     }
 
-    /// `is_run_persistent_damage_scaler` must return `true` ONLY for The Scythe.
-    /// A `-> true` mutant would treat every card as a scaler and propagate any
+    /// `run_persistent_scaled_stat` must return `Some` ONLY for the
+    /// `DeckVersion` scalers. A catch-all mutant would treat every card as a scaler and propagate any
     /// combat-side `base_damage` growth onto the master deck. Seed a NON-scaler
     /// card (Strike), bump its combat copy's `base_damage`, and assert the
     /// master row is left untouched. Bead `sts2-rs-RP114`.
@@ -2531,7 +2585,7 @@ mod tests {
     }
 
     /// `propagate_scaling_cards_to_master_deck` only collects ids for which
-    /// `is_run_persistent_damage_scaler(id) && !already_seen`. With `&&`→`||`,
+    /// `run_persistent_scaled_stat(id).is_some() && !already_seen`. If the guard is dropped,
     /// EVERY distinct master-deck id would be collected as a "scaler"; the loop
     /// then pairs a non-scaler's combat copy onto its master row and would leak
     /// its growth. A deck of {Scythe, Strike} where the Strike copy grew lets the

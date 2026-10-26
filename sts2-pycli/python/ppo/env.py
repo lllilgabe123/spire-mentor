@@ -165,6 +165,9 @@ def observe(
         "seed": seed,
         "ascension": ascension,
         "deck": rm.master_deck_detailed(),  # [(card_id, upgraded), ...]
+        # Index-aligned with `deck`: `None` or `(UPPER_SNAKE id, amount)`.
+        # GH #947 — `deck` alone reads an enchanted card as the bare card.
+        "deck_enchantments": rm.master_deck_enchantments(),
         "relics": rm.relics(),
         "potions": rm.potions(),
         "map": rm.full_map(),
@@ -174,12 +177,16 @@ def observe(
     if surface == "card-pick":
         obs["card_reward_option_ids"] = rm.card_reward_option_ids()
         obs["card_reward_option_upgraded"] = rm.card_reward_option_upgraded()
+        obs["card_reward_option_enchantments"] = rm.card_reward_option_enchantments()
         obs["card_reward_bundles"] = rm.card_reward_bundles()
         obs["relic_reward_ids"] = rm.relic_reward_ids()
         obs["boss_relic_options"] = rm.boss_relic_options()
         obs["smith_options"] = rm.smith_options()
+        obs["smith_option_enchantments"] = rm.smith_option_enchantments()
         obs["card_removal_options"] = rm.card_removal_options()
+        obs["card_removal_option_enchantments"] = rm.card_removal_option_enchantments()
         obs["card_grant_options"] = rm.card_grant_options()
+        obs["card_grant_option_enchantments"] = rm.card_grant_option_enchantments()
         obs["transform_select_deck_indices"] = rm.transform_select_deck_indices()
         obs["enchant_select_deck_indices"] = rm.enchant_select_deck_indices()
         obs["pending_enchantment"] = rm.pending_enchantment

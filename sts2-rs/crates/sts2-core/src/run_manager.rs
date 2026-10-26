@@ -4882,6 +4882,17 @@ impl RunManager {
         &self.card_reward_upgraded
     }
 
+    /// Per-option enchantments parallel to [`Self::card_reward_options`]
+    /// (a relic stamp such as FresnelLens's Nimble or SilkenTress's Glam,
+    /// GH #806). Same shape rule as [`Self::card_reward_upgraded_flags`]:
+    /// may be shorter than the options list, and a missing entry means "not
+    /// enchanted". Read by the PPO obs (GH #947), which used to featurize a
+    /// stamped option as the bare card.
+    #[must_use]
+    pub fn card_reward_enchantments(&self) -> &[crate::cards::CardEnchantments] {
+        &self.card_reward_enchantments
+    }
+
     /// When the current `CardReward` offering is a Scroll Boxes bundle pick,
     /// returns the packs (`[[CardId; 3]; 2]`-shaped — one inner `Vec` per
     /// selectable pack, aligned with `PickCardReward{Some(i)}`). `None` for an
@@ -10403,6 +10414,14 @@ mod tests {
             rm.set_phase(Phase::Combat);
             assert_eq!(rm.exit_combat_and_transition(), ActionResult::Advanced);
             assert_eq!(rm.phase(), Phase::CardReward);
+            // GH #947: the offer-time stamps are visible to a host BEFORE the
+            // pick (the PPO obs reads them to tell a stamped option apart).
+            let offered: Vec<i32> = rm
+                .card_reward_enchantments()
+                .iter()
+                .map(|e| e.get(crate::cards::EnchantmentId::Glam))
+                .collect();
+            assert_eq!(offered, vec![0, 1, 1]);
             let result = rm.take_action(RunAction::PickCardReward { idx: Some(idx) });
             assert_eq!(result, ActionResult::Advanced);
             *rm.run_state.master_deck.last().expect("picked card")

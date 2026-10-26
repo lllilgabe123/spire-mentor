@@ -76,7 +76,7 @@ fn play_outbreak_v0111(state: &mut CombatState) -> EffectResult {
 /// `sts2_core::hooks::after_side_turn_start`.
 fn trigger_poison_v0111(state: &mut CombatState, e: CreatureUid) {
     use sts2_core::hooks::{apply_effect, CreatureRef, Effect, ListenerRef, ValueProps};
-    let accel = state.player_power_amount(PowerKind::Accelerant).max(0);
+    let accel = sts2_core::coop::players_power_amount(state, PowerKind::Accelerant).max(0);
     let amount = power_amount_on_creature(state, e, PowerKind::Poison);
     if amount <= 0 {
         return;
