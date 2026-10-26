@@ -143,6 +143,14 @@ internal sealed class SimAdvice
     /// </summary>
     public string? HandBack;
 
+    /// <summary>
+    /// `advice.wait_for_ally.max_ms` (co-op): a teammate who has not ended
+    /// their turn holds a card that would change this move (Vulnerable before
+    /// our attack, Weak or block before our block), so autoplay holds the
+    /// move up to this long. 0 on a normal reply and on older advisors.
+    /// </summary>
+    public int WaitForAllyMs;
+
     /// <summary>Projected route through the act (map advice only).</summary>
     public readonly List<SimPathNode> Path = new();
 
@@ -174,6 +182,10 @@ internal sealed class SimAdvice
         advice.PWin = ReadDouble(el, "p_win");
         advice.LowConfidence = ReadBool(el, "low_confidence") ?? false;
         advice.HandBack = ReadString(el, "hand_back");
+        if (el.TryGetProperty("wait_for_ally", out JsonElement waitEl) && waitEl.ValueKind == JsonValueKind.Object)
+        {
+            advice.WaitForAllyMs = Math.Max(0, ReadInt(waitEl, "max_ms") ?? 0);
+        }
 
         if (el.TryGetProperty("best", out JsonElement bestEl) && bestEl.ValueKind == JsonValueKind.Object)
         {

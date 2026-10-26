@@ -1,0 +1,91 @@
+Ironclad a10_it700 standard strength eval (playbook §2.6), 2026-10-26. FINAL NUMBERS.
+Descriptive only. Not a gate. It changes no decision.
+(Wording revised after PR #943 review, 2026-10-26: the cost labels, the old-row comparison, the
+replay condition, the CI convention. No number changed.)
+
+Reconciled from two independent analyses (analysis/primary.json, analysis/recompute_blind.json)
+and a third recompute from the raw rows (analysis/scripts/reconcile.py -> analysis/reconcile.json):
+62 compared values, 0 mismatches.
+
+SETUP (both arms)
+  Ironclad, ascension 10, champion a10_it700 (ppo_fullrun_ironclad_a10_it700.pt, sha 91c83c1a...),
+  policy net_greedy, rl2 playout net, honest BeliefDraw search at 4000 sims / 16000 boss sims,
+  knobs removed_counts_forms=1, endturn_widening_c=23.148, draw_widening_c=4.0, --act1 roll,
+  seeds 91,000,000-91,000,399 (400), 30 procs, PGO wheel src_hash 4e5bb730d28e2976
+  (.so 823fa393...), main a1bd07c7.
+  Arm D = the shipped Ironclad default: built-in BC move prior ON in elite and boss fights (mix 0.5, T 1).
+  Arm P = D plus STS2_RUNAI_PRIOR_NET=off: prior OFF (knobs only, the pre-ship setting, with rule 5c).
+
+ROWS
+  D: 400 rows, 0 error, 0 timeout, 400 scored, exit 0.
+  P: 400 rows, 0 error, 0 timeout, 400 scored, exit 0.
+  Paired: 400 seeds, none dropped. Each arm has exactly seeds 91,000,000-91,000,399, no duplicates.
+
+PLAYBOOK ROW (arm D)
+  Ironclad A10, n=400, a10_it700 net_greedy + rl2 playout + BC prior ON (elite/boss),
+  4000/16000 sims, honest BeliefDraw, shipped knobs:
+    A10 win rate     107/400 = 26.75%  (Wilson 95% 22.65-31.29%)
+    A9 estimate      209/400 = 52.25%  (Wilson 95% 47.36-57.10%)
+  (a10_score.py prints these as 26.8% / 52.2%.)
+
+ARM P
+  Ironclad A10, n=400, a10_it700 net_greedy + rl2 playout + prior OFF,
+  4000/16000 sims, honest BeliefDraw, same knobs:
+    A10 win rate      96/400 = 24.00%  (Wilson 95% 20.07-28.42%)
+    A9 estimate      199/400 = 49.75%  (Wilson 95% 44.88-54.63%)
+
+PAIRED D - P (same 400 seeds, Ironclad A10, a10_it700 net_greedy, rl2 playout, 4000/16000, BeliefDraw)
+  A10:         +2.75pp. Both won 59, D only 48, P only 37, neither 256.
+               Exact McNemar p = 0.278 (two-sided). 95% CI [-1.76, +7.26]pp (Newcombe method 10,
+               uncorrected phi; corrected phi [-1.79, +7.29]; paired Wald gives the same to 0.01pp).
+  A9 estimate: +2.50pp. Both 154, D only 55, P only 45, neither 146.
+               Exact McNemar p = 0.368 (two-sided). 95% CI [-2.38, +7.36]pp (Newcombe method 10,
+               uncorrected phi; corrected phi [-2.41, +7.38]; Wald [-2.39, +7.39]).
+
+COST (rows carry wall_s per run; each run is one single-threaded worker, so it stands in for CPU)
+  Arm wall: D 2258 s, P 2149 s (D/P 1.051).
+  Per run:  mean D 160.5 s, P 152.4 s (1.053); median 150.2 s vs 144.7 s (1.038).
+  Length-adjusted: per step 1.039 (ratio of sums) or 1.043 (ratio of the arms' mean per-run
+  s/step); per combat decision 1.040; paired seeds with the same final floor (n=231), geomean
+  1.037. Paired per-seed D/P s/step ratio: median 1.025, geomean 1.045 (range 0.31-5.94).
+  So D ran about 4% slower per step than P. The arms ran one after the other, not interleaved,
+  on a shared 48-CPU box, so part of that may be host load.
+  No prior-only cost at 1000/4000 exists. At 1000/4000 the ship identity record measured the whole
+  bundle (knobs + prior vs neither, D/O) at 1.002-1.027x per combat step (1.014 pooled on this .so);
+  the gate's B/A, also bundle vs plain search, was 1.042.
+
+CHECKS
+  a. Prior on in D, off in P: 399 of 400 seeds differ between the arms (398 in step count,
+     379 in final state, 169 in final floor, 144 in final hp), 85 differ in A10 outcome. The one
+     identical seed (91000303) is an 84-step act-1 death on floor 8, which can end before any
+     elite or boss room, where the prior does not act. Runs replay seed-for-seed on this .so at
+     1000/4000 (ship identity record §12). Replay at 4000/16000 was not checked; only seed
+     91000303 is consistent with it. So "a no-op switch would have made P equal D on every seed"
+     assumes the same determinism at this budget.
+     The wheel carries the built-in prior (builtin_prior_net_json("Ironclad") sha ca469259...d4f2).
+     No row, stdout or stderr line records the prior or the env; the arm labels rest on
+     scripts/run_eval.sh.
+  b. Act per seed: identical across arms on all 400 seeds (overgrowth 189, underdocks 211).
+  c. Error rows: 0 in both arms.
+  d. D is plausible: above P and above the old no-prior row. P is consistent with that old row
+     (unpaired, other host and older wheel): 1.0pp above it at A10, level with it on the A9
+     estimate to the printed decimal (49.75% vs 49.8%).
+
+READING
+On Ironclad A10 at 4000/16000 sims (honest BeliefDraw, shipped knobs, a10_it700 net_greedy, rl2
+playout net, n=400 paired seeds), the shipped default with the BC prior on won 26.75% (A9 estimate
+52.25%), and the same setup with the prior off won 24.00% (49.75%). The paired difference is +2.75pp
+at A10 (exact McNemar p 0.278, 95% CI -1.76 to +7.26pp) and +2.50pp on the A9 estimate (p 0.368,
+CI -2.38 to +7.36pp). At this n both intervals include zero, so this panel cannot tell the prior's
+effect apart from no effect. The two 1000/4000 A10 gates (+5.20pp,
+1,500 paired, p 1.5e-5; +3.45pp, 4,000 paired, p 8.8e-07) measured a different contrast: the bundle
+(knobs plus prior) against plain search. This run measures the prior alone on top of the knobs at
+4x budget, so neither gate's number is a direct reference for +2.75pp. The old playbook row for
+a10_it700 without the prior (23.0% A10 / 49.8% A9 estimate, 2026-10-23) ran on another host and an
+older wheel without rule 5c, and its rows are not paired with these. Arm P, the same knobs-only
+setting on this wheel, is consistent with it (24.00% / 49.75%, unpaired), and the new D row is
+3.75pp above it at A10. That gap is unpaired and crosses wheels and hosts, so it mixes the prior
+with the other wheel changes and with run-level noise; it is not a measurement of the prior. D ran
+about 4% slower per step than P; the arms ran in sequence on a shared host, so part of that may be
+host load. The bundle's effect at 4000/16000 is still unmeasured. The ship decision rests on the
+two gates and is unchanged.

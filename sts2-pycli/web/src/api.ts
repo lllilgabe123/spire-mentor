@@ -1283,6 +1283,8 @@ export const DEFAULT_MCTS_CONFIG: MctsConfig = {
   // (`MctsConfig::apply_mode_dialect`, GH #758), so it is not repeated here.
   // `sts2-workbench/tests/search_dialect_parity.rs` parses this object and
   // fails if it stops searching like the run agent.
+  // It matches the run agent's BASE dialect on purpose (GH #830): the run
+  // agent's Ironclad layer (knobs + BC move prior) is not taken here.
   hidden_info: "beliefdraw",
   draw_widening_c: 2.0,
   // Workbench-only on purpose: the run agent does not prune. It cuts the

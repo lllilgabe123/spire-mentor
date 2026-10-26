@@ -67,7 +67,10 @@
   </figure>
   <p>The split is strict. The transformer never plays a card, and it gives
   the search no priors: the search starts every decision from a uniform
-  prior over legal actions. Combat is where exact lookahead pays most,
+  prior over legal actions. (The one exception, Ironclad's elite and boss
+  fights in the run agent, takes its priors from a separate move-prior
+  network; see <a href="#search">Combat search</a>.) Combat is where exact
+  lookahead pays most,
   because one core plays about 59,000 random fights a second
   (<a href="benchmarks.html">benchmarks</a>). Run-level choices such as which card to take or which path to walk
   have consequences tens of floors away, which is where a learned policy
@@ -102,7 +105,10 @@
   child is visited once before any is visited twice. The exploration
   constant depends on the budget: 0.8 below 500 simulations, 1.41 up to
   999, and 2.5 from 1,000 up, which covers every deployed budget. A PUCT
-  variant with learned priors exists but is off in the deployed lane.</p>
+  variant with learned priors exists. The deployed search uses it in one
+  place only: the Ironclad run agent's elite and boss fights, where a small
+  move-prior network trained by behaviour cloning on human replays supplies
+  the priors.</p>
 
   <h3>Chance nodes</h3>
   <p>Randomness is modelled, not sampled away. Any action that advances one
@@ -123,7 +129,12 @@
   paired runs (p = 8.2e-10). Spending the same extra compute on plain extra
   simulations gained nothing measurable. Every search on this page uses
   these constants: training, the promotion gates, the published win rates,
-  the real-game advisor and the browser hint.</p>
+  the real-game advisor and the browser hint. Since 25 October 2026 the
+  Ironclad run agent (its training, its promotion gates and the browser's run
+  mode) adds its own layer on top: wider End-turn and draw widening (C = 23.1
+  and C = 4), a fight score that counts multi-form enemies by what is left of
+  them, and in elite and boss fights the move priors described above. The
+  real-game advisor and the browser hint do not use this layer.</p>
 
   <h3>Transpositions and rollouts</h3>
   <p>A transposition table merges positions reached by different orders of

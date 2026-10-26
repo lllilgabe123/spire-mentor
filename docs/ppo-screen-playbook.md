@@ -24,6 +24,12 @@ Measured from the committed `sts2-pycli/data/ppo/*.stats.jsonl`:
 All at `games_per_iter=256`, combat at `CombatBudget::eval_cheap()` = 1000 sims
 / 4000 boss sims (`sts2-rs/crates/sts2-runai/src/policy/mod.rs:162`).
 
+Since 2026-10-25 (GH #830) an Ironclad screen runs the shipped Ironclad search
+in both arms: the forms + combo knobs in every fight and the BC move prior in
+elite and boss fights. The other four characters search as before. A screen
+delta is still a within-panel comparison, but an Ironclad screen run before
+that date and one run after it measured different searches.
+
 **Collection is ~87% of wall clock and combat search is nearly all of it.** The
 rest is the PyTorch update, which used to pin the floor at ~4 h and no longer
 does — `--device cuda` moves it off the critical path.
@@ -158,7 +164,8 @@ measured on the dev host with the plain build current) and is a no-op when
 the installed wheel is already fresh. `uv run` (`just test`, …) keeps it until
 a file uv's cache-keys name (`sts2-rs/crates/sts2-py/pyproject.toml` itself,
 any crate's `.rs`, `Cargo.toml` or `src/` file, `data/runai/heuristic_v.toml`,
-the workspace `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`) changes after
+`data/prior_nets/*.json`, the workspace `Cargo.toml`, `Cargo.lock`,
+`rust-toolchain.toml`) changes after
 the build started, even by a ctime alone; after that, a rebuild is the only
 way back, so build it last (champion playbook §0.4 lists what replaces it).
 A pgo_wheel.sh staging or `--skip-identity` build put on `PYTHONPATH` is

@@ -61,10 +61,11 @@
 # computes from the source: the newest ctime among sts2-py's `[tool.uv]
 # cache-keys` files (crates/sts2-py/pyproject.toml itself, every .rs and
 # Cargo.toml under crates/, every file in a crate's src/, runai's
-# data/runai/heuristic_v.toml, the workspace Cargo.toml, Cargo.lock and
-# rust-toolchain.toml). maturin's install never matches. So before
-# phase 0 the script takes that key (`sts2-pycli/scripts/uv_stamp_wheel.py
-# key`), and after the install it writes exactly that key (`stamp --check`,
+# data/runai/heuristic_v.toml, the move prior data/prior_nets/*.json, the
+# workspace Cargo.toml, Cargo.lock and rust-toolchain.toml). maturin's
+# install never matches. So before phase 0 the script takes that key
+# (`sts2-pycli/scripts/uv_stamp_wheel.py key`), and after the install it
+# writes exactly that key (`stamp --check`,
 # which refuses if the key has moved since or src_hash disagrees, and asks uv
 # whether it agrees). The PGO wheel then survives `uv run` until one of those
 # files changes after the build STARTED (an edit during the build included,

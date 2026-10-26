@@ -1,0 +1,245 @@
+{
+  "prereg": "<experiment>/PREREG.md",
+  "status": "descriptive, NOT a gate: n=400 at 4x sims; the ship rests on the two 1000/4000 A10 gates",
+  "qualifier": "Ironclad A10, a10_it700 net_greedy (ppo_fullrun_ironclad_a10_it700.pt sha 91c83c1a), rl2 playout net, 4000/16000 sims, honest BeliefDraw, knobs removed_counts_forms=1,endturn_widening_c=23.148,draw_widening_c=4.0, act1 roll, seeds 91000000-91000399, PGO wheel src_hash 4e5bb730d28e2976",
+  "arms": {
+    "D": {
+      "arm": "shipped Ironclad default: knobs + built-in BC move prior in elite/boss (mix 0.5, T 1)",
+      "exit_code": "0",
+      "rows_total": 400,
+      "error_rows": 0,
+      "timeout_rows": 0,
+      "scored": 400,
+      "outcomes": {
+        "lost": 293,
+        "won": 107
+      },
+      "seed_check": {
+        "duplicates": 0,
+        "missing": [],
+        "extra": []
+      },
+      "wheel_src_hash": [
+        "4e5bb730d28e2976"
+      ],
+      "wheel_pgo": [
+        "True"
+      ],
+      "py_src": [
+        "774d91045cdb5433"
+      ],
+      "act1_split": {
+        "overgrowth": 189,
+        "underdocks": 211
+      },
+      "A10": {
+        "wins": 107,
+        "n": 400,
+        "rate": 0.2675,
+        "wilson95": [
+          0.22648238411831478,
+          0.31294083274713314
+        ],
+        "qualifier": "A10 win rate, Ironclad A10, a10_it700 net_greedy (ppo_fullrun_ironclad_a10_it700.pt sha 91c83c1a), rl2 playout net, 4000/16000 sims, honest BeliefDraw, knobs removed_counts_forms=1,endturn_widening_c=23.148,draw_widening_c=4.0, act1 roll, seeds 91000000-91000399, PGO wheel src_hash 4e5bb730d28e2976, arm D (shipped Ironclad default: knobs + built-in BC move prior in elite/boss (mix 0.5, T 1)), n=400"
+      },
+      "A9est": {
+        "reached": 209,
+        "n": 400,
+        "rate": 0.5225,
+        "wilson95": [
+          0.4735694074890401,
+          0.5710025392659165
+        ],
+        "definition": "won or reached_second_boss is True (entered the A10 DoubleBoss room)",
+        "qualifier": "A9 estimate read off A10 runs, Ironclad A10, a10_it700 net_greedy (ppo_fullrun_ironclad_a10_it700.pt sha 91c83c1a), rl2 playout net, 4000/16000 sims, honest BeliefDraw, knobs removed_counts_forms=1,endturn_widening_c=23.148,draw_widening_c=4.0, act1 roll, seeds 91000000-91000399, PGO wheel src_hash 4e5bb730d28e2976, arm D (shipped Ironclad default: knobs + built-in BC move prior in elite/boss (mix 0.5, T 1)), n=400"
+      }
+    },
+    "P": {
+      "arm": "knobs only, STS2_RUNAI_PRIOR_NET=off (pre-ship setting, with rule 5c)",
+      "exit_code": "0",
+      "rows_total": 400,
+      "error_rows": 0,
+      "timeout_rows": 0,
+      "scored": 400,
+      "outcomes": {
+        "lost": 304,
+        "won": 96
+      },
+      "seed_check": {
+        "duplicates": 0,
+        "missing": [],
+        "extra": []
+      },
+      "wheel_src_hash": [
+        "4e5bb730d28e2976"
+      ],
+      "wheel_pgo": [
+        "True"
+      ],
+      "py_src": [
+        "774d91045cdb5433"
+      ],
+      "act1_split": {
+        "overgrowth": 189,
+        "underdocks": 211
+      },
+      "A10": {
+        "wins": 96,
+        "n": 400,
+        "rate": 0.24,
+        "wilson95": [
+          0.20074599691279923,
+          0.284200396141035
+        ],
+        "qualifier": "A10 win rate, Ironclad A10, a10_it700 net_greedy (ppo_fullrun_ironclad_a10_it700.pt sha 91c83c1a), rl2 playout net, 4000/16000 sims, honest BeliefDraw, knobs removed_counts_forms=1,endturn_widening_c=23.148,draw_widening_c=4.0, act1 roll, seeds 91000000-91000399, PGO wheel src_hash 4e5bb730d28e2976, arm P (knobs only, STS2_RUNAI_PRIOR_NET=off (pre-ship setting, with rule 5c)), n=400"
+      },
+      "A9est": {
+        "reached": 199,
+        "n": 400,
+        "rate": 0.4975,
+        "wilson95": [
+          0.44875888867958347,
+          0.5462886727920879
+        ],
+        "definition": "won or reached_second_boss is True (entered the A10 DoubleBoss room)",
+        "qualifier": "A9 estimate read off A10 runs, Ironclad A10, a10_it700 net_greedy (ppo_fullrun_ironclad_a10_it700.pt sha 91c83c1a), rl2 playout net, 4000/16000 sims, honest BeliefDraw, knobs removed_counts_forms=1,endturn_widening_c=23.148,draw_widening_c=4.0, act1 roll, seeds 91000000-91000399, PGO wheel src_hash 4e5bb730d28e2976, arm P (knobs only, STS2_RUNAI_PRIOR_NET=off (pre-ship setting, with rule 5c)), n=400"
+      }
+    }
+  },
+  "playbook_row": {
+    "A10": {
+      "wins": 107,
+      "n": 400,
+      "rate": 0.2675,
+      "wilson95": [
+        0.22648238411831478,
+        0.31294083274713314
+      ],
+      "qualifier": "A10 win rate, Ironclad A10, a10_it700 net_greedy (ppo_fullrun_ironclad_a10_it700.pt sha 91c83c1a), rl2 playout net, 4000/16000 sims, honest BeliefDraw, knobs removed_counts_forms=1,endturn_widening_c=23.148,draw_widening_c=4.0, act1 roll, seeds 91000000-91000399, PGO wheel src_hash 4e5bb730d28e2976, arm D (shipped Ironclad default: knobs + built-in BC move prior in elite/boss (mix 0.5, T 1)), n=400"
+    },
+    "A9est": {
+      "reached": 209,
+      "n": 400,
+      "rate": 0.5225,
+      "wilson95": [
+        0.4735694074890401,
+        0.5710025392659165
+      ],
+      "definition": "won or reached_second_boss is True (entered the A10 DoubleBoss room)",
+      "qualifier": "A9 estimate read off A10 runs, Ironclad A10, a10_it700 net_greedy (ppo_fullrun_ironclad_a10_it700.pt sha 91c83c1a), rl2 playout net, 4000/16000 sims, honest BeliefDraw, knobs removed_counts_forms=1,endturn_widening_c=23.148,draw_widening_c=4.0, act1 roll, seeds 91000000-91000399, PGO wheel src_hash 4e5bb730d28e2976, arm D (shipped Ironclad default: knobs + built-in BC move prior in elite/boss (mix 0.5, T 1)), n=400"
+    },
+    "note": "arm D = the shipped Ironclad default; this is the playbook \u00a72.6 row"
+  },
+  "paired_D_minus_P": {
+    "paired_seeds": 400,
+    "dropped_seeds": 0,
+    "A10": {
+      "n": 400,
+      "both_win": 59,
+      "b_D_only": 48,
+      "c_P_only": 37,
+      "both_lose": 256,
+      "D_rate": 0.2675,
+      "P_rate": 0.24,
+      "diff_pp": 2.75,
+      "mcnemar_exact_p_two_sided": 0.27799928908055166,
+      "mcnemar_p_scipy_binomtest": 0.2779992890805517,
+      "ci95_pp_newcombe10": [
+        -1.764893583693853,
+        7.259809423882885
+      ],
+      "ci95_pp_wald": [
+        -1.7594481263352824,
+        7.259448126335283
+      ],
+      "se_pp_wald": 2.300781117359928,
+      "ci_method": "Newcombe (1998) method 10 hybrid score CI for paired proportions (primary); Wald on paired diffs alongside"
+    },
+    "A9est": {
+      "n": 400,
+      "both_win": 154,
+      "b_D_only": 55,
+      "c_P_only": 45,
+      "both_lose": 146,
+      "D_rate": 0.5225,
+      "P_rate": 0.4975,
+      "diff_pp": 2.5,
+      "mcnemar_exact_p_two_sided": 0.36820161732669626,
+      "mcnemar_p_scipy_binomtest": 0.36820161732669615,
+      "ci95_pp_newcombe10": [
+        -2.382369088286203,
+        7.358634395021535
+      ],
+      "ci95_pp_wald": [
+        -2.3937812410512316,
+        7.393781241051231
+      ],
+      "se_pp_wald": 2.496873044429772,
+      "ci_method": "Newcombe (1998) method 10 hybrid score CI for paired proportions (primary); Wald on paired diffs alongside"
+    },
+    "arm_divergence_check": {
+      "seeds_identical_outcome_steps_final": 1,
+      "n": 400
+    }
+  },
+  "cost": {
+    "D": {
+      "arm_wall_s": 2258,
+      "load_at_start_1_5_15min": [
+        6.83,
+        5.17,
+        3.59
+      ],
+      "start": "2026-10-26T01:41:47+01:00",
+      "end": "2026-10-26T02:19:25+01:00",
+      "run_wall_s_mean": 160.522775,
+      "run_wall_s_median": 150.16,
+      "run_wall_s_max": 623.74,
+      "run_wall_s_sum": 64209.11,
+      "steps_sum": 201219,
+      "combat_decisions_sum": 164312,
+      "s_per_step": 0.31910063165009267,
+      "s_per_combat_decision": 0.3907755367836798
+    },
+    "P": {
+      "arm_wall_s": 2149,
+      "load_at_start_1_5_15min": [
+        7.83,
+        22.55,
+        26.02
+      ],
+      "start": "2026-10-26T02:19:25+01:00",
+      "end": "2026-10-26T02:55:14+01:00",
+      "run_wall_s_mean": 152.402875,
+      "run_wall_s_median": 144.65,
+      "run_wall_s_max": 523.84,
+      "run_wall_s_sum": 60961.15,
+      "steps_sum": 198563,
+      "combat_decisions_sum": 162280,
+      "s_per_step": 0.30701162855113995,
+      "s_per_combat_decision": 0.37565411634212476
+    },
+    "ratio_D_over_P": {
+      "arm_wall": 1.0507212657049791,
+      "run_wall_mean": 1.053279178624419,
+      "run_wall_median": 1.0380919460767368,
+      "run_wall_sum (CPU proxy)": 1.0532791786244189,
+      "s_per_step": 1.0393763687584199,
+      "s_per_combat_decision": 1.0402535731241218,
+      "paired_per_seed_ratio_median": 1.0376357361184443,
+      "paired_per_seed_ratio_geomean": 1.0677895876965233
+    },
+    "notes": "Per-run wall_s is one worker process (OMP/MKL/OpenBLAS threads 1), so its sum is the CPU proxy. D runs longer on average because it survives longer, so s_per_step and s_per_combat_decision are the length-adjusted cost. The box is shared (48 CPUs, 30 procs per arm); load at P's start includes D's own tail in the 5/15-min averages. Arms ran in sequence, not interleaved, so a load change between them confounds the time ratio."
+  },
+  "old_rows_quoted_not_paired": {
+    "plr_it550 (2026-10-21)": {
+      "A10": 0.17,
+      "A9est": 0.452
+    },
+    "a10_it700 pre-bundle, no prior (2026-10-23)": {
+      "A10": 0.23,
+      "A9est": 0.498
+    },
+    "note": "other host, older wheels; per-seed rows not on this host, so not pairable"
+  }
+}

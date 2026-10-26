@@ -287,9 +287,14 @@ port `BranchingLiveSession.start_run_mode` / `run_mode_step` /
 - **The run agent** is `sts2_rs.HeuristicRunAgent` — the deployed
   `MctsCombatPolicy<HeuristicPolicy>` stepped one decision at a time
   (`RunAgent`), single-threaded, carrying its MCTS RNG and decision counter
-  across pauses. `start-faithful` builds the run the PPO env's way
-  (`Game::start_faithful`: integer seed via `hash_seed`, Neow start, the
-  deck-mutation flags, Overgrowth); a hand-played run gets its agent lazily
+  across pauses. For Ironclad it carries the compiled-in run-agent layer
+  (GH #830): the forms + combo knobs in every fight and the built-in BC move
+  prior in elite and boss fights. The wasm build reads no environment, so the
+  browser always plays that default. The hint and the search-tree inspector
+  (`RecommendParams`) do not take the layer; they search in the base
+  BeliefDraw dialect for every character. `start-faithful` builds the run
+  the PPO env's way (`Game::start_faithful`: integer seed via `hash_seed`,
+  Neow start, the deck-mutation flags, Overgrowth); a hand-played run gets its agent lazily
   on the first `run-mode-step`. The step record, the `search` rows, the
   `debug` summary and the timeline labels (`to_workbench_verb` port) are
   the Python shapes.

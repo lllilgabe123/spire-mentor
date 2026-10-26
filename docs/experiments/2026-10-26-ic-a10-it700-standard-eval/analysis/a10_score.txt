@@ -1,0 +1,12 @@
+$ a10_score.py runs/D.jsonl
+runs: 400 (dropped 0 errored)
+A10            107/400 = 26.8%
+A9 (from A10)  209/400 = 52.2%
+$ a10_score.py runs/P.jsonl
+runs: 400 (dropped 0 errored)
+A10            96/400 = 24.0%
+A9 (from A10)  199/400 = 49.8%
+$ a10_score.py runs/P.jsonl runs/D.jsonl
+paired seeds: 400 (dropped 0 errored or unpaired, from both arms)
+A10            champ 24.0% -> cand 26.8%  delta +2.75pp  disc 37/48  McNemar p=0.278
+A9 (from A10)  champ 49.8% -> cand 52.2%  delta +2.50pp  disc 45/55  McNemar p=0.368

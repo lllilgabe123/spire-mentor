@@ -248,6 +248,19 @@ internal sealed class SimAdvisor
     /// <see cref="OnNoMoveInCoop"/>.</summary>
     private int _noMoveInARow;
 
+    /// <summary>Co-op autoplay: how long this round has already held moves
+    /// for a teammate (<see cref="SimAdvice.WaitForAllyMs"/>), so two bots
+    /// waiting on each other cost at most <see cref="AllyWaitBudgetMs"/> a
+    /// round instead of deadlocking.</summary>
+    private int _allyWaitRound = -1;
+    private int _allyWaitUsedMs;
+    private const int AllyWaitBudgetMs = 6000;
+
+    /// <summary>Bumped by every <see cref="ScheduleAutoPlay"/>; a timer
+    /// fires only if it is still the latest, so a long ally wait cannot be
+    /// cut short by an older timer executing the newer advice.</summary>
+    private int _autoPlayGen;
+
     /// <summary>Backing field — write through <see cref="SetAutoPlay"/> so
     /// SimRuntime.AdvisorAutoplayArmed (the speed patches' gate) stays in
     /// sync.</summary>
@@ -1468,7 +1481,7 @@ internal sealed class SimAdvisor
                 {
                     // Small grace so the human can see the recommendation
                     // (and press F7 to stop) before it fires.
-                    ScheduleAutoPlay();
+                    ScheduleAutoPlay(isCombat ? AllyWaitMs(advice) : 0);
                 }
                 if (isCombat)
                 {
@@ -2231,7 +2244,33 @@ internal sealed class SimAdvisor
         }
     }
 
-    private void ScheduleAutoPlay()
+    /// <summary>
+    /// The co-op hold for this reply, within the round's budget (0 = none).
+    /// Single-player and older advisors never set it.
+    /// </summary>
+    private int AllyWaitMs(SimAdvice advice)
+    {
+        if (advice.WaitForAllyMs <= 0 || !SimMp.IsMultiplayer)
+        {
+            return 0;
+        }
+        int round = CombatManager.Instance.DebugOnlyGetState()?.RoundNumber ?? 0;
+        if (round != _allyWaitRound)
+        {
+            _allyWaitRound = round;
+            _allyWaitUsedMs = 0;
+        }
+        int ms = Math.Min(advice.WaitForAllyMs, AllyWaitBudgetMs - _allyWaitUsedMs);
+        if (ms <= 0)
+        {
+            return 0;
+        }
+        _allyWaitUsedMs += ms;
+        Logger.Log($"[SimAdvisor] Co-op: holding {_lastBestLabel} up to {ms} ms for the teammate ({advice.Note}).");
+        return ms;
+    }
+
+    private void ScheduleAutoPlay(int extraMs = 0)
     {
         try
         {
@@ -2239,14 +2278,15 @@ internal sealed class SimAdvisor
             {
                 return;
             }
+            int gen = ++_autoPlayGen;
             // 0.6 s is the "human can read it and press F7 to veto" grace.
             // Unattended, there is no reader; 0.15 s still decouples the
             // press from the advice render (same-frame execution was never
             // exercised) without paying half a second per decision.
-            SceneTreeTimer timer = tree.CreateTimer(Unattended ? 0.15 : 0.6);
+            SceneTreeTimer timer = tree.CreateTimer((Unattended ? 0.15 : 0.6) + extraMs / 1000.0);
             timer.Connect(SceneTreeTimer.SignalName.Timeout, Callable.From(() =>
             {
-                if (_autoPlay && SimRuntime.Mode == SimMode.Advisor)
+                if (gen == _autoPlayGen && _autoPlay && SimRuntime.Mode == SimMode.Advisor)
                 {
                     ExecuteBestOnce();
                 }

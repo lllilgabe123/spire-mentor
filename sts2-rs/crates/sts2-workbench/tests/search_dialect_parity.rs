@@ -1,4 +1,6 @@
-//! The interactive surfaces search in the run agent's dialect (GH #758).
+//! The interactive surfaces search in the run agent's base dialect (GH
+//! #758), and the run agent's per-character layer is exactly what it adds
+//! on top (GH #830).
 //!
 //! The real-game advisor, the workbench hint / inspector / coach and SimLab
 //! build their search from `sts2_wire::emit::mcts::RecommendParams`; the run
@@ -9,14 +11,23 @@
 //! `MctsConfig::apply_mode_dialect`; this test fails the next time either
 //! side grows a dialect field the other does not have.
 //!
+//! On top of that base the run agent adds a per-character layer
+//! (`MctsCombatPolicy::search_config`): for Ironclad the gated knobs
+//! `IRONCLAD_SEARCH_KNOBS` (GH #830), which the advisor deliberately does
+//! not take. The tests below pin that the layer is exactly those three
+//! knobs, and that no other character has one.
+//!
 //! It lives here because this is the one crate that depends on both
 //! `sts2-wire` and `sts2-runai`.
 
 use std::path::PathBuf;
 
 use serde_json::{Map, Value};
+use sts2_core::potions::CharacterId;
 use sts2_mcts::{HiddenInfoMode, MctsConfig};
-use sts2_runai::policy::{mcts_config_for, COMBAT_ROLLOUT_DEPTH};
+use sts2_runai::policy::{
+    mcts_config_for, CombatBudget, FirstOptionPolicy, MctsCombatPolicy, COMBAT_ROLLOUT_DEPTH,
+};
 use sts2_wire::emit::mcts::RecommendParams;
 
 /// Every field of the search DIALECT — what a mode deploys, as opposed to
@@ -41,6 +52,9 @@ fn dialect(cfg: &MctsConfig) -> Vec<(&'static str, String)> {
             f(cfg.regularized_pi_temperature),
         ),
         ("use_puct_prior", cfg.use_puct_prior.to_string()),
+        // A loss-band term, not a widening constant, but the advisor and the
+        // run agent must agree on it all the same (the GH #758 class).
+        ("removed_counts_forms", cfg.removed_counts_forms.to_string()),
     ]
 }
 
@@ -81,6 +95,79 @@ fn recommend_params_match_the_run_agent_at_every_budget() {
         let p =
             RecommendParams::from_config(&serde_json::json!({ "sims": sims }), "parity").unwrap();
         assert_same_dialect(&format!("sims={sims}"), &p.mcts_config(), &run_agent(sims));
+    }
+}
+
+/// The budgets the interactive surfaces search at, and around the
+/// `c_puct` steps.
+const BUDGETS: [u32; 9] = [1, 300, 499, 500, 999, 1000, 2000, 4000, 8000];
+
+/// The run agent's own config for a `character` fight at `sims`
+/// (`MctsCombatPolicy::search_config`: the base plus its character layer).
+fn run_agent_for(character: Option<CharacterId>, sims: u32) -> MctsConfig {
+    MctsCombatPolicy::new(FirstOptionPolicy, CombatBudget::eval_cheap(), 0)
+        .search_config(sims, 0, character)
+        .0
+}
+
+/// The interactive search at `sims`.
+fn interactive(sims: u32) -> MctsConfig {
+    RecommendParams::from_config(&serde_json::json!({ "sims": sims }), "parity")
+        .unwrap()
+        .mcts_config()
+}
+
+/// The dialect fields where `a` and `b` differ.
+fn differing(a: &MctsConfig, b: &MctsConfig) -> Vec<&'static str> {
+    dialect(a)
+        .into_iter()
+        .zip(dialect(b))
+        .filter(|((_, x), (_, y))| x != y)
+        .map(|((k, _), _)| k)
+        .collect()
+}
+
+/// GH #830: the Ironclad run agent differs from the interactive search in
+/// exactly the three gated knobs, at every budget. A future advisor
+/// extension (or a fourth run-agent knob) has to update this on purpose.
+#[test]
+fn run_agent_ironclad_differs_from_the_interactive_search_in_exactly_the_bundle_knobs() {
+    for sims in BUDGETS {
+        let mut got = differing(
+            &run_agent_for(Some(CharacterId::Ironclad), sims),
+            &interactive(sims),
+        );
+        got.sort_unstable();
+        assert_eq!(
+            got,
+            [
+                "draw_widening_c",
+                "endturn_widening_c",
+                "removed_counts_forms"
+            ],
+            "sims={sims}"
+        );
+    }
+}
+
+/// Every other character, and a fight without one, searches in the run
+/// agent exactly as the interactive surfaces do.
+#[test]
+fn run_agent_other_characters_match_the_interactive_search() {
+    for sims in BUDGETS {
+        for character in [
+            Some(CharacterId::Silent),
+            Some(CharacterId::Defect),
+            Some(CharacterId::Regent),
+            Some(CharacterId::Necrobinder),
+            None,
+        ] {
+            assert_same_dialect(
+                &format!("{character:?} sims={sims}"),
+                &interactive(sims),
+                &run_agent_for(character, sims),
+            );
+        }
     }
 }
 

@@ -56,6 +56,7 @@ from typing import Any
 
 import realgame_hand_select
 import runtime_paths
+from coop_coordination import apply_ally_wait
 from enemy_labels import enemy_label
 from realgame_adapter import (
     UnsupportedGameVersionError,
@@ -96,6 +97,11 @@ logger = logging.getLogger(__name__)
 #: optimum rises with the budget and `--sims` is chosen independently of this
 #: dict. At every deployed budget the two agree; they diverge only when the
 #: budget is trimmed, which is the case this protects.
+#:
+#: This stays on the BASE dialect on purpose (GH #830). The run agent adds an
+#: Ironclad layer on top (`sts2_runai::policy::IRONCLAD_SEARCH_KNOBS` and a BC
+#: move prior in elite and boss fights) that the advisor does not take, so for
+#: Ironclad "the deployed search" means two things: this one, and the run agent's.
 HONEST_SEARCH = {
     "hidden_info": "beliefdraw",
     "c_puct": 2.5,
@@ -1649,6 +1655,7 @@ def _handle_advice_request(
             )
         elif advice_for == "combat_action":
             advice, cs, call_cfg, rows = compute_combat_advice(state, fight_cfg, sims, mirror)
+            advice = apply_ally_wait(state, advice)
             LAST_COMBAT.put(state_id, cs, call_cfg)
             if args.log_search_tree > 0 and logged_step:
                 try:

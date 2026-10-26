@@ -5,6 +5,14 @@ These are the numbers to quote for the release. The per-level tables in the
 champion provenance files are promotion-gate measurements and are not
 comparable to these or to each other (see "Why not the gate numbers").
 
+> **Measured before the Ironclad search default (2026-10-25, GH #830, commit
+> `a70aa8bec`).** The run agent now plays Ironclad with the forms + combo
+> knobs in every fight and a built-in BC move prior in elite and boss fights.
+> The Ironclad column below predates that change (and the `a10_it700`
+> champion) and was not re-measured. To reproduce it on a newer wheel, set
+> `STS2_RUNAI_MCTS_OVERRIDES=removed_counts_forms=0,endturn_widening_c=5.787,draw_widening_c=2.0`
+> and `STS2_RUNAI_PRIOR_NET=off`. The other four columns are unaffected.
+
 Data, driver and summary script: `logs/2026-10-11-release-winrates/`
 (`summary.csv` per cell, `runs.csv` per run, `run.sh`, `summarize.py`). That
 directory stays in the private monorepo; the public snapshot carries this

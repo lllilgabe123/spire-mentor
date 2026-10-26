@@ -1877,7 +1877,10 @@ pub fn load_wide_leaf_weights(
 /// same policy slot, the prior cannot distinguish them.
 #[derive(Debug, Default)]
 pub struct LearnedPolicyPriorStats {
-    /// Total `Policy::prior` calls served.
+    /// Total `Policy::prior` calls served. The search caches the prior per
+    /// node (GH #830, [`crate::Mcts::with_prior_cache`], on by default), so
+    /// in a search this counts cache misses (about one per decision node),
+    /// not descent reads; so do the rates derived from it.
     evaluations: AtomicU64,
     /// Calls whose legal-mass pre-renormalization sum was below the
     /// `1e-9` threshold and therefore degraded to uniform-on-legal.
@@ -1895,7 +1898,9 @@ pub struct LearnedPolicyPriorStats {
 }
 
 impl LearnedPolicyPriorStats {
-    /// Number of times [`crate::Policy::prior`] was invoked.
+    /// Number of times [`crate::Policy::prior`] was invoked: per node, not
+    /// per read, under the search's prior cache
+    /// ([`crate::Mcts::with_prior_cache`]).
     pub fn evaluations(&self) -> u64 {
         self.evaluations.load(Ordering::Relaxed)
     }

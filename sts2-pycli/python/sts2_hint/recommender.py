@@ -252,6 +252,8 @@ class RecommendConfig:
 
         ``None`` defers to the mode: 2.0 under BeliefDraw (the F2 retune, which
         travels with the c_puct above), else ``None`` = the engine default.
+        That is the base dialect on purpose: the run agent's Ironclad layer
+        (draw widening 4.0 among others, GH #830) is not taken by the hint.
         """
         if self.draw_widening_c is not None:
             return self.draw_widening_c

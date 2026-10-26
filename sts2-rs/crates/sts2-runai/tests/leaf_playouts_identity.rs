@@ -14,6 +14,22 @@
 //! - **A fight.** The first combat of a fresh run, played by
 //!   [`MctsCombatPolicy`] at 1000 sims: every action and the final HP.
 //!
+//! Both pin the BASE dialect. The fixture searches take `search_config`
+//! without a character (`None`), which is Ironclad's search with the off
+//! switch: these are Ironclad states that play Ironclad's playout net, not
+//! the other characters' search. The seed-5 policy fight runs under the two
+//! off switches (`STS2_RUNAI_MCTS_OVERRIDES=<IRONCLAD_SEARCH_KNOBS_OFF>`,
+//! `STS2_RUNAI_PRIOR_NET=off`) and must still match the golden blessed
+//! before the Ironclad run-agent layer existed (GH #830). That golden is
+//! insensitive to the layer: on seed 5 the knobs change no move and no root
+//! visit, so it matches with or without the switches and only shows that the
+//! switches change nothing there. The in-tree proof that the off switches
+//! restore the old search is
+//! `the_off_switches_play_the_pre_layer_search_where_the_knobs_bind` (seed 6,
+//! golden key `policy_fight_seed6_pre_layer`), and
+//! `the_ironclad_default_moves_the_policy_fight` pins that the shipped
+//! default moved that seed-6 fight.
+//!
 //! A comparison of `leaf_playouts: 1` against `MctsConfig::default()` could
 //! not fail: the default IS 1, so a bug in the `k = 1` path would move both
 //! sides at once. The golden is what makes this a test. (The fixture
@@ -113,11 +129,12 @@ fn fixture_states() -> Vec<CombatState> {
     out
 }
 
-/// The deployed search's config for decision `seed` of a 300-sim search,
-/// with `edit` applied on top.
+/// The base-dialect search's config for decision `seed` of a 300-sim
+/// search (`search_config` without a character: no run-agent layer), with
+/// `edit` applied on top.
 fn deployed(seed: u64, edit: impl Fn(&mut MctsConfig)) -> (MctsConfig, LeafEval) {
     let policy = MctsCombatPolicy::new(HeuristicPolicy::new(), CombatBudget::eval_cheap(), 0);
-    let (mut cfg, leaf) = policy.search_config(FIXTURE_SIMS, seed);
+    let (mut cfg, leaf) = policy.search_config(FIXTURE_SIMS, seed, None);
     edit(&mut cfg);
     (cfg, leaf)
 }
@@ -170,11 +187,23 @@ fn searches(edit: impl Fn(&mut MctsConfig) + Copy) -> Value {
 
 /// The first combat of a fresh seed-5 run, played by the deployed
 /// `MctsCombatPolicy` at 1000 sims (its non-combat picks come from the
-/// heuristic meta).
+/// heuristic meta), under whatever `STS2_RUNAI_*` the caller set before.
 fn policy_fight() -> Value {
-    let mut rm = fresh_run(5);
-    let mut policy = MctsCombatPolicy::new(HeuristicPolicy::new(), CombatBudget::eval_cheap(), 5);
+    played_policy_fight().0
+}
+
+/// [`policy_fight`]'s record, and every searched decision's root visit
+/// counts beside it.
+fn played_policy_fight() -> (Value, Value) {
+    played_policy_fight_seed(5)
+}
+
+fn played_policy_fight_seed(seed: i32) -> (Value, Value) {
+    let mut rm = fresh_run(seed);
+    let mut policy =
+        MctsCombatPolicy::new(HeuristicPolicy::new(), CombatBudget::eval_cheap(), seed);
     let mut combat_actions = Vec::new();
+    let mut searches = Vec::new();
     let mut entered = false;
     for _ in 0..2_000 {
         let in_combat = rm.phase() == Phase::Combat;
@@ -188,17 +217,24 @@ fn policy_fight() -> Value {
             .expect("policy picks");
         if in_combat {
             combat_actions.push(format!("{:?}", actions[idx]));
+            if let Some(rec) = policy.last_combat_search() {
+                let visits: Vec<u32> = rec.outcomes.iter().map(|o| o.visits).collect();
+                searches.push(json!(visits));
+            }
         }
         let _ = rm.take_action(actions[idx]);
     }
     assert!(entered, "never entered combat");
     assert!(rm.phase() != Phase::Combat, "fight did not finish");
     let (elite, boss, motif, sims) = policy.combat_budget_spent();
-    json!({
-        "actions": combat_actions,
-        "player_hp": rm.run_state.current_hp,
-        "budget_spent": [elite, boss, motif, sims],
-    })
+    (
+        json!({
+            "actions": combat_actions,
+            "player_hp": rm.run_state.current_hp,
+            "budget_spent": [elite, boss, motif, sims],
+        }),
+        Value::Array(searches),
+    )
 }
 
 fn golden() -> Value {
@@ -251,7 +287,66 @@ fn explicit_one_leaf_playout_matches_the_golden_and_four_do_not() {
     }
 }
 
+/// T9 (GH #830): with both off switches, the Ironclad pilot plays the
+/// golden fight blessed before its run-agent layer existed.
 #[test]
 fn deployed_policy_fight_at_1000_sims_matches_the_pre_knob_golden() {
+    std::env::set_var(
+        "STS2_RUNAI_MCTS_OVERRIDES",
+        sts2_runai::policy::IRONCLAD_SEARCH_KNOBS_OFF,
+    );
+    std::env::set_var("STS2_RUNAI_PRIOR_NET", "off");
     bless_or_compare("policy_fight", &policy_fight());
+}
+
+/// The off switches restore the old search at a seed where the knobs bind
+/// (T9 in full, GH #830). The `policy_fight` seed cannot show it: on seed 5
+/// the knobs do not change a single root visit, so that golden would match
+/// with or without the switches. On seed 6 they do, so this golden pins every
+/// root visit of the fight. Its first bless came from the tree just before
+/// the Ironclad run-agent layer (`451a73fa3`, no env); a later engine change
+/// re-blesses it here, under the two off switches.
+#[test]
+fn the_off_switches_play_the_pre_layer_search_where_the_knobs_bind() {
+    std::env::set_var(
+        "STS2_RUNAI_MCTS_OVERRIDES",
+        sts2_runai::policy::IRONCLAD_SEARCH_KNOBS_OFF,
+    );
+    std::env::set_var("STS2_RUNAI_PRIOR_NET", "off");
+    let (fight, searches) = played_policy_fight_seed(6);
+    bless_or_compare(
+        "policy_fight_seed6_pre_layer",
+        &json!({ "fight": fight, "searches": searches }),
+    );
+}
+
+/// The shipped Ironclad default (no env) reaches the pilot: the same seed-6
+/// fight searches differently from the pre-layer golden above, and its
+/// record is pinned in its own golden `policy_fight_ironclad_default`
+/// (blessed on its own). The record holds the searches because the moves
+/// cannot show it: these first fights are easy, and on seeds 1-16 the knobs
+/// never changed a move of one. Seed 6 is the longest of those whose
+/// searches move. A hallway fight, so the built-in prior (elite and boss
+/// only) is not in play.
+///
+/// The warrant that this play is the gated bundle's is the ship PR's
+/// full-run identity check (GH #830: the default reproduces the gate's
+/// bundle arm and the off switches its control arm, seed for seed).
+#[test]
+fn the_ironclad_default_moves_the_policy_fight() {
+    std::env::remove_var("STS2_RUNAI_MCTS_OVERRIDES");
+    std::env::remove_var("STS2_RUNAI_PRIOR_NET");
+    let (fight, searches) = played_policy_fight_seed(6);
+    if std::env::var_os("STS2_BLESS_LEAF_PLAYOUTS_GOLDEN").is_none() {
+        let pre = &golden()["policy_fight_seed6_pre_layer"];
+        assert!(!pre.is_null(), "golden has no pre-layer seed-6 fight");
+        assert_ne!(
+            &searches, &pre["searches"],
+            "the Ironclad default searched like the pre-layer pilot"
+        );
+    }
+    bless_or_compare(
+        "policy_fight_ironclad_default",
+        &json!({ "fight": fight, "searches": searches }),
+    );
 }

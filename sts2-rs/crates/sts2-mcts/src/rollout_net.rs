@@ -119,6 +119,11 @@
 //! A built-in net is compiled in only when its file exists
 //! (`cfg(rollout_net_<character>)`, set by `build.rs`). A checkout without the
 //! file still builds and plays the heuristic playout.
+//!
+//! The same format also carries a move prior ([`RolloutNetPrior`]): the
+//! built-in Ironclad one (`sts2-rs/data/prior_nets/ironclad.json`,
+//! `cfg(prior_net_ironclad)`, GH #830) is [`builtin_prior_json`]. It is not a
+//! playout net, and [`net_for`] never returns it.
 #![allow(clippy::cast_precision_loss)]
 
 use std::sync::OnceLock;
@@ -2005,6 +2010,33 @@ pub fn builtin_net(character: CharacterId) -> Option<&'static RolloutNet> {
     }
 }
 
+/// The built-in PUCT move-prior net of `character`, as the text of its file
+/// `data/prior_nets/<character>.json` (GH #830), or `None` when there is
+/// none. Only Ironclad has one: a net in the playout-net format, trained by
+/// behaviour cloning on human combat decisions, which [`RolloutNetPrior`]
+/// turns into a move prior. It passed its full-run gate as part of the
+/// Ironclad run-agent bundle, in elite and boss fights at mix 0.5, T 1
+/// (PR #938).
+///
+/// Returns the text, not a parsed net: [`RolloutNet`] is not `Clone` and a
+/// [`RolloutNetPrior`] owns its net, so each caller parses its own copy. The
+/// arm is compiled only under `cfg(prior_net_ironclad)` (set by `build.rs`
+/// when the file exists), and no other character has an arm, so a net
+/// dropped into `data/prior_nets/` for another character switches nothing on.
+/// Nothing here reads the environment; the run agent decides where the prior
+/// applies.
+#[must_use]
+pub fn builtin_prior_json(character: CharacterId) -> Option<&'static str> {
+    match character {
+        #[cfg(prior_net_ironclad)]
+        CharacterId::Ironclad => Some(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../data/prior_nets/ironclad.json"
+        ))),
+        _ => None,
+    }
+}
+
 /// The net a playout of `state` uses: [`global_net`] when `STS2_ROLLOUT_NET`
 /// is set, else the [`builtin_net`] of the fight's character. `None` means
 /// the heuristic playout.
@@ -2310,6 +2342,7 @@ impl RolloutNetPrior {
 
 impl crate::Policy for RolloutNetPrior {
     fn prior(&self, state: &CombatState, actions: &[Action]) -> SmallVec<[f32; 16]> {
+        crate::prior_counts::count_eval();
         let n = actions.len().max(1);
         #[allow(clippy::cast_precision_loss)]
         let uniform = 1.0 / n as f32;
@@ -2344,6 +2377,7 @@ impl crate::Policy for RolloutNetPrior {
             .collect();
         let total: f32 = mass.iter().sum();
         if total.is_nan() || total <= 1e-12 {
+            crate::prior_counts::count_fallback();
             return actions.iter().map(|_| uniform).collect();
         }
         mass.iter()

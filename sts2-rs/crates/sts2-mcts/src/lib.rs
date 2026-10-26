@@ -68,6 +68,7 @@ pub mod hint;
 pub mod lethal_detector;
 pub mod motif;
 pub mod npz;
+pub mod prior_counts;
 pub mod quiescence;
 pub mod rollout_net;
 pub mod tt;
@@ -79,6 +80,8 @@ pub mod values;
 
 #[cfg(test)]
 mod leaf_playouts_tests;
+#[cfg(test)]
+mod prior_tests;
 #[cfg(test)]
 mod tree_reuse_tests;
 
@@ -1056,6 +1059,14 @@ impl MctsConfig {
     /// Before GH #758 the advisor and the hint carried their own copy of
     /// the pre-#467 dialect and searched EndTurn at the engine's 0.5 / 0.4.
     ///
+    /// The run agent adds a per-character layer on top of this base, which
+    /// the interactive surfaces deliberately do not take: for Ironclad, the
+    /// gated knobs `sts2_runai::policy::IRONCLAD_SEARCH_KNOBS` (forms-aware
+    /// loss band, EndTurn widening 23.148, draw widening 4.0) and a built-in
+    /// move prior in elite and boss fights (GH #830). So "the deployed
+    /// search" means two things for Ironclad: this base for the advisor and
+    /// the hint, the layered one for the run agent.
+    ///
     /// BeliefDraw gets, in addition to the engine defaults:
     ///
     /// * `c_puct` = [`belief_draw_c_puct`] of the budget (F2 retune,
@@ -1064,9 +1075,10 @@ impl MctsConfig {
     /// * `endturn_widening_c / alpha` = [`BELIEF_DRAW_ENDTURN_WIDENING`]
     ///   (PR #467);
     /// * `rollout_policy` = [`RolloutPolicyKind::Net`] (GH #777): the
-    ///   built-in playout net for a character that has one, which today is
-    ///   only Ironclad. Every other character keeps the heuristic playout,
-    ///   with identical draws.
+    ///   built-in playout net of the fight's character
+    ///   ([`rollout_net::net_for`]). All five characters ship one; a fight
+    ///   without a net (no character, or a checkout without the file) keeps
+    ///   the heuristic playout, with identical draws.
     ///
     /// Every other mode is left untouched: those retunes were measured only
     /// under BeliefDraw. Call this BEFORE applying a caller's explicit
@@ -1254,6 +1266,14 @@ impl Default for MctsConfig {
 /// only [`UniformPolicy`].
 pub trait Policy {
     /// Return a probability vector aligned with `actions`.
+    ///
+    /// Must be pure in its output: equal arguments give the same vector,
+    /// bit for bit, on every call (no RNG, no state carried between calls
+    /// that moves the output). The search caches it per node
+    /// ([`Mcts::with_prior_cache`]), so an impl that is not pure would make
+    /// the cached search differ from the uncached one. Diagnostic counters
+    /// an impl keeps (e.g. [`LearnedPolicyPriorStats`]) count evaluations,
+    /// which the cache makes per node rather than per read.
     fn prior(&self, state: &CombatState, actions: &[Action]) -> SmallVec<[f32; 16]>;
 }
 
@@ -2427,6 +2447,20 @@ pub struct Mcts<P: Policy = UniformPolicy> {
     /// What [`MctsConfig::net_expand_order`] did. See
     /// [`Self::expand_order_stats`].
     expand_order: ExpandOrderStats,
+    /// The PUCT prior of each decision node the descent has read it at,
+    /// indexed by `NodeId`, with the child count it was computed for (GH
+    /// #830). Touched only under [`MctsConfig::use_puct_prior`]. A node's
+    /// state never changes within a search and [`Policy::prior`] is pure,
+    /// so an entry is the vector a fresh call returns while the node keeps
+    /// that many children. Under `fpu_reduction == None` the descent reads
+    /// the prior only once every edge is expanded, so the count never
+    /// changes after the first read. Cleared wholesale wherever nodes,
+    /// their states or the policy change ([`Self::reroot`],
+    /// [`Self::reroot_observed`], [`Self::with_root_allowed`],
+    /// [`Self::set_policy`]).
+    prior_cache: Vec<Option<(u16, Box<[f32]>)>>,
+    /// [`Self::with_prior_cache`].
+    prior_cache_on: bool,
 }
 
 impl Mcts<UniformPolicy> {
@@ -2468,6 +2502,49 @@ fn prepare_search_root(root_state: &mut CombatState, config: &mut MctsConfig) {
     // (`CHANCE_TT_SIZE_LOG2`) since chance trees are small and the table is
     // reallocated per move in closed-loop play.
     config.use_transposition_table = true;
+}
+
+/// The PUCT prior of decision node `node_id` (`node`, holding `state`): its
+/// [`Mcts::prior_cache`] entry when that was computed for this many
+/// children, else `policy`'s prior over the child edges resolved against
+/// `state`, stored when `cache_on`. Counts the read
+/// ([`prior_counts`]) and nothing else.
+///
+/// Out of line: inlined, it grew the descent enough to slow every search,
+/// the prior-less default included.
+#[inline(never)]
+fn node_prior<P: Policy>(
+    policy: &P,
+    cache: &mut Vec<Option<(u16, Box<[f32]>)>>,
+    cache_on: bool,
+    node_id: NodeId,
+    node: &MctsNode,
+    state: &CombatState,
+) -> SmallVec<[f32; 16]> {
+    prior_counts::count_lookup();
+    let k = node.children.len();
+    let slot = node_id.0 as usize;
+    if cache_on {
+        if let Some(Some((count, p))) = cache.get(slot) {
+            if usize::from(*count) == k {
+                return SmallVec::from_slice(p);
+            }
+        }
+    }
+    // Unresolved (filtered) children get a placeholder EndTurn.
+    let actions: SmallVec<[Action; 16]> = node
+        .children
+        .iter()
+        .map(|(edge, _)| edge.resolve(state).unwrap_or(Action::EndTurn))
+        .collect();
+    let p = policy.prior(state, &actions);
+    if let (true, Ok(count)) = (cache_on, u16::try_from(k)) {
+        if cache.len() <= slot {
+            cache.resize_with(slot + 1, || None);
+        }
+        cache[slot] = Some((count, p.as_slice().into()));
+    }
+    p
 }
 
 /// The child edges a decision node holding `state` expands, in expansion
@@ -2657,7 +2734,29 @@ impl<P: Policy> Mcts<P> {
             dpw_cap_params: [(0, 0), (0, 0), (0, 0)],
             endturn_prefix_guess: 1,
             expand_order: ExpandOrderStats::default(),
+            prior_cache: Vec::new(),
+            prior_cache_on: true,
         }
+    }
+
+    /// Cache the PUCT prior per node (the default) or recompute it on every
+    /// read ([`Self::prior_cache`]). The two searches are identical; the
+    /// switch exists to check that (GH #830) and to measure what the cache
+    /// saves. Not a tuning knob.
+    #[must_use]
+    pub fn with_prior_cache(mut self, on: bool) -> Self {
+        self.prior_cache_on = on;
+        self.prior_cache.clear();
+        self
+    }
+
+    /// Swap the PUCT prior, e.g. on a kept tree ([`Self::reroot_observed`])
+    /// that the next decision searches under its own prior. Clears the
+    /// per-node prior cache, which holds the old prior's vectors. Prefer this
+    /// over assigning [`Self::policy`].
+    pub fn set_policy(&mut self, policy: P) {
+        self.policy = policy;
+        self.prior_cache.clear();
     }
 
     /// Swap the leaf-score function. Default is [`LeafEval::Texel`]
@@ -2697,6 +2796,8 @@ impl<P: Policy> Mcts<P> {
         }
         self.root_allowed = Some(edges);
         self.root_stats.clear();
+        // The root's cached prior was computed over its old children.
+        self.prior_cache.clear();
         self
     }
 
@@ -3825,6 +3926,9 @@ impl<P: Policy> Mcts<P> {
         if let Some(tt) = self.transposition.as_mut() {
             tt.clear();
         }
+        // The prior cache is keyed by the same stale NodeIds, and the new
+        // root holds a new state.
+        self.prior_cache.clear();
         // W4 (`sts2-rs-dm5z`): reroot invalidates the best-sequence
         // tracker — those actions started at the OLD root and have
         // already been (partially) committed by the caller. Reset to
@@ -4156,6 +4260,9 @@ impl<P: Policy> Mcts<P> {
         self.depth_cap_hits = 0;
         self.rollout_leaves = 0;
         self.expand_order = ExpandOrderStats::default();
+        // Renumbered nodes, and a root whose state was replaced (a chance
+        // outcome's hand order and uids can differ from the realized ones).
+        self.prior_cache.clear();
         self.stale_child_edges = 0;
         self.failed_apply = 0;
         self.invalid_target = 0;
@@ -4657,25 +4764,18 @@ impl<P: Policy> Mcts<P> {
                 .realized
                 .as_deref()
                 .expect("decision node has realized state in chance mode");
-            // Resolve each child edge once, for the learned prior's action
-            // list. Skipped entirely when the prior is off, so the default
-            // config does no extra resolve work.
-            let resolved: SmallVec<[Option<Action>; 16]> = if self.config.use_puct_prior {
-                n.children
-                    .iter()
-                    .map(|(edge, _)| edge.resolve(state_ref))
-                    .collect()
-            } else {
-                SmallVec::new()
-            };
+            // The learned prior ([`node_prior`]). Skipped entirely when the
+            // prior is off, so the default config does no extra resolve work
+            // and never touches the cache.
             let puct_priors: Option<SmallVec<[f32; 16]>> = if self.config.use_puct_prior {
-                // Unresolved (filtered) children get a placeholder EndTurn; the
-                // slot is never consumed (their `resolved` entry is `None`).
-                let actions: SmallVec<[Action; 16]> = resolved
-                    .iter()
-                    .map(|r| r.clone().unwrap_or(Action::EndTurn))
-                    .collect();
-                Some(self.policy.prior(state_ref, &actions))
+                Some(node_prior(
+                    &self.policy,
+                    &mut self.prior_cache,
+                    self.prior_cache_on,
+                    node_id,
+                    n,
+                    state_ref,
+                ))
             } else {
                 None
             };

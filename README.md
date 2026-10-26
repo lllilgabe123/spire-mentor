@@ -73,7 +73,10 @@ measured October 2026; 200 runs per cell at A0–A8, 500 at A9–A10):
 | Necrobinder | 66.5% | 62.5% | 44.5% | 13.8% | 5.6% | **51.7%** | +6.8 pp, p = 6e-10, all 11 levels up |
 
 Win rates for every ascension level are in the
-[docs](https://tfriedel.github.io/spire-mentor/#ai).
+[docs](https://tfriedel.github.io/spire-mentor/#ai). These were measured before
+the Ironclad run agent's combat search changed on 25 October 2026 (a gated
+layer of search settings plus a move prior in elite and boss fights); the
+Ironclad row has not been re-measured since.
 
 ## The browser workbench
 
