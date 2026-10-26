@@ -82,6 +82,8 @@ def plan_turn(
                 line.append(f"{step}. {name} (drawn)")
             before = [str(h.get("id")) for h in hand]
             c.apply(action)
+            if tracking and i >= len(track):
+                tracking = False  # a card the tracker never saw (made mid-turn)
             if tracking:
                 track.pop(i)
                 before.pop(i)
@@ -108,25 +110,38 @@ def plan_turn(
     return order, line
 
 
-def rage_first(order: list[dict[str, int]], line: list[str], state: dict[str, Any]) -> None:
-    """Rage (0 cost, Block per Attack after it this turn) goes before the
-    plan's first Attack; the search sometimes ranks it after them by more
-    than its noise. Edits ``order`` and ``line`` in place."""
+#: Free cards that pay off on each card played after them this turn, and
+#: whether only Attacks benefit (Rage: Block per Attack; Monologue:
+#: Strength per card, used by Attacks; Oblivion: Doom per card). They go
+#: before the plan's first card they improve; the search sometimes ranks
+#: them later by more than its noise, or not at all once the fight is won.
+#: Deliberately this short: a data-driven list of 46 "setup" cards (every
+#: Vulnerable, Strength, per-play power), moved first and checked on a copy
+#: of the fight, changed 21 of 250 logged first moves: 5 better, 8 worse.
+SETUP_FIRST = {"Rage": True, "Monologue": True, "Oblivion": False}
+
+
+def setup_first(order: list[dict[str, int]], line: list[str], state: dict[str, Any]) -> None:
+    """Move each SETUP_FIRST card before the first card it improves.
+    Edits ``order`` and ``line`` in place."""
     cards = [*(state.get("hand") or []), *((state.get("draw_pile") or {}).get("cards") or [])]
     types = {str(c.get("name")): str(c.get("type")) for c in cards if isinstance(c, dict)}
-    steps = [s for s in line if s[:1].isdigit()]
-    names = [s.split(". ", 1)[1].removesuffix(" (drawn)") for s in steps]
-    if "Rage" not in names:
-        return
-    r = names.index("Rage")
-    first_attack = next((i for i, n in enumerate(names[:r]) if types.get(n) == "Attack"), None)
-    if first_attack is None:
-        return
-    moved = [*steps[:first_attack], steps[r], *steps[first_attack:r], *steps[r + 1:]]
-    tail = [s for s in line if not s[:1].isdigit()]
-    line[:] = [f"{i}. {s.split('. ', 1)[1]}" for i, s in enumerate(moved, 1)] + tail
-    by_step = {o["step"]: o for o in order}
-    new_pos = {old: new for new, old in enumerate(
-        [*range(1, first_attack + 1), r + 1, *range(first_attack + 1, r + 1), *range(r + 2, len(steps) + 1)], 1)}
-    for step, o in by_step.items():
-        o["step"] = new_pos.get(step, step)
+    for setup, attacks_only in SETUP_FIRST.items():
+        steps = [s for s in line if s[:1].isdigit()]
+        names = [s.split(". ", 1)[1].removesuffix(" (drawn)") for s in steps]
+        base = [n.rstrip("+") for n in names]
+        if setup not in base:
+            continue
+        r = base.index(setup)
+        first = next((i for i, n in enumerate(names[:r])
+                      if base[i] not in SETUP_FIRST and (not attacks_only or types.get(n) == "Attack")), None)
+        if first is None:
+            continue
+        moved = [*steps[:first], steps[r], *steps[first:r], *steps[r + 1:]]
+        tail = [s for s in line if not s[:1].isdigit()]
+        line[:] = [f"{i}. {s.split('. ', 1)[1]}" for i, s in enumerate(moved, 1)] + tail
+        by_step = {o["step"]: o for o in order}
+        new_pos = {old: new for new, old in enumerate(
+            [*range(1, first + 1), r + 1, *range(first + 1, r + 1), *range(r + 2, len(steps) + 1)], 1)}
+        for step, o in by_step.items():
+            o["step"] = new_pos.get(step, step)

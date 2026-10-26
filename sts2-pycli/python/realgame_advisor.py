@@ -566,7 +566,7 @@ def compute_combat_advice(
                 sims=max(400, sims // 10), seed=call_cfg.seed or 1, hidden_info=call_cfg.hidden_info,
             )
             if order:
-                realgame_turnplan.rage_first(order, line, state)
+                realgame_turnplan.setup_first(order, line, state)
                 advice["plan_order"] = order
                 advice["pv"] = line
         except Exception as exc:

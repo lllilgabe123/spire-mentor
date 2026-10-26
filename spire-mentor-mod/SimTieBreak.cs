@@ -65,7 +65,7 @@ internal static class SimTieBreak
             }
             IReadOnlyList<CardModel> hand = PileType.Hand.GetPile(me).Cards;
             if (SkipEmptyXCost(advice, best, hand, me) || HoldIdleBuffPotion(advice, best, hand, me) ||
-                RageBeforeAttack(advice, best, hand))
+                SetupBeforePlays(advice, best, hand))
             {
                 return;
             }
@@ -156,34 +156,60 @@ internal static class SimTieBreak
         }
     }
 
+    /// <summary>0-cost cards whose effect fires on every card played after
+    /// them this turn, and whether only Attacks benefit: Rage (Block per
+    /// Attack), Monologue (Strength per card, which only Attacks use),
+    /// Oblivion (Doom per card on its target; also turns on Death's Door's
+    /// extra Block).</summary>
+    private static readonly Dictionary<string, bool> PlayFirst = new()
+    {
+        ["RAGE"] = true, ["MONOLOGUE"] = true, ["OBLIVION"] = false,
+    };
+
     /// <summary>
-    /// Rage costs 0 and gives Block for every Attack played after it this
-    /// turn, so whenever the pick is an Attack and Rage is playable, Rage
-    /// first is never worse. Not a close call: a live game still showed Rage
-    /// played after the Attacks when an Attack out-scored it by more than
-    /// TieQ (the search's noise). Returns true when it changed the pick.
+    /// A free "this turn, whenever you play a card" card goes before the cards
+    /// it improves: whenever the pick is another card (an Attack, for Rage and
+    /// Monologue) and such a card is playable, playing it first is never
+    /// worse. Not a close call: live, Rage stayed last when an Attack
+    /// out-scored it by more than TieQ, and Oblivion was not first at 100% to
+    /// win, where every order scores the same. Among targets (Oblivion) the
+    /// search's best is kept. Returns true when it changed the pick.
     /// </summary>
-    private static bool RageBeforeAttack(SimAdvice advice, SimAdviceOption best, IReadOnlyList<CardModel> hand)
+    private static bool SetupBeforePlays(SimAdvice advice, SimAdviceOption best, IReadOnlyList<CardModel> hand)
     {
         if (advice.Best?.Action != "play" || best.CardIndex is not int bi || bi < 0 || bi >= hand.Count ||
-            hand[bi].Type != CardType.Attack)
+            PlayFirst.ContainsKey(hand[bi].Id.Entry))
         {
             return false;
         }
-        SimAdviceOption? rage = advice.Options.FirstOrDefault(o =>
-            o.CardIndex is int i && i >= 0 && i < hand.Count && hand[i].Id.Entry == "RAGE");
-        if (rage == null)
+        bool bestIsAttack = hand[bi].Type == CardType.Attack;
+        SimAdviceOption? setup = advice.Options
+            .Where(o => o.CardIndex is int i && i >= 0 && i < hand.Count &&
+                        PlayFirst.TryGetValue(hand[i].Id.Entry, out bool attacksOnly) && (!attacksOnly || bestIsAttack))
+            .OrderByDescending(o => o.Q ?? double.MinValue)
+            .FirstOrDefault();
+        if (setup == null)
         {
             return false;
         }
+        string name = CardName(setup.Label);
         best.IsBest = false;
-        rage.IsBest = true;
-        advice.Best = new SimBestAction { Action = "play", CardIndex = rage.CardIndex!.Value, TargetIndex = -1, Label = rage.Label };
+        setup.IsBest = true;
+        advice.Best = new SimBestAction
+        {
+            Action = "play", CardIndex = setup.CardIndex!.Value, TargetIndex = setup.TargetIndex ?? -1, Label = setup.Label,
+        };
         advice.Pv.Clear();
-        advice.Pv.Add(rage.Label);
-        MoveToFront(advice.PlanStep, rage.CardIndex!.Value);
-        advice.TieNote = $"Rage first: every Attack after it this turn gives Block ({CardName(best.Label)} next)";
-        Logger.Log($"[SimTieBreak] Rage before {best.Label} (Q {rage.Q:F4} vs {best.Q:F4}).");
+        advice.Pv.Add(setup.Label);
+        MoveToFront(advice.PlanStep, setup.CardIndex!.Value);
+        string what = hand[setup.CardIndex!.Value].Id.Entry switch
+        {
+            "RAGE" => "every Attack after it this turn gives Block",
+            "MONOLOGUE" => "every card after it this turn adds Strength for your Attacks",
+            _ => "every card after it this turn adds Doom",
+        };
+        advice.TieNote = $"{name} first: {what} ({CardName(best.Label)} next)";
+        Logger.Log($"[SimTieBreak] {name} before {best.Label} (Q {setup.Q:F4} vs {best.Q:F4}).");
         return true;
     }
 
@@ -355,13 +381,15 @@ internal static class SimTieBreak
             return 1;
         }
         // Hand setup: Armaments upgrades cards in hand, Enlightenment makes
-        // them cheaper, Rage gives Block per Attack played this turn -- all
+        // them cheaper, Rage / Monologue / Oblivion / Strangle pay off on each
+        // card played after them this turn -- all
         // worth more before the cards they improve are played, so each counts
         // only while the hand holds such a card.
         string id = card.Id.Entry;
         if (id == "ENLIGHTENMENT" ||
             (id == "ARMAMENTS" && hand.Any(c => !ReferenceEquals(c, card) && c.IsUpgradable)) ||
-            (id == "RAGE" && hand.Any(c => !ReferenceEquals(c, card) && c.Type == CardType.Attack)))
+            (id is "RAGE" or "MONOLOGUE" && hand.Any(c => !ReferenceEquals(c, card) && c.Type == CardType.Attack)) ||
+            (id is "OBLIVION" or "STRANGLE" or "MAD_SCIENCE" && hand.Count > 1))
         {
             return 1;
         }
