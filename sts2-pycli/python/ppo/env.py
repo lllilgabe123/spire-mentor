@@ -51,6 +51,7 @@ surface can never arrive as a list of blank tokens.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -309,6 +310,11 @@ class Terminal:
     decisions: int
 
 
+def _start_cards() -> list[str]:
+    """Card ids from STS2_START_CARDS (comma-separated), else none."""
+    return [c.strip() for c in os.environ.get("STS2_START_CARDS", "").split(",") if c.strip()]
+
+
 @dataclass
 class PpoRunEnv:
     """One full run, decision-stepped. Construct fresh per episode."""
@@ -400,6 +406,11 @@ class PpoRunEnv:
             # training env and the measurement arm cannot silently disagree.
             act1=self.act1,
         )
+        # Personal build: STS2_START_CARDS="BIG_BANG,BULWARK" adds those cards
+        # to the starting deck (the "what if I start with these" test,
+        # personal/analysis/start_runs.sh). Unset: nothing changes.
+        for card in _start_cards():
+            self.rm.force_add_card(card)
         # Combat agent. Policy mode (expert=False) uses the combat-only
         # MctsCombatAgent (combat MCTS only — every meta decision is yielded
         # to the caller; GH #220). It builds the same combat cell as the
