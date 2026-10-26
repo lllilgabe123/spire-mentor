@@ -83,6 +83,8 @@ internal static class SimTieBreak
                 .Where(o => o.Q != null && best.Q.Value - o.Q.Value <= margin &&
                             Math.Abs((o.PWin ?? 0) - (best.PWin ?? 0)) <= TieWin)
                 .ToList();
+            // Distinct moves: "Strike → A" and "Strike → B" are one card.
+            List<string> allNames = tied.Select(o => CardName(o.Label)).Distinct().ToList();
             if (endTurnBest)
             {
                 // Against "End turn" only cards that cannot hurt you: attacks,
@@ -90,10 +92,17 @@ internal static class SimTieBreak
                 // which the replay showed the AI rightly holding back.
                 tied = tied.Where(o => ReferenceEquals(o, best) || Harmless(o, hand)).ToList();
             }
-            // Distinct moves: "Strike → A" and "Strike → B" are one card.
             List<string> names = tied.Select(o => CardName(o.Label)).Distinct().ToList();
             if (names.Count < 2)
             {
+                // Nothing to move, but still a tie worth saying: live, End turn
+                // led Defend by 0.002 and Grave Warden by 0.009 at 99% to win,
+                // and the bare ranking read as "End turn is clearly right".
+                if (allNames.Count >= 2 && advice.TieNote == null)
+                {
+                    advice.TieNote = "about equal: " + string.Join(" ≈ ", allNames.Take(4)) +
+                                     (allNames.Count > 4 ? " ≈ …" : "") + " (any of these is fine)";
+                }
                 return;
             }
 
