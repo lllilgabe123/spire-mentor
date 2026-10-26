@@ -62,6 +62,7 @@ import realgame_hand_select
 import realgame_proguide
 import realgame_topup
 import realgame_turnplan
+import realgame_wishlist
 import runtime_paths
 from enemy_labels import enemy_label
 from realgame_adapter import (
@@ -1086,6 +1087,11 @@ def compute_screen_advice(
             advice["forecast_lines"] = combo + list(advice.get("forecast_lines") or [])
     except Exception as exc:
         logger.warning("combo watch failed: %s", exc)
+    # Personal build: the cards worth hunting for this deck (realgame_wishlist).
+    if advice_for in ("shop", "map_select"):
+        wish = realgame_wishlist.lines(state, character, policy)
+        if wish:
+            advice["forecast_lines"] = wish + list(advice.get("forecast_lines") or [])
 
     if advice_for == "map_select":
         path = _project_map_path(state, policy, best_i, hp_table=_projection_hp_table())
