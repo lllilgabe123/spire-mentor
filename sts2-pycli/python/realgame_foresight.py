@@ -190,6 +190,17 @@ def forecast(sts2_rs: Any, cs: Any, wire: dict[str, Any], names: list[str]) -> d
         lines.append(f"Ending turn now: -{hp0 - hp1} HP ({hp0} -> {hp1}).")
     else:
         lines.append("Ending turn now: you take no damage.")
+    # Necrobinder: Osty absorbs every point of attack damage your Block does
+    # not, so "you take no damage" can mean Osty takes it all. Say so: extra
+    # Block (a Fortifier on 6 Block before a 9x3 beam) can be the move that
+    # keeps him alive although your own HP would not change.
+    o0, o1 = now["player"].get("osty") or {}, s["player"].get("osty") or {}
+    if o0.get("alive") and int(o0.get("hp") or 0) > 1:
+        before, after = int(o0["hp"]), int(o1.get("hp") or 0) if o1.get("alive") else 0
+        if after <= 0:
+            lines[-1] += f" Osty dies ({before} HP): Block soaks hits before he does."
+        elif after < before:
+            lines[-1] += f" Osty takes {before - after} ({before} -> {after}): Block soaks hits before he does."
 
     # Enemies' plans for the turns after the one the game already shows. The
     # look-ahead has you do nothing, so moves that depend on their HP can
