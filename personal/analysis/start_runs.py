@@ -1,4 +1,4 @@
-"""Full-run test of starting packages: each package's cards are added to the
+"""Full-run test of starting packages ("expert" = Baalorlord S-tier, Jorbs S/A where possible): each package's cards are added to the
 starter deck (RunManager.force_add_card), then the character's shipped AI
 (champions.toml ONNX via sts2_rs.PpoRunAgent: PPO net for run decisions,
 eval-cheap MCTS combat) plays whole A10 runs. Same seeds for every package
@@ -18,6 +18,7 @@ PACKAGES = {
         "pro-favored": ["OFFERING", "COLOSSUS", "CRUELTY", "BATTLE_TRANCE"],
         "mix A": ["DOMINATE", "FIGHT_ME", "COLOSSUS", "BATTLE_TRANCE"],
         "mix B": ["OFFERING", "FIGHT_ME", "OUTRAGE", "COLOSSUS"],
+        "expert": ["DOMINATE", "COLOSSUS", "POMMEL_STRIKE", "EVIL_EYE"],
     },
     "Silent": {
         "baseline": [],
@@ -25,6 +26,7 @@ PACKAGES = {
         "pro-favored": ["ADRENALINE", "FOOTWORK", "ACROBATICS", "EXPOSE"],
         "mix A": ["AFTERIMAGE", "BOUNCING_FLASK", "NOXIOUS_FUMES", "FOOTWORK"],
         "mix B": ["ADRENALINE", "BOUNCING_FLASK", "NOXIOUS_FUMES", "FOOTWORK"],
+        "expert": ["ADRENALINE", "ACROBATICS", "PREPARED", "CALCULATED_GAMBLE"],
     },
     "Defect": {
         "baseline": [],
@@ -32,6 +34,7 @@ PACKAGES = {
         "pro-favored": ["ECHO_FORM", "GLACIER", "CAPACITOR", "OVERCLOCK"],
         "mix A": ["DEFRAGMENT", "DARKNESS", "GLACIER", "BALL_LIGHTNING"],
         "mix B": ["ECHO_FORM", "DARKNESS", "GLACIER", "LIGHTNING_ROD"],
+        "expert": ["MODDED", "GLACIER", "HOLOGRAM", "OVERCLOCK"],
     },
     "Necrobinder": {
         "baseline": [],
@@ -39,6 +42,7 @@ PACKAGES = {
         "pro-favored": ["DEMESNE", "ENFEEBLING_TOUCH", "DEBILITATE", "LETHALITY"],
         "mix A": ["CALL_OF_THE_VOID", "ENFEEBLING_TOUCH", "BONE_SHARDS", "DEBILITATE"],
         "mix B": ["DEMESNE", "BONE_SHARDS", "REAP", "ENFEEBLING_TOUCH"],
+        "expert": ["DEMESNE", "BORROWED_TIME", "SLEIGHT_OF_FLESH", "DEATHS_DOOR"],
     },
     "Regent": {
         "baseline": [],
@@ -46,6 +50,7 @@ PACKAGES = {
         "pro-favored": ["BIG_BANG", "BULWARK", "REFLECT", "ORBIT"],
         "mix A": ["VOID_FORM", "BULWARK", "REFLECT", "CHARGE"],
         "mix B": ["BIG_BANG", "BULWARK", "CONVERGENCE", "CHARGE"],
+        "expert": ["BIG_BANG", "CHARGE", "REFLECT", "BULWARK"],
     },
 }
 

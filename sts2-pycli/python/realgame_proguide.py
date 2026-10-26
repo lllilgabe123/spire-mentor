@@ -128,6 +128,34 @@ def _builds(character: str, deck: list[dict[str, Any]]) -> dict[str, int]:
     return out
 
 
+_EXPERTS: dict[str, Any] | None = None
+
+
+def expert_tiers(character: str, card_id: str) -> str:
+    """"Baalorlord S, Jorbs A" for a card from the experts' beta tier lists
+    on sts2.untapped.gg (``expert_tiers.json.gz``, made by
+    personal/tools/expert_tiers.py; tier letters only). "" when unlisted."""
+    global _EXPERTS
+    if _EXPERTS is None:
+        _EXPERTS = {}
+        d = _data_dir()
+        for path in (d / "expert_tiers.json.gz", d / "expert_tiers.json"):
+            try:
+                opener = gzip.open if path.suffix == ".gz" else open
+                with opener(path, "rt", encoding="utf-8") as f:
+                    _EXPERTS = json.load(f)
+                break
+            except OSError:
+                continue
+    cid = card_id.upper().removeprefix("CARD.")
+    bits = []
+    for expert, lists in _EXPERTS.items():
+        row = (lists.get(character.lower()) or {}).get(cid) or (lists.get("colorless") or {}).get(cid)
+        if row and len(row[0]) == 1:
+            bits.append(f"{expert.title()} {row[0]}")
+    return ", ".join(bits)
+
+
 def card_reward_lines(state: dict[str, Any], character: str) -> list[str]:
     character = character.lower()
     table = _table(character)
@@ -148,6 +176,9 @@ def card_reward_lines(state: dict[str, Any], character: str) -> list[str]:
         name = card.get("name") or card.get("id") or "?"
         key = _norm(card.get("id") or name)
         bits = []
+        tiers = expert_tiers(character, str(card.get("id") or ""))
+        if tiers:
+            bits.append(tiers)
         row = table.get(key)
         if row:
             act_pick = row[1 + min(act, 3)]
