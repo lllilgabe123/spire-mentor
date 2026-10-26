@@ -1071,6 +1071,9 @@ def compute_screen_advice(
         if path:
             advice["path"] = path
             advice["note"] += _route_note(path)
+            danger = _low_hp_elite_line(state, path)
+            if danger:
+                advice["forecast_lines"] = [danger, *(advice.get("forecast_lines") or [])]
         # Personal build: how this deck does against the act's boss(es),
         # simulated on a background thread (realgame_bosscheck).
         try:
@@ -1119,6 +1122,35 @@ def _projection_hp_table() -> dict[str, Any] | None:
     except Exception as exc:  # never let a drawing cost the advice
         logger.debug("projection tables unavailable; route will not decay HP: %s", exc)
         return None
+
+
+#: Below this share of max HP an Elite is a run-ender for this player: in
+#: their logged runs every Elite entered under 40% HP killed the run (3 of
+#: 3), against 1 of 10 at 40-60% and 1 of 46 above 60% (2026-10-25 review).
+LOW_HP_ELITE = 0.4
+
+
+def _low_hp_elite_line(state: dict[str, Any], path: list[dict[str, Any]]) -> str | None:
+    """Personal build: a warning when the route walks into an Elite under
+    LOW_HP_ELITE of max HP (the route's own HP forecast on arrival, else HP
+    now). Display only; the route is unchanged."""
+    p = state.get("player") or {}
+    max_hp = p.get("max_hp") or 0
+    if not max_hp:
+        return None
+    hp = p.get("hp") or 0
+    for node in path:
+        if str(node.get("type") or "").lower() != "elite":
+            continue
+        arrive = node.get("hp")
+        arrive = hp if arrive is None else arrive
+        if arrive / max_hp < LOW_HP_ELITE:
+            hops = node.get("hop", 0) + 1
+            return (f"DANGER: this route reaches an Elite in {hops} floor{'s' if hops != 1 else ''} at about "
+                    f"{arrive:.0f}/{max_hp} HP. Every Elite you entered under 40% HP ended your run (3 of 3). "
+                    "Rest first or pick a path without that Elite")
+        break  # only the next Elite on the route matters
+    return None
 
 
 def _route_note(path: list[dict[str, Any]]) -> str:
