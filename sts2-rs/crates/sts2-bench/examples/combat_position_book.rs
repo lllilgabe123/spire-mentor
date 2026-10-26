@@ -741,7 +741,7 @@ fn run_oracle_tasks<'a>(
             let cfg = oracle_config(oracle_sims, oracle_seed(k));
             let r = par_search(state_of(p).clone(), cfg, w);
             let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            if n % every == 0 || n == tasks.len() {
+            if n.is_multiple_of(every) || n == tasks.len() {
                 eprintln!(
                     "[book] oracle {n}/{} tasks ({:.1}%) after {:.0}s",
                     tasks.len(),
@@ -1390,7 +1390,7 @@ fn cmd_hard(args: &[String]) -> std::io::Result<()> {
                 }
             }
             let k = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            if k % 25 == 0 {
+            if k.is_multiple_of(25) {
                 eprintln!("[hard] screen {k} done  {:.0}s", t0.elapsed().as_secs_f64());
             }
             #[allow(clippy::cast_possible_truncation)]

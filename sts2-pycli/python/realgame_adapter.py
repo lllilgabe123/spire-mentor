@@ -699,6 +699,22 @@ def to_headless_combat_play(state: dict[str, Any]) -> dict[str, Any]:
     if isinstance(slot_count, int) and not isinstance(slot_count, bool):
         out["player"]["potion_slots"] = slot_count
 
+    # Co-op teammates (PROTOCOL.md ``allies``), in the mod's order: an
+    # ``AnyAlly`` card lands on the first living one, in the engine and in
+    # the mod's autoplay alike. Only what such a card reads or writes goes
+    # on: HP (alive or not) and block.
+    allies = [
+        {
+            "hp": int(a.get("hp") or 0),
+            "max_hp": int(a.get("max_hp") or 0),
+            "block": int(a.get("block") or 0),
+        }
+        for a in state.get("allies") or []
+        if isinstance(a, dict)
+    ]
+    if allies:
+        out["allies"] = allies
+
     # The run's RNG position, from the bridge envelope
     # (``SimStateExtractor.ApplyEnvelope``): the once-hashed master seed every
     # per-stream salt mixes into, plus each stream's read count.

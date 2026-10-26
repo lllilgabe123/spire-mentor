@@ -82,7 +82,7 @@ benchmark therefore measures the 8-thread advisor on two whole L3 domains
   anyway and records the flag. Nothing else may run during the window,
   including builds and the C# `prep`.
 - About 13 GB free under `BENCH_DIR`.
-- Toolchains: Rust 1.96.0 (pinned by `sts2-rs/rust-toolchain.toml`; sts2core is
+- Toolchains: Rust 1.99.1 (pinned by `sts2-rs/rust-toolchain.toml`; sts2core is
   built with it too), rustc 1.97.1 for sansb/sts2-sim (pinned by its own
   `rust-toolchain.toml`, installed by rustup on first use), a .NET 9 SDK for
   the C# block, Node with `npm ci` done in `sts2-pycli/web` (Playwright and

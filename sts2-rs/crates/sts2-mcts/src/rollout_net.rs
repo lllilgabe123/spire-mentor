@@ -1663,15 +1663,10 @@ struct StepQuery {
 /// `a · b` over eight independent partial sums, which LLVM vectorizes; a
 /// single running sum is a serial chain of float adds it may not reorder.
 fn dot(a: &[f32], b: &[f32]) -> f32 {
-    let (ca, cb) = (a.chunks_exact(8), b.chunks_exact(8));
-    let tail = ca
-        .remainder()
-        .iter()
-        .zip(cb.remainder())
-        .map(|(x, y)| x * y)
-        .sum::<f32>();
+    let ((ca, ra), (cb, rb)) = (a.as_chunks::<8>(), b.as_chunks::<8>());
+    let tail = ra.iter().zip(rb).map(|(x, y)| x * y).sum::<f32>();
     let mut acc = [0.0f32; 8];
-    for (xa, xb) in ca.zip(cb) {
+    for (xa, xb) in ca.iter().zip(cb) {
         for ((s, x), y) in acc.iter_mut().zip(xa).zip(xb) {
             *s += x * y;
         }

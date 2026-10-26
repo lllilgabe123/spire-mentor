@@ -1508,19 +1508,26 @@ fn body_slam_damage_equals_block() {
     assert_eq!(hp0 - state.creatures[0].current_hp, 12);
 }
 
-/// DemonicShield: HP loss 1, then gain block equal to player's CURRENT
-/// block (C# CalculatedBlock multiplier=`Owner.Creature.Block`).
-/// Bead `sts2-rs-xldkg`.
+/// DemonicShield: HP loss 1, then the TARGET teammate gains block equal to
+/// the player's CURRENT block (C# CalculatedBlock multiplier =
+/// `Owner.Creature.Block`, granted to `cardPlay.Target`). Bead
+/// `sts2-rs-xldkg`; the old self-collapse doubled the player's own block.
 #[test]
-fn demonic_shield_doubles_player_block() {
+fn demonic_shield_gives_the_players_block_to_the_teammate() {
     install_pool();
     let (mut state, _enemy) = fresh_state_with_enemy(200);
     let _ = push_play_card(&mut state, CardId::DemonicShield, 0, 0);
+    state.allies.push(sts2_core::PlayerCombatState {
+        current_hp: 70,
+        max_hp: 70,
+        ..sts2_core::PlayerCombatState::default()
+    });
     state.player.block = 8;
     let hp0 = state.player.current_hp;
     let _ = dispatch(&mut state, CardId::DemonicShield, None);
     assert_eq!(state.player.current_hp, hp0 - 1, "HP loss 1");
-    assert_eq!(state.player.block, 16, "block doubled (8 + 8)");
+    assert_eq!(state.player.block, 8, "the player keeps their block");
+    assert_eq!(state.allies[0].block, 8, "the teammate gets a copy");
 }
 
 /// DemonicShield with zero starting block grants zero block (the

@@ -1256,6 +1256,14 @@ def translate(
     game_version = _wire_game_version(state)
     if game_version is not None:
         out["game_version"] = game_version
+    # Co-op teammates (``$.allies``): omitted when solo, so a single-player
+    # board yields the wire it always did.
+    allies = state.get("allies")
+    if allies:
+        out["allies"] = [
+            {"hp": int(a["hp"]), "max_hp": int(a["max_hp"]), "block": int(a["block"])}
+            for a in allies
+        ]
     return out
 
 

@@ -250,7 +250,7 @@ impl<P: RunPolicy> RunPolicy for ProxyStudyPolicy<P> {
                 let key = step ^ (u64::from(rm.seed as u32) << 24);
                 let plan = EncounterPlan::for_decision(rm, key);
                 if plan.elite.is_some() || plan.boss.is_some() {
-                    let take = self.eligible_seen % self.snapshot_every == 0;
+                    let take = self.eligible_seen.is_multiple_of(self.snapshot_every);
                     self.eligible_seen += 1;
                     if take {
                         let proxies = eval_battery(rm, step, &self.budget, &self.cache);

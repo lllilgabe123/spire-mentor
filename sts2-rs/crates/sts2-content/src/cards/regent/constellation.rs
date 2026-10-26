@@ -7,13 +7,14 @@ use super::prelude::*;
 /// [decompiled C# omitted — see the cited path]
 ///
 /// `AnyAlly` — unplayable in single-player (`card_effects::card_is_any_ally`);
-/// the body below is the target-collapsed effect for completeness.
+/// in co-op the effect lands on the teammate (`any_ally_card_target`).
 pub(crate) fn play_constellation(state: &mut CombatState, _t: Option<CreatureUid>) -> EffectResult {
-    // v0.111.0: target draws 1, gains 1 energy and 9 (upg 12) Block
-    // (decomp Constellation.cs:31-38).
-    let _ = sts2_core::cards::draw_via_state(state, 1);
-    state.gain_energy(1);
-    let _ = gain_block_player(state, current_block(state));
+    // v0.111.0: the TARGET teammate draws 1, gains 1 energy and 9 (upg 12)
+    // Block (decomp Constellation.cs:31-38). Their draw and energy are not
+    // simulated; their block is, so a later Mimic reads it.
+    if let Some(ally) = state.any_ally_card_target() {
+        let _ = sts2_core::card_effects::gain_block_ally(state, ally, current_block(state));
+    }
     EffectResult::Resolved
 }
 

@@ -352,6 +352,12 @@ fn hash_scalars<H: Hasher>(state: &CombatState, h: &mut H) {
         0x0Eu8.hash(h);
         state.game_version.hash(h);
     }
+    // Co-op: whether the next enemy turn still lands on the teammates. Folded
+    // in only when set so every solo digest is byte-identical.
+    if let Some(round) = state.ally_threat_round {
+        0x2Eu8.hash(h);
+        round.hash(h);
+    }
 }
 
 /// Player / ally / enemy / card-arena / potion / relic / pending sections.

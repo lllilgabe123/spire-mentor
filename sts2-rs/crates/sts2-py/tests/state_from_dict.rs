@@ -1077,7 +1077,7 @@ fn state_from_dict_round_trips_relic_melt_state() {
             !live.relics[0].is_melted,
             "absent `is_melted` defaults to false"
         );
-        assert!(sts2_core::hooks::iter_relic_listeners(&live).count() == 1);
+        assert_eq!(sts2_core::hooks::iter_relic_listeners(&live).count(), 1);
 
         let melted = build(true);
         assert_eq!(

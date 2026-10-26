@@ -725,7 +725,7 @@ pub fn purchase_card_removal(
     // content-registered predicate; absent registry (pure-core tests)
     // everything is removable.
     let removable = crate::lookup_card_removable();
-    if !removable.map_or(true, |f| f(&run_state.master_deck[deck_idx])) {
+    if !removable.is_none_or(|f| f(&run_state.master_deck[deck_idx])) {
         return PurchaseCardRemovalResult::NotRemovable;
     }
     let gold_before = run_state.gold;

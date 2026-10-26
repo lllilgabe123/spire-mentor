@@ -506,7 +506,7 @@ fn repoint_references(cards: &Path, character: &str, plan: &Plan) {
             .flatten()
         {
             let path = entry.path();
-            if !path.extension().is_some_and(|e| e == "rs") {
+            if path.extension().is_none_or(|e| e != "rs") {
                 continue;
             }
             if path.file_name().is_some_and(|n| n == "prelude.rs") {

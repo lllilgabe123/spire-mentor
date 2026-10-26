@@ -48,6 +48,10 @@ const INLINE_HANDLED: &[RelicId] = &[
     RelicId::SpikedGauntlets,
     RelicId::UndyingSigil,
     RelicId::VitruvianMinion,
+    // GH #946: the +1 max energy is a `relic_modify_max_energy` arm in
+    // `hooks.rs`; the turn-1 auto-play (`AfterAutoPrePlayPhaseEnteredLate`) is
+    // `whispering_earring_auto_play` in `combat_loop.rs`'s turn-start tail.
+    // Until #946 only the energy half existed.
     RelicId::WhisperingEarring,
     // v0.107.1 FishingRod (bead `sts2-rs-v0107-content-port-wb8lk.6`):
     // every-3rd-normal-combat deck upgrade is implemented inline in

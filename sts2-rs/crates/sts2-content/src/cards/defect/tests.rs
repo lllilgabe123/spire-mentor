@@ -1484,10 +1484,12 @@ fn apbkr_buffer_scales_with_upgrade() {
     assert_player_power(&s_up, PowerKind::Buffer, 2);
 }
 
+/// Ignition channels the Plasma for the TARGET teammate
+/// (`OrbCmd.Channel<PlasmaOrb>(cardPlay.Target.Player)`), not the player.
 #[test]
-fn a3ro_ignition_channels_plasma() {
+fn a3ro_ignition_channels_nothing_for_the_player() {
     let state = run_self_card(CardId::Ignition);
-    assert_eq!(state.player.orbs.count_kind(orbs::OrbKind::Plasma), 1);
+    assert_eq!(state.player.orbs.count_kind(orbs::OrbKind::Plasma), 0);
     assert!(state.powers.is_empty(), "Ignition is orb-only on this card");
 }
 

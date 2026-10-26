@@ -125,20 +125,26 @@ public class SimCombatHandler : IRoomHandler, IHandler
 
     /// <summary>
     /// The teammate an ally-target card or potion goes to (co-op only; such
-    /// cards are unplayable alone). The advisor sees no teammates, so it
-    /// cannot name one: the living teammate lowest on HP, which is what a heal
-    /// or block wants and harmless for a buff.
+    /// cards are unplayable alone): the first living one in run order, the
+    /// order <see cref="SerializeAllies"/> sends them in. The engine aims its
+    /// simulated AnyAlly plays at that same teammate
+    /// (<c>CombatState::any_ally_card_target</c>), so the play autoplay makes
+    /// is the play the advisor valued.
     /// </summary>
     internal static Creature? TeammateTarget(Player player)
     {
-        Creature? me = player.Creature;
-        ICombatState? combat = me?.CombatState;
-        if (combat == null)
+        IRunState? runState = player.RunState;
+        if (runState == null)
             return null;
-        return combat.PlayerCreatures
-            .Where(c => c != me && c.IsAlive)
-            .OrderBy(c => c.MaxHp > 0 ? (double)c.CurrentHp / c.MaxHp : 1.0)
-            .FirstOrDefault();
+        foreach (Player other in runState.Players)
+        {
+            if (ReferenceEquals(other, player))
+                continue;
+            Creature? c = other.Creature;
+            if (c != null && c.IsAlive)
+                return c;
+        }
+        return null;
     }
 
     private static bool IsPlayerInPlayPhase(Player player) =>

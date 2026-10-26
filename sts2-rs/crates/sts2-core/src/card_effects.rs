@@ -435,6 +435,25 @@ pub fn modify_player_block_move(state: &CombatState, base: i32) -> i32 {
     hooks::modify_block(state, base, &ctx)
 }
 
+/// Block a player card gives co-op teammate `ally` (`state.allies[ally]`):
+/// C# `CreatureCmd.GainBlock(cardPlay.Target, block, Move, cardPlay)` from an
+/// `AnyAlly` card. Runs the powered block pipeline with the teammate as the
+/// target, so the player's Dexterity applies (the card is theirs) and the
+/// player's own Frail does not. The teammate's powers are not simulated, so
+/// their Frail is not either. Returns the block gained.
+pub fn gain_block_ally(state: &mut CombatState, ally: u8, base: i32) -> i32 {
+    let ctx = BlockCtx {
+        target: CreatureRef::Ally(ally),
+        props: ValueProps::MOVE,
+        card_source: resolving_card_uid(state),
+    };
+    let gained = hooks::modify_block(state, base, &ctx).max(0);
+    if let Some(a) = state.allies.get_mut(usize::from(ally)) {
+        a.block += gained;
+    }
+    gained
+}
+
 /// Player block gain that is `Unpowered` (Frail-exempt). C# powers that
 /// grant block via `CreatureCmd.GainBlock(..., ValueProp.Unpowered, ...)`
 /// — e.g. `CrimsonMantlePower.AfterPlayerTurnStart` (CrimsonMantlePower.cs:32)
@@ -1637,7 +1656,7 @@ pub fn should_owner_death_trigger_fatal(state: &CombatState, target: CreatureUid
         return true;
     };
     creature.powers.iter().all(|pu| {
-        state.powers.get_by_id(pu.0).map_or(true, |p| match p.kind {
+        state.powers.get_by_id(pu.0).is_none_or(|p| match p.kind {
             PowerKind::Minion => false,
             PowerKind::Reattach => all_other_segments_dead(state, target),
             _ => true,

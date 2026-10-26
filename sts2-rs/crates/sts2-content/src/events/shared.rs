@@ -319,8 +319,8 @@ fn amalgamator_remove_basic_tagged(
     let rank = sts2_core::lookup_card_rarity_rank();
     let removable = sts2_core::lookup_card_removable();
     let version = state.game_version;
-    let is_basic = |id| rank.map_or(true, |f| f(id, version) == 1);
-    let is_removable = |c: &sts2_core::Card| removable.map_or(true, |f| f(c));
+    let is_basic = |id| rank.is_none_or(|f| f(id, version) == 1);
+    let is_removable = |c: &sts2_core::Card| removable.is_none_or(|f| f(c));
     let mut removed = 0;
     let mut i = 0;
     while removed < count && i < state.master_deck.len() {

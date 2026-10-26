@@ -1,4 +1,4 @@
-msrv = "1.78"
+msrv = "1.99"
 
 # Per RUST_PORTING_PLAN_v2.1 risk register: heap allocation must be visible.
 # HashMap::new requires per-call-site #[allow(clippy::disallowed_methods)] OR

@@ -335,7 +335,7 @@ fn prior_choice(
     match env {
         PriorNetEnv::Off => PriorChoice::None,
         PriorNetEnv::File(_) => {
-            if rooms.map_or(true, |r| r.contains(&tier)) {
+            if rooms.is_none_or(|r| r.contains(&tier)) {
                 PriorChoice::File
             } else {
                 PriorChoice::None
@@ -2665,7 +2665,7 @@ fn pick_best_survivor(
         }
         // `map_or(true, …)` not `is_none_or`: the latter is stable only
         // since 1.82 and this workspace's MSRV is 1.78.
-        if best.map_or(true, |(b, _)| delta > b) {
+        if best.is_none_or(|(b, _)| delta > b) {
             best = Some((delta, ai));
         }
     }
@@ -3102,7 +3102,7 @@ mod tests {
             table.charge_slots(&combat.player.potions, rm.run_state.act_index, false);
         println!("critic charges: {charges:?}\ntable charges:  {table_charges:?}");
         for q in &table_charges[belt_len..] {
-            assert!(*q == 0.0);
+            assert_eq!(*q, 0.0);
         }
     }
 

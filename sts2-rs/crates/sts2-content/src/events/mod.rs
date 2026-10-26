@@ -209,7 +209,7 @@ pub fn amalgamator_allowed(state: &RunState) -> bool {
     use sts2_core::cards::CardTag;
     let rank = sts2_core::lookup_card_rarity_rank();
     let version = state.game_version;
-    let is_basic = |c: &sts2_core::cards::Card| rank.map_or(true, |f| f(c.card_id, version) == 1);
+    let is_basic = |c: &sts2_core::cards::Card| rank.is_none_or(|f| f(c.card_id, version) == 1);
     let strikes = state
         .master_deck
         .iter()

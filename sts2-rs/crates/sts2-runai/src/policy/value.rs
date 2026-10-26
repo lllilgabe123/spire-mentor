@@ -96,7 +96,7 @@ impl RunPolicy for ValuePolicy {
             let resulting = mutation.apply_to_view(&view);
             let v = self.net.value(&ContextFeatures::from_view(&resulting));
             scores.push(v);
-            if best.map_or(true, |(_, bv)| v > bv) {
+            if best.is_none_or(|(_, bv)| v > bv) {
                 best = Some((*action_idx, v));
             }
         }

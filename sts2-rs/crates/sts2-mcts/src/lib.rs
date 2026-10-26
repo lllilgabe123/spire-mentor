@@ -477,6 +477,10 @@ pub struct MctsConfig {
     /// aggressively. Swept through `STS2_RUNAI_MCTS_OVERRIDES`
     /// (`loot_weight=…`).
     pub loot_weight: f32,
+    /// Multiplier on the co-op teammate penalty ([`teammate_penalty_q`]):
+    /// HP-equivalents per point of teammate HP missing. Default `1.0` — a
+    /// teammate's HP is worth what ours is. Inert solo (no `state.allies`).
+    pub teammate_weight: f32,
     /// Cheap 1-ply root guards inside the [`Self::tie_eps`] band
     /// (2026-08-09 A8 audit, FINDINGS §5 / recommendation 5). When
     /// `true` (default), [`Mcts::pick_root_action`] refines a
@@ -1237,6 +1241,7 @@ impl Default for MctsConfig {
             loss_turns_half_life: LOSS_QUALITY_TURNS_HALF_LIFE,
             loss_span: LOSS_GRADIENT_LEAF_SPAN,
             loot_weight: 1.0,
+            teammate_weight: 1.0,
             root_guards: true,
             potion_charge_q: None,
             root_drink_mask: false,
@@ -3650,7 +3655,7 @@ impl<P: Policy> Mcts<P> {
         let mut best: Option<(Action, u32)> = None;
         for (edge, cid) in &node.children {
             let child = self.tree.node(*cid);
-            if child.proven_win && best.as_ref().map_or(true, |&(_, v)| child.visits > v) {
+            if child.proven_win && best.as_ref().is_none_or(|&(_, v)| child.visits > v) {
                 if let Some(action) = edge.resolve(&self.tree.root_state) {
                     best = Some((action, child.visits));
                 }
@@ -4544,7 +4549,7 @@ impl<P: Policy> Mcts<P> {
             match self.config.terminal_eval_mode {
                 TerminalEvalMode::Binary | TerminalEvalMode::RichLoss => 1.0,
                 TerminalEvalMode::RichBoth => {
-                    win_value(state, &self.config) - loot_penalty_q(state, &self.config)
+                    win_value(state, &self.config) - run_penalty_q(state, &self.config)
                 }
             }
         } else if leaf_proven_loss {
@@ -6127,7 +6132,7 @@ pub fn terminal_state_value_with(
         }
         TerminalEvalMode::RichBoth => {
             if state.player_won {
-                win_value(state, cfg) - loot_penalty_q(state, cfg)
+                win_value(state, cfg) - run_penalty_q(state, cfg)
             } else {
                 -1.0 + 0.5 * loss_leaf_value(state, leaf_eval, cfg)
             }
@@ -6181,6 +6186,42 @@ pub fn loot_penalty_q(state: &CombatState, cfg: &MctsConfig) -> f32 {
     } else {
         0.0
     }
+}
+
+/// The co-op teammates' missing HP, in root-Q units at the victory band's HP
+/// exchange rate, scaled by [`MctsConfig::teammate_weight`]. Always `>= 0`
+/// and `0` solo.
+///
+/// The search scores our HP and the fight's outcome; without this a card
+/// that blocks or heals a teammate (Lift, Demonic Shield, Intercept's cover)
+/// buys nothing. The enemy turn the board was read on hits the teammates
+/// (see `CombatState::ally_threat_round`), so what this charges is the damage
+/// that turn lands on them, on top of what they were already missing — a
+/// constant across one root's lines, so it ranks them by the HP they lose.
+#[must_use]
+pub fn teammate_penalty_q(state: &CombatState, cfg: &MctsConfig) -> f32 {
+    if cfg.teammate_weight == 0.0 || state.allies.is_empty() {
+        return 0.0;
+    }
+    let missing: i32 = state
+        .allies
+        .iter()
+        .map(|a| (a.max_hp - a.current_hp).max(0))
+        .sum();
+    #[allow(clippy::cast_precision_loss)]
+    let q = victory_hp_equiv_to_q(missing as f32) * cfg.teammate_weight;
+    if q.is_finite() {
+        q.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+/// Everything a won or cut-off line still owes the run beyond our own HP:
+/// [`loot_penalty_q`] plus [`teammate_penalty_q`], jointly capped at
+/// [`LOOT_PENALTY_Q_CAP`] so a won combat still buckets as a win.
+fn run_penalty_q(state: &CombatState, cfg: &MctsConfig) -> f32 {
+    (loot_penalty_q(state, cfg) + teammate_penalty_q(state, cfg)).min(LOOT_PENALTY_Q_CAP)
 }
 
 /// Denominator offset for the turns-survived term of [`loss_quality`]:
@@ -6695,7 +6736,7 @@ pub fn pick_from_root_stats(
     // visit tie (first-max semantics, `pick_root_action` rule 6).
     let mut pick: Option<(usize, u32)> = None;
     for (i, &(_, visits, score)) in scored.iter().enumerate() {
-        if score >= best_score - eps && pick.map_or(true, |(_, best_v)| visits > best_v) {
+        if score >= best_score - eps && pick.is_none_or(|(_, best_v)| visits > best_v) {
             pick = Some((i, visits));
         }
     }
@@ -6710,7 +6751,7 @@ pub fn pick_from_root_stats(
             for (i, (action, visits, score)) in scored.iter().enumerate() {
                 if *score >= best_score - eps
                     && root_hand_card(state, action).is_some_and(satisfies)
-                    && best.map_or(true, |(_, v)| *visits > v)
+                    && best.is_none_or(|(_, v)| *visits > v)
                 {
                     best = Some((i, *visits));
                 }
@@ -6815,8 +6856,7 @@ fn junk_dispose_band_pick(
         let Some(rank) = root_choice_junk_rank(state, action) else {
             continue;
         };
-        if rank < winner_rank
-            && best.map_or(true, |(_, r, v)| rank < r || (rank == r && *visits > v))
+        if rank < winner_rank && best.is_none_or(|(_, r, v)| rank < r || (rank == r && *visits > v))
         {
             best = Some((i, rank, *visits));
         }
@@ -6925,7 +6965,7 @@ fn depth_cut_value(state: &CombatState, leaf_eval: &LeafEval, cfg: &MctsConfig) 
     // `SwipeStolen` entry to `reclaimed` / banks its `HeistPower` gold, which
     // is exactly what zeroes the term. Floored just inside `-1.0` to preserve
     // the loss-band ordering `LOSS_GRADIENT_LEAF_SPAN` documents.
-    (base - loot_penalty_q(state, cfg)).max(LOOT_ADJUSTED_LEAF_FLOOR)
+    (base - run_penalty_q(state, cfg)).max(LOOT_ADJUSTED_LEAF_FLOOR)
 }
 
 /// The [`EdgeAction::PlayCard`] identity of a `PlayCard` action — the key
@@ -7475,6 +7515,7 @@ mod tests {
             is_over: true,
             player_won: true,
             escaped_creatures: 1,
+            ally_threat_round: None,
             ..CombatState::default()
         };
         fled.player.current_hp = 40;
@@ -7539,6 +7580,40 @@ mod tests {
         clean.reclaim_swipe_on_death(thief);
         assert_eq!(loot_penalty_q(&clean, &on), 0.0);
         assert_eq!(depth_cut_value(&clean, &leaf, &on), leaf.evaluate(&clean));
+    }
+
+    /// Co-op: a teammate's missing HP costs what ours would, at the victory
+    /// band's exchange rate; solo (or with the weight at 0) nothing changes,
+    /// and with the loot it stays under the shared cap.
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn teammate_penalty_charges_their_missing_hp() {
+        let leaf = LeafEval::Texel;
+        let on = MctsConfig::default();
+        let mut solo = CombatState::default();
+        solo.player.current_hp = 40;
+        solo.player.max_hp = 80;
+        assert_eq!(teammate_penalty_q(&solo, &on), 0.0);
+        assert_eq!(depth_cut_value(&solo, &leaf, &on), leaf.evaluate(&solo));
+
+        let mut coop = solo.clone();
+        coop.allies.push(sts2_core::PlayerCombatState {
+            current_hp: 50,
+            max_hp: 61,
+            ..sts2_core::PlayerCombatState::default()
+        });
+        let q = teammate_penalty_q(&coop, &on);
+        assert!((q - victory_hp_equiv_to_q(11.0)).abs() < 1e-6, "{q}");
+        assert!(depth_cut_value(&coop, &leaf, &on) < leaf.evaluate(&coop));
+        let off = MctsConfig {
+            teammate_weight: 0.0,
+            ..MctsConfig::default()
+        };
+        assert_eq!(teammate_penalty_q(&coop, &off), 0.0);
+
+        coop.allies[0].current_hp = 0;
+        coop.allies[0].max_hp = 1000;
+        assert_eq!(run_penalty_q(&coop, &on), LOOT_PENALTY_Q_CAP);
     }
 
     /// The charge is bounded on both sides: never negative, never past
@@ -7724,12 +7799,14 @@ mod tests {
                 pending_end_turn_resume: None,
                 pending_autoplay_resume: None,
                 autoplay_inline_resolve: false,
+                vakuu_selector: false,
                 pending_curse_choice: None,
                 pending_potion_hook_resume: None,
                 pending_enemy_exec_resume: None,
                 combat_log: TurnEvents::default(),
                 swipe_stolen: Vec::new(),
                 escaped_creatures: 0,
+                ally_threat_round: None,
                 heist_recovered_gold: 0,
                 event_combat_timed_out: false,
                 gold: 0,
@@ -8003,12 +8080,14 @@ mod tests {
             pending_end_turn_resume: None,
             pending_autoplay_resume: None,
             autoplay_inline_resolve: false,
+            vakuu_selector: false,
             pending_curse_choice: None,
             pending_potion_hook_resume: None,
             pending_enemy_exec_resume: None,
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
+            ally_threat_round: None,
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,
@@ -8358,12 +8437,14 @@ mod tests {
                 pending_end_turn_resume: None,
                 pending_autoplay_resume: None,
                 autoplay_inline_resolve: false,
+                vakuu_selector: false,
                 pending_curse_choice: None,
                 pending_potion_hook_resume: None,
                 pending_enemy_exec_resume: None,
                 combat_log: TurnEvents::default(),
                 swipe_stolen: Vec::new(),
                 escaped_creatures: 0,
+                ally_threat_round: None,
                 heist_recovered_gold: 0,
                 event_combat_timed_out: false,
                 gold: 0,
@@ -8550,12 +8631,14 @@ mod tests {
             pending_end_turn_resume: None,
             pending_autoplay_resume: None,
             autoplay_inline_resolve: false,
+            vakuu_selector: false,
             pending_curse_choice: None,
             pending_potion_hook_resume: None,
             pending_enemy_exec_resume: None,
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
+            ally_threat_round: None,
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,
@@ -8722,12 +8805,14 @@ mod tests {
             pending_end_turn_resume: None,
             pending_autoplay_resume: None,
             autoplay_inline_resolve: false,
+            vakuu_selector: false,
             pending_curse_choice: None,
             pending_potion_hook_resume: None,
             pending_enemy_exec_resume: None,
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
+            ally_threat_round: None,
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,
@@ -12198,12 +12283,14 @@ mod tests {
             pending_end_turn_resume: None,
             pending_autoplay_resume: None,
             autoplay_inline_resolve: false,
+            vakuu_selector: false,
             pending_curse_choice: None,
             pending_potion_hook_resume: None,
             pending_enemy_exec_resume: None,
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
+            ally_threat_round: None,
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,

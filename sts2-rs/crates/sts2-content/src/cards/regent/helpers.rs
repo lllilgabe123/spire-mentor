@@ -654,7 +654,7 @@ pub(crate) fn make_it_so_late_effect(
     // forever, and a reconstructed Make It So never returned to hand: 14
     // records in the 2026-08-03 live Regent corpus.
     let count = state.count_player_cards_played_this_turn(Some(CardType::Skill));
-    if count == 0 || count % interval != 0 {
+    if count == 0 || !count.is_multiple_of(interval) {
         return;
     }
     // Move the watched card from whichever non-Hand pile it occupies

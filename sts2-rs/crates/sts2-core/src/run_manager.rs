@@ -2016,9 +2016,7 @@ impl RunManager {
         // legacy `select_encounter` + `enter_combat` pinned-spec path.
         if let Some(build) = self.callbacks.build_combat_for_room {
             if let Some(combat) = build(&mut self.run_state, act, room_type) {
-                self.combat = Some(combat);
-                self.phase = Phase::Combat;
-                return ActionResult::Advanced;
+                return self.enter_built_combat(combat);
             }
         }
         let (Some(select), Some(enter)) =
@@ -2028,8 +2026,27 @@ impl RunManager {
         };
         let spec = select(&mut self.run_state, act, room_type);
         let combat = enter(&self.run_state, spec);
+        self.enter_built_combat(combat)
+    }
+
+    /// Install a freshly built combat and enter `Phase::Combat` — or, when the
+    /// fight already ended while it was being set up, settle it at once.
+    ///
+    /// Building a combat runs its start-of-combat and turn-1 effects, and
+    /// those can end it: on Ironclad A0 seed 132,010,135 the 75-HP
+    /// BattlewornDummy (Setting1) was dead before the player's first
+    /// decision. A combat that is over lists no actions (see
+    /// `available_actions`), and nothing else calls
+    /// [`Self::exit_combat_and_transition`], so the run stalled in
+    /// `Phase::Combat` with an empty action list (`no_actions`). The exit
+    /// call settles the fight through the normal combat-end path instead.
+    fn enter_built_combat(&mut self, combat: CombatState) -> ActionResult {
+        let over = combat.is_over;
         self.combat = Some(combat);
         self.phase = Phase::Combat;
+        if over {
+            return self.exit_combat_and_transition();
+        }
         ActionResult::Advanced
     }
 
@@ -2807,7 +2824,7 @@ impl RunManager {
             return ActionResult::InvalidForPhase;
         }
         let count = self.run_state.pael_record_sacrifice();
-        if count % 2 == 0 {
+        if count.is_multiple_of(2) {
             if let Some(relic) = self
                 .run_state
                 .pop_relic_from_grab_bag(crate::RelicRarity::Common)
@@ -3821,7 +3838,7 @@ impl RunManager {
                     && (c.cost >= 0 || (allow_x_cost && c.is_x_cost()))
                     && (!requires_block || c.base_block > 0)
                     && restriction
-                        .map_or(true, |t| c.card_type == t || secondary == Some(c.card_type))
+                        .is_none_or(|t| c.card_type == t || secondary == Some(c.card_type))
             })
             .map(|(i, _)| i)
             .collect()
@@ -4056,9 +4073,7 @@ impl RunManager {
                 // stays set on `run_state.event_combat` for the resume path.
                 let req = self.run_state.event_combat.clone().expect("set");
                 let combat = build(&mut self.run_state, &req);
-                self.combat = Some(combat);
-                self.phase = Phase::Combat;
-                return ActionResult::Advanced;
+                return self.enter_built_combat(combat);
             }
             // No builder wired (raw-core tests): fall through to the legacy
             // instant-resolution path — drop the request and grant any
@@ -9883,6 +9898,49 @@ mod tests {
         );
         assert!(rm.run_state.event_combat.is_none());
         assert_eq!(rm.phase(), Phase::MapChoice);
+    }
+
+    /// `build_event_combat` test double: a fight that is already won when it
+    /// is built, like the BattlewornDummy that died before the player's first
+    /// decision on Ironclad A0 seed 132,010,135.
+    fn build_combat_won_at_entry(rs: &mut RunState, _req: &EventCombatRequest) -> CombatState {
+        CombatState {
+            run_rng: rs.rng.clone(),
+            is_over: true,
+            player_won: true,
+            ..CombatState::default()
+        }
+    }
+
+    #[test]
+    fn event_combat_won_at_entry_resumes_instead_of_stalling() {
+        let mut rm =
+            RunManager::new(0, CharacterId::Ironclad).with_content_callbacks(ContentCallbacks {
+                build_event_combat: Some(build_combat_won_at_entry),
+                ..bridge_callbacks(resolve_stages_resuming_dummy)
+            });
+        rm.run_state.enter_event_room(EventId::BattlewornDummy);
+        rm.set_phase(Phase::Event);
+        let gold_before = rm.run_state.gold;
+
+        let result = rm.take_action(RunAction::EventChoice { idx: 0 });
+
+        assert_eq!(result, ActionResult::Advanced);
+        assert_eq!(
+            rm.phase(),
+            Phase::MapChoice,
+            "the won fight is settled, not left open"
+        );
+        assert!(
+            !rm.get_available_actions().is_empty(),
+            "no empty action list"
+        );
+        assert_eq!(
+            rm.run_state.gold,
+            gold_before + 7,
+            "resume granted the reward"
+        );
+        assert!(rm.run_state.event_combat.is_none(), "request cleared");
     }
 
     #[test]

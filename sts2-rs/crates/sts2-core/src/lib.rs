@@ -3828,6 +3828,15 @@ pub struct CombatState {
     /// surfacing again (C# `DoSelectCards`, `RunSimulator.cs:2165`). Raised by
     /// the resume path, lowered when it returns. `false` at rest (not hashed).
     pub autoplay_inline_resolve: bool,
+    /// Mirror of C# `CardSelectCmd.PushSelector(new VakuuCardSelector())`,
+    /// which `WhisperingEarring.AfterAutoPrePlayPhaseEnteredLate` holds for the
+    /// whole of its turn-1 auto-play loop (`WhisperingEarring.cs`). While it is
+    /// raised, every card selection opened by those plays resolves INLINE and
+    /// never surfaces, taking the first `max_select` options in order
+    /// (`VakuuCardSelector.GetSelectedCards` = `options.Take(maxSelect)`) —
+    /// not the `min_select.max(1)` prefix of [`Self::autoplay_inline_resolve`].
+    /// Raised and lowered inside one `apply()`; `false` at rest (not hashed).
+    pub vakuu_selector: bool,
     pub combat_log: TurnEvents,
 
     /// Cards stolen from the run deck this combat by `SwipePower` thieves
@@ -3841,6 +3850,16 @@ pub struct CombatState {
     /// is scaled by `GoldProportion = 1 - escaped / total_monsters`
     /// (`CombatRoom.cs:216`) at `exit_combat`. Bead `sts2-rs-RP15`.
     pub escaped_creatures: u32,
+
+    /// The round whose enemy turn also hits the co-op teammates
+    /// (`state.allies`). C# monster attacks target every living player
+    /// (`AttackCommand.FromMonster` → `TargetingAllOpponents`), but the
+    /// teammates' own turns are not simulated: past the turn the board was
+    /// read on they would stand there unblocking until they died, and every
+    /// line would end with the same dead teammate. So only the enemy turn we
+    /// can see lands on them; set by the wire loader when `$.allies` is
+    /// present, `None` solo.
+    pub ally_threat_round: Option<u16>,
 
     /// Gold recovered this combat by KILLING a `HeistPower` carrier (C#
     /// `HeistPower.BeforeDeath` → `CombatRoom.AddExtraReward(player, new
@@ -4076,9 +4095,11 @@ impl Default for CombatState {
             pending_end_turn_resume: None,
             pending_autoplay_resume: None,
             autoplay_inline_resolve: false,
+            vakuu_selector: false,
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
+            ally_threat_round: None,
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,
@@ -5252,6 +5273,19 @@ impl CombatState {
         self.allies.iter().any(|a| a.current_hp > 0)
     }
 
+    /// The teammate an `AnyAlly` card lands on: the first living ally, as an
+    /// index into [`Self::allies`]. `None` when there is none, which is also
+    /// when such a card is unplayable ([`Self::has_any_ally_card_target`]).
+    ///
+    /// C# lets the player pick any living teammate. With two players there is
+    /// only one; with three or four the simulation always picks the first,
+    /// and the mod's autoplay aims at the same one (`$.allies` order).
+    #[must_use]
+    pub fn any_ally_card_target(&self) -> Option<u8> {
+        let i = self.allies.iter().position(|a| a.current_hp > 0)?;
+        u8::try_from(i).ok()
+    }
+
     /// Sum the player's instances of `kind` across the mirror+legacy
     /// union (see [`Self::player_power_uids`]). Returns 0 when absent.
     /// Bead `sts2-rs-q6bix` (F-C).
@@ -5632,7 +5666,7 @@ impl CombatState {
                 self.powers
                     .iter()
                     .find(|p| p.id == u.0)
-                    .map_or(true, |p| p.kind != PowerKind::DieForYou)
+                    .is_none_or(|p| p.kind != PowerKind::DieForYou)
             })
             .map(|u| u.0)
             .collect();
@@ -8018,7 +8052,7 @@ impl CombatState {
                 |uid| {
                     cards
                         .get(uid.0.get() as usize - 1)
-                        .map_or(true, |c| !crate::card_effects::card_innate_inst(c))
+                        .is_none_or(|c| !crate::card_effects::card_innate_inst(c))
                 },
             )
         } else {
@@ -12816,101 +12850,17 @@ pub fn effective_star_cost_in_combat(state: &CombatState, card: &crate::cards::C
     base
 }
 
-#[must_use]
-pub fn legal_actions(state: &CombatState) -> SmallVec<[Action; 16]> {
-    let mut out: SmallVec<[Action; 16]> = SmallVec::new();
-    if state.is_over {
-        return out;
-    }
-    if let Some(pc) = state.pending_choice.as_ref() {
-        // Bead sts2-rs-419n: enumerate one `ResolveChoice` per legal
-        // selection. For single-pick choices (Headbutt's `PutBack`),
-        // that's one entry per option. For variable-pick choices with
-        // `can_skip`, an empty selection is also legal. Multi-pick
-        // (max_select > 1) combinatorial enumeration is gated to single-
-        // pick at this pin to avoid a 2^N explosion — sub-beads will
-        // land Forethought / Ashwater fan-outs when their resolvers are
-        // wired. If the option list is empty (e.g. discard-empty
-        // Headbutt), emit a single empty selection so the rollout can
-        // advance past the choice (Python auto-resolves empty choices
-        // by short-circuiting before opening one; we mirror that here).
-        if pc.options.is_empty() || pc.max_select == 0 {
-            out.push(Action::ResolveChoice {
-                selection: SmallVec::new(),
-            });
-        } else if pc.max_select == 1 {
-            #[allow(clippy::cast_possible_truncation)]
-            for i in 0..pc.options.len() {
-                let mut sel: SmallVec<[u8; 4]> = SmallVec::new();
-                sel.push(i as u8);
-                out.push(Action::ResolveChoice { selection: sel });
-            }
-            if pc.can_skip || pc.min_select == 0 {
-                out.push(Action::ResolveChoice {
-                    selection: SmallVec::new(),
-                });
-            }
-        } else {
-            // Multi-pick (`max_select > 1`). Bead `sts2-rs-sopgf`:
-            // SEQUENTIAL single-pick decomposition so MCTS can choose
-            // *which* cards a multi-pick adds (Dredge "add up to N discard
-            // cards"), without a `C(n,k)` subset enumeration. Each node
-            // branches at most N ways (one incremental pick per still-
-            // unpicked option) and the tree is at most K deep. Progress is
-            // carried in `pc.picked` (the ORIGINAL option indices chosen so
-            // far); `options` is never mutated, so indices stay stable.
-            //
-            // Each emitted incremental `ResolveChoice { [i] }` appends `i`
-            // to `picked` and RE-OPENS the same choice (no effect fires); a
-            // FINALIZE `ResolveChoice { [] }` runs the per-`ChoiceKind`
-            // resolver ONCE over the full accumulated set. See
-            // [`resolve_choice_action`] for the accumulation/finalize split
-            // and [`resolve_choice_atomic`] for the parity-safe one-shot
-            // path the replay/oracle drivers use.
-            let picked_n = pc.picked.len();
-            let max_n = usize::from(pc.max_select);
-            if picked_n >= max_n {
-                // Reached the cap: FINALIZE is the ONLY legal action —
-                // no further picks (the `+1 == max_select` incremental
-                // path already auto-finalized, so this is the defensive
-                // floor for a choice re-opened exactly at `max_select`).
-                out.push(Action::ResolveChoice {
-                    selection: SmallVec::new(),
-                });
-            } else {
-                // FINALIZE is legal once the minimum is satisfied (the
-                // player may stop early), OR when zero picks already
-                // satisfy a skippable choice and nothing is picked yet.
-                if picked_n >= usize::from(pc.min_select)
-                    || ((pc.can_skip || pc.min_select == 0) && picked_n == 0)
-                {
-                    out.push(Action::ResolveChoice {
-                        selection: SmallVec::new(),
-                    });
-                }
-                // One incremental pick per option NOT already in `picked`,
-                // in ascending option order (so the deterministic drainers
-                // accumulate `[0, 1, …, min-1]` — byte-identical to the
-                // prior "first-K" selection).
-                #[allow(clippy::cast_possible_truncation)]
-                for i in 0..pc.options.len() {
-                    let idx = i as u8;
-                    if pc.picked.contains(&idx) {
-                        continue;
-                    }
-                    let mut sel: SmallVec<[u8; 4]> = SmallVec::new();
-                    sel.push(idx);
-                    out.push(Action::ResolveChoice { selection: sel });
-                }
-            }
-        }
-        return out;
-    }
-    if state.phase != CombatPhase::PlayerPlayPhase {
-        out.push(Action::EndTurn);
-        return out;
-    }
-
+/// Push one `PlayCard` action per playable hand card (per alive enemy for
+/// an `Enemy`-target card) onto `out` — the card half of [`legal_actions`],
+/// with no phase / pending-choice / `is_over` gate of its own.
+///
+/// Split out so the Whispering Earring's turn-1 auto-play loop can ask C#'s
+/// `CardModel.CanPlay()` question ("first card in hand that can be played")
+/// through the SAME gates the legal-action surface uses, while the player is
+/// still in the AutoPrePlay phase (where `legal_actions` itself only offers
+/// `EndTurn`). Emission order is unchanged: `legal_actions` calls this first.
+#[inline]
+pub(crate) fn push_card_play_actions(state: &CombatState, out: &mut SmallVec<[Action; 16]>) {
     // Player card plays.
     let alive_enemies: SmallVec<[u8; 8]> = state
         .enemy_uids
@@ -13302,6 +13252,104 @@ pub fn legal_actions(state: &CombatState) -> SmallVec<[Action; 16]> {
             }
         }
     }
+}
+
+#[must_use]
+pub fn legal_actions(state: &CombatState) -> SmallVec<[Action; 16]> {
+    let mut out: SmallVec<[Action; 16]> = SmallVec::new();
+    if state.is_over {
+        return out;
+    }
+    if let Some(pc) = state.pending_choice.as_ref() {
+        // Bead sts2-rs-419n: enumerate one `ResolveChoice` per legal
+        // selection. For single-pick choices (Headbutt's `PutBack`),
+        // that's one entry per option. For variable-pick choices with
+        // `can_skip`, an empty selection is also legal. Multi-pick
+        // (max_select > 1) combinatorial enumeration is gated to single-
+        // pick at this pin to avoid a 2^N explosion — sub-beads will
+        // land Forethought / Ashwater fan-outs when their resolvers are
+        // wired. If the option list is empty (e.g. discard-empty
+        // Headbutt), emit a single empty selection so the rollout can
+        // advance past the choice (Python auto-resolves empty choices
+        // by short-circuiting before opening one; we mirror that here).
+        if pc.options.is_empty() || pc.max_select == 0 {
+            out.push(Action::ResolveChoice {
+                selection: SmallVec::new(),
+            });
+        } else if pc.max_select == 1 {
+            #[allow(clippy::cast_possible_truncation)]
+            for i in 0..pc.options.len() {
+                let mut sel: SmallVec<[u8; 4]> = SmallVec::new();
+                sel.push(i as u8);
+                out.push(Action::ResolveChoice { selection: sel });
+            }
+            if pc.can_skip || pc.min_select == 0 {
+                out.push(Action::ResolveChoice {
+                    selection: SmallVec::new(),
+                });
+            }
+        } else {
+            // Multi-pick (`max_select > 1`). Bead `sts2-rs-sopgf`:
+            // SEQUENTIAL single-pick decomposition so MCTS can choose
+            // *which* cards a multi-pick adds (Dredge "add up to N discard
+            // cards"), without a `C(n,k)` subset enumeration. Each node
+            // branches at most N ways (one incremental pick per still-
+            // unpicked option) and the tree is at most K deep. Progress is
+            // carried in `pc.picked` (the ORIGINAL option indices chosen so
+            // far); `options` is never mutated, so indices stay stable.
+            //
+            // Each emitted incremental `ResolveChoice { [i] }` appends `i`
+            // to `picked` and RE-OPENS the same choice (no effect fires); a
+            // FINALIZE `ResolveChoice { [] }` runs the per-`ChoiceKind`
+            // resolver ONCE over the full accumulated set. See
+            // [`resolve_choice_action`] for the accumulation/finalize split
+            // and [`resolve_choice_atomic`] for the parity-safe one-shot
+            // path the replay/oracle drivers use.
+            let picked_n = pc.picked.len();
+            let max_n = usize::from(pc.max_select);
+            if picked_n >= max_n {
+                // Reached the cap: FINALIZE is the ONLY legal action —
+                // no further picks (the `+1 == max_select` incremental
+                // path already auto-finalized, so this is the defensive
+                // floor for a choice re-opened exactly at `max_select`).
+                out.push(Action::ResolveChoice {
+                    selection: SmallVec::new(),
+                });
+            } else {
+                // FINALIZE is legal once the minimum is satisfied (the
+                // player may stop early), OR when zero picks already
+                // satisfy a skippable choice and nothing is picked yet.
+                if picked_n >= usize::from(pc.min_select)
+                    || ((pc.can_skip || pc.min_select == 0) && picked_n == 0)
+                {
+                    out.push(Action::ResolveChoice {
+                        selection: SmallVec::new(),
+                    });
+                }
+                // One incremental pick per option NOT already in `picked`,
+                // in ascending option order (so the deterministic drainers
+                // accumulate `[0, 1, …, min-1]` — byte-identical to the
+                // prior "first-K" selection).
+                #[allow(clippy::cast_possible_truncation)]
+                for i in 0..pc.options.len() {
+                    let idx = i as u8;
+                    if pc.picked.contains(&idx) {
+                        continue;
+                    }
+                    let mut sel: SmallVec<[u8; 4]> = SmallVec::new();
+                    sel.push(idx);
+                    out.push(Action::ResolveChoice { selection: sel });
+                }
+            }
+        }
+        return out;
+    }
+    if state.phase != CombatPhase::PlayerPlayPhase {
+        out.push(Action::EndTurn);
+        return out;
+    }
+
+    push_card_play_actions(state, &mut out);
 
     // Potions. Bead sts2-rs-13q (P7-6) emits Action::DrinkPotion per
     // occupied slot in `state.player.potions`, gated by the per-potion

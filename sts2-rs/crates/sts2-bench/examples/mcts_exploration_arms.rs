@@ -752,9 +752,9 @@ fn main() -> std::io::Result<()> {
             // Comma-separated substrings, so one invocation can cover a
             // hand-picked set of arms — at 4000 sims the full grid is ~35
             // minutes and the robustness question only needs a few of them.
-            filter.as_ref().map_or(true, |f| {
-                f.split(',').any(|part| a.name.contains(part.trim()))
-            })
+            filter
+                .as_ref()
+                .is_none_or(|f| f.split(',').any(|part| a.name.contains(part.trim())))
         })
         .collect();
     assert!(!arm_list.is_empty(), "arm filter matched nothing");

@@ -111,7 +111,7 @@ turn or even a full run.
 You need `rustup`, `just` 1.38+, `uv`, Node 20+ and the `wasm-bindgen` CLI
 in the version the crate uses
 (`cargo install wasm-bindgen-cli --version 0.2.120 --locked`). The repo pins
-Rust 1.96 and the `wasm32-unknown-unknown` target, so `rustup` fetches those
+Rust 1.99.1 and the `wasm32-unknown-unknown` target, so `rustup` fetches those
 by itself, and the first build runs `npm install` for you. On Windows,
 `.\install-windows-deps.ps1` installs everything except `rustup`, `uv`, git
 and the VS Build Tools (see [Windows](#windows)).
@@ -185,7 +185,7 @@ There are three levels of setup, depending on what you want to work on. More
 on the prerequisites in
 [docs/bring-your-own-game.md](docs/bring-your-own-game.md).
 
-**Engine only (no game needed).** Rust 1.96 (pinned by
+**Engine only (no game needed).** Rust 1.99.1 (pinned by
 `sts2-rs/rust-toolchain.toml`), `cargo-nextest` and `just` 1.38+. `sccache`
 is optional; to use it, `export RUSTC_WRAPPER=sccache`.
 

@@ -1053,6 +1053,23 @@ pub fn combat_state_to_value(state: &CombatState) -> Result<Value, EmitError> {
     }
     d.insert("encounter".to_owned(), Value::Array(enc));
 
+    // Co-op teammates, in the shape `$.allies` parses. Omitted when solo,
+    // so every single-player state emits the dict it always did.
+    if !state.allies.is_empty() {
+        let allies = state
+            .allies
+            .iter()
+            .map(|a| {
+                let mut m = obj();
+                set(&mut m, "hp", a.current_hp);
+                set(&mut m, "max_hp", a.max_hp);
+                set(&mut m, "block", a.block);
+                Value::Object(m)
+            })
+            .collect();
+        d.insert("allies".to_owned(), Value::Array(allies));
+    }
+
     // --- rng / ascension ---
     let mut rng = obj();
     // We can't recover the original seed from the in-process RNG, so

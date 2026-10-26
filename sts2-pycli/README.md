@@ -109,7 +109,7 @@ Each command returns a JSON decision point (`map_select` / `combat_play` / `card
 `./setup.sh` (the same script you run for `.NET` setup) also builds and installs the `sts2_rs` PyO3 extension into the active venv via [maturin](https://github.com/PyO3/maturin). Set `STS2_SKIP_RUST=1` to skip just the Rust step if your environment lacks a Rust toolchain — combat continues to work, only the hint sidecar is disabled.
 
 Prerequisites for the Rust step:
-- Rust 1.96+ (`rustup install stable`; `../sts2-rs/rust-toolchain.toml` pins the exact toolchain)
+- Rust 1.99+ (`rustup install stable`; `../sts2-rs/rust-toolchain.toml` pins the exact toolchain)
 - `cargo install maturin`
 - An activated venv (`uv sync --dev`, then `source .venv/bin/activate`) — `setup.sh` refuses to install into an unset or unrelated venv.
 

@@ -1072,8 +1072,8 @@ pub(crate) fn create_filtered_character_cards_into_arena(
     let pool: SmallVec<[CardSpec; 96]> = combat_generatable_pool_in(character, state.game_version)
         .iter()
         .copied()
-        .filter(|s| card_type.map_or(true, |kt| s.card_type == kt))
-        .filter(|s| rarity.map_or(true, |r| s.rarity == r))
+        .filter(|s| card_type.is_none_or(|kt| s.card_type == kt))
+        .filter(|s| rarity.is_none_or(|r| s.rarity == r))
         .collect();
     if pool.is_empty() {
         return SmallVec::new();
@@ -1134,7 +1134,7 @@ pub(crate) fn distinct_character_card_ids(
     let mut pool: SmallVec<[CardId; 96]> =
         combat_generatable_pool_in(character, state.game_version)
             .iter()
-            .filter(|s| card_type.map_or(true, |kt| s.card_type == kt))
+            .filter(|s| card_type.is_none_or(|kt| s.card_type == kt))
             .map(|s| s.id)
             .collect();
     if pool.is_empty() {

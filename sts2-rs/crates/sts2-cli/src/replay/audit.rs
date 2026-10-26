@@ -527,10 +527,7 @@ fn detect_transient_power_leaks(decisions: &[DecisionRecord], flags: &mut Vec<Re
 fn first_decisions_per_turn(decisions: &[DecisionRecord]) -> Vec<&DecisionRecord> {
     let mut out: Vec<&DecisionRecord> = Vec::new();
     for dec in decisions {
-        if out
-            .last()
-            .map_or(true, |prev| prev.pre.turn != dec.pre.turn)
-        {
+        if out.last().is_none_or(|prev| prev.pre.turn != dec.pre.turn) {
             out.push(dec);
         }
     }

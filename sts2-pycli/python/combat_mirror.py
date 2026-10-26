@@ -483,11 +483,11 @@ def observables(wire: dict[str, Any]) -> dict[str, Any]:
 def _teammate_reachable(path: str) -> bool:
     """Is ``path`` a field a co-op teammate's moves can change under us?
 
-    Only the enemy side (``$.encounter[X].hp``, ``.powers``, ``.intents``,
-    the roster): the teammate's own creature is not on the wire, and
-    everything of ours is still ours to predict.
+    The enemy side (``$.encounter[X].hp``, ``.powers``, ``.intents``, the
+    roster) and the teammate's own creature (``$.allies``: they block, take
+    hits and heal on their own). Everything of ours is still ours to predict.
     """
-    return path.startswith("$.encounter")
+    return path.startswith(("$.encounter", "$.allies"))
 
 
 def unreported_paths(raw_world_wire: dict[str, Any]) -> frozenset[str]:

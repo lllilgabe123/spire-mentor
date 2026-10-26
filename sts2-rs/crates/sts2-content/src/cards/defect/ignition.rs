@@ -7,8 +7,11 @@ use super::prelude::*;
 /// elsewhere; this card just channels a Plasma. Pin:
 /// `sts2-rl-agent@01c094d:sts2_env/cards/defect.py:730-731`. Bead
 /// `sts2-rs-a3ro`.
-pub(crate) fn play_ignition(state: &mut CombatState, _t: Option<CreatureUid>) -> EffectResult {
-    orbs::channel_orb(state, Orb::plasma());
+pub(crate) fn play_ignition(_state: &mut CombatState, _t: Option<CreatureUid>) -> EffectResult {
+    // C# `OrbCmd.Channel<PlasmaOrb>(cardPlay.Target.Player)`: the teammate channels the Plasma — all of it lands on the co-op teammate
+    // (`cardPlay.Target`), whose turn is not simulated, so playing it
+    // changes nothing here but the energy and the card's own pile move.
+    // Unplayable without a living teammate (`card_is_any_ally`).
     EffectResult::Resolved
 }
 

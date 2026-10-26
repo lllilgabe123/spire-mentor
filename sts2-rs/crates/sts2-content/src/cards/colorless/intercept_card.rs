@@ -5,21 +5,31 @@ use super::prelude::*;
 /// chosen ally THEN apply `CoveredPower(1)` to that ally. Source of truth
 /// is C# `Intercept.cs:27-29`:
 /// [decompiled C# omitted — see the cited path]
-/// The single-player Rust port collapses the ally target to self (same
-/// pattern as `DemonicShield` / `Rally` / `HuddleUp`), so the Covered
-/// landings on the player. Block 9 / upgrade 13 (spec-driven).
-///
-/// The prior port (`sts2-rs-y0ja`) shipped only the block, citing
-/// "no allies → no Covered" — but the C# applies Covered to the *target*
-/// ally, which in the single-player collapse IS the player. Bead
-/// `sts2-rs-0c5po`.
+/// The block goes to the player (`Owner.Creature`), the Covered to the
+/// co-op teammate. Block 9 / upgrade 13 (spec-driven). Covered on the
+/// player (the old self-collapse) would zero the player's incoming attacks;
+/// what it really costs the player is `InterceptPower`'s x2.
 pub(crate) fn play_intercept_card(
     state: &mut CombatState,
     _t: Option<CreatureUid>,
 ) -> EffectResult {
+    // C#: the player gains the block, then `CoveredPower` goes on the
+    // teammate, whose `AfterApplied` gives the player `InterceptPower`:
+    // until the enemy turn ends the player takes the teammate's powered
+    // attack hits as well (x2) and the teammate takes none. The teammate is
+    // not attacked in the simulation, so only the player's side is modelled.
     gain_block_player(state, current_block(state));
-    if let Some(uid) = state.player.creature_uid {
-        apply_power_to_creature(state, uid, PowerKind::Covered, 1);
+    if state.any_ally_card_target().is_some() {
+        if let Some(uid) = state.player.creature_uid {
+            if !state.player_power_uids().iter().any(|p| {
+                state
+                    .powers
+                    .get_by_id(p.0)
+                    .is_some_and(|p| p.kind == PowerKind::Intercept)
+            }) {
+                apply_power_to_creature(state, uid, PowerKind::Intercept, 1);
+            }
+        }
     }
     EffectResult::Resolved
 }
@@ -37,8 +47,7 @@ pub(crate) const fn spec() -> CardSpec {
         // C# `Intercept.CanonicalVars` = BlockVar(9) with `OnUpgrade +4`
         // (bead `sts2-rs-t3rou`); play_intercept_card gains
         // current_block(state), which read 0 here and silently dropped
-        // the block grant. Intercept is C# MultiplayerOnly so the
-        // AnyAlly→Self target collapse is intentional.
+        // the block grant.
         base_block: 9,
         keywords: CardKeywords::NONE,
         ..CardSpec::base()

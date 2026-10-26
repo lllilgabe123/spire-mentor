@@ -3951,6 +3951,20 @@ fn power_modify_damage_multiplicative(
                 DamageMul::ONE
             }
         }
+        PowerKind::Intercept => {
+            // C# `InterceptPower.ModifyDamageMultiplicative`
+            // (InterceptPower.cs, v0.107.1 = v0.111.0): a powered attack on
+            // the owner is multiplied by `coveredCreatures.Count + 1` — the
+            // owner also takes the hits meant for the teammates it covers
+            // (their `CoveredPower` zeroes them). Intercept always covers one
+            // teammate here (`CombatState::any_ally_card_target`), and the
+            // C# list dedups the same teammate, so the multiplier is 2.
+            if owner == Some(ctx.target) && ctx.props.is_powered() {
+                DamageMul::DOUBLE
+            } else {
+                DamageMul::ONE
+            }
+        }
         PowerKind::Guarded => {
             // Python `GuardedPower.modify_damage_multiplicative`:
             // 0.5x for powered attacks targeting owner.
@@ -4404,8 +4418,16 @@ fn power_modify_block_additive(
 ) -> i32 {
     match power.kind {
         PowerKind::Dexterity => {
-            // Python: `if target is owner and props.is_powered(): return self.amount`
-            if owner == Some(ctx.target) && ctx.props.is_powered() {
+            // Python: `if target is owner and props.is_powered(): return self.amount`.
+            // C# gates on the card's OWNER when there is a card source
+            // (`cardSource.Owner.Creature != Owner`), which only differs for
+            // block a player card gives a co-op teammate (Lift, Constellation,
+            // DemonicShield): the player's Dexterity applies to it. Every card
+            // in the simulation is the player's.
+            let to_teammate = matches!(ctx.target, CreatureRef::Ally(_))
+                && owner == Some(CreatureRef::Player)
+                && ctx.card_source.is_some();
+            if (owner == Some(ctx.target) || to_teammate) && ctx.props.is_powered() {
                 power.amount
             } else {
                 0
@@ -6458,6 +6480,16 @@ pub fn after_turn_end(
                     delta: -1,
                 });
             }
+            Some(effects)
+        }
+        PowerKind::Intercept => {
+            // C# `InterceptPower.AfterSideTurnEnd`: `if side == Enemy`
+            // remove — it lasts through the enemy turn it was bought for.
+            if ctx.side != Side::Enemy {
+                return None;
+            }
+            let mut effects = SmallVec::new();
+            effects.push(Effect::RemovePower { listener });
             Some(effects)
         }
         PowerKind::Flanking => {
@@ -9962,6 +9994,7 @@ const MODIFY_DAMAGE_MULTIPLICATIVE_KINDS: crate::PowerKindSet = crate::PowerKind
     PowerKind::Flutter,
     PowerKind::Tank,
     PowerKind::Guarded,
+    PowerKind::Intercept,
     PowerKind::DiamondDiadem,
     PowerKind::Tracking,
     PowerKind::Soar,
@@ -11351,9 +11384,12 @@ fn damage_power_stage(
 #[inline(always)]
 fn block_power_stage(state: &CombatState, ctx: &BlockCtx) -> (i32, DamageMul) {
     let (mut additive, mut mul) = (0i32, DamageMul::ONE);
+    // Block a player card gives a co-op teammate also reads the player's
+    // Dexterity (see the `PowerKind::Dexterity` arm).
+    let card_to_teammate = matches!(ctx.target, CreatureRef::Ally(_)) && ctx.card_source.is_some();
     for_each_power_owned_by(
         state,
-        |owner| owner == ctx.target,
+        |owner| owner == ctx.target || (card_to_teammate && owner == CreatureRef::Player),
         |power, owner| {
             let owner = Some(owner);
             if MODIFY_BLOCK_ADDITIVE_ARMS.contains(power.kind) {
@@ -16455,6 +16491,7 @@ const AFTER_TURN_END_KINDS: crate::PowerKindSet = crate::PowerKindSet::from_kind
     PowerKind::HighVoltage,
     PowerKind::Hotfix,
     PowerKind::Intangible,
+    PowerKind::Intercept,
     PowerKind::Juggling,
     PowerKind::Knockdown,
     PowerKind::ManglePower,

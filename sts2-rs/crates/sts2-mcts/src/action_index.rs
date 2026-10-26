@@ -215,7 +215,7 @@ pub const KEYED_SLOT_OTHER: usize = KEYED_SLOT_POTION_BASE + TARGET_CLASS_COUNT;
 pub const ACTION_KEY_DIM: usize = 4672;
 
 const _: () = assert!(KEYED_SLOT_OTHER < ACTION_KEY_DIM);
-const _: () = assert!(ACTION_KEY_DIM % 64 == 0);
+const _: () = assert!(ACTION_KEY_DIM.is_multiple_of(64));
 
 /// Project an [`ActionTarget`] to its dense target-class code in
 /// `0..TARGET_CLASS_COUNT`. See [`TARGET_CLASS_COUNT`] for the
@@ -308,7 +308,7 @@ mod tests {
         const _: () = assert!(SLOT_END_TURN + 1 == SLOT_POTION);
         const _: () = assert!(SLOT_POTION + 1 == SLOT_OTHER);
         const _: () = assert!(SLOT_OTHER < CANONICAL_ACTION_DIM);
-        const _: () = assert!(CANONICAL_ACTION_DIM % 64 == 0);
+        const _: () = assert!(CANONICAL_ACTION_DIM.is_multiple_of(64));
     }
 
     #[test]
@@ -443,7 +443,7 @@ mod tests {
         const _: () = assert!(KEYED_SLOT_POTION_BASE == KEYED_SLOT_END_TURN + 1);
         const _: () = assert!(KEYED_SLOT_OTHER == KEYED_SLOT_POTION_BASE + TARGET_CLASS_COUNT);
         const _: () = assert!(KEYED_SLOT_OTHER < ACTION_KEY_DIM);
-        const _: () = assert!(ACTION_KEY_DIM % 64 == 0);
+        const _: () = assert!(ACTION_KEY_DIM.is_multiple_of(64));
     }
 
     #[test]

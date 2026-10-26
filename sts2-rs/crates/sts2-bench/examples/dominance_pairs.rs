@@ -497,7 +497,7 @@ fn norm_cdf(z: f64) -> f64 {
             * t
             * (-x * x).exp();
     let erf = if z < 0.0 { -y } else { y };
-    0.5 * (1.0 + erf)
+    f64::midpoint(1.0, erf)
 }
 
 fn t_denom(x: f64) -> f64 {

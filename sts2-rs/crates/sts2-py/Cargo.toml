@@ -52,6 +52,7 @@ format_push_string = "allow"
 doc_markdown = "allow"
 doc_overindented_list_items = "allow"
 doc_lazy_continuation = "allow"
+assert_is_empty = "allow"
 
 [lib]
 name = "sts2_rs"

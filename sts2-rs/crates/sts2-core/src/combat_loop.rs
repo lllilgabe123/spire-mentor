@@ -1866,6 +1866,17 @@ pub(crate) fn run_turn_start_relic_tail(
 /// `PlayerPlayPhase`, the `before_play_phase_start` relic dispatch, and a final
 /// combat-end re-check. Bead `sts2-rs-181`.
 fn finish_turn_start_tail(state: &mut CombatState) -> StepResult {
+    // ── Whispering Earring AutoPrePlay(Late) auto-play (GH #946) ───────────
+    //
+    // `WhisperingEarring.AfterAutoPrePlayPhaseEnteredLate` is the LAST
+    // AutoPrePlay listener C# runs (`Hook.AfterAutoPrePlayPhaseEntered` walks
+    // Early → normal → Late), so it fires after Bombardment (Early) and Mayhem
+    // / Imbued (normal) above, and before the phase advances to Play. Both the
+    // normal cluster path and the Mayhem-resume path reach it here, once. Its
+    // plays never suspend (the Vakuu selector answers every selection), so
+    // this needs no resume state of its own.
+    let earring_ended_turn = whispering_earring_auto_play(state);
+
     // Step 10: combat-end check. Hooks / turn-start auto-plays fired
     // between steps 5-9 may have downed the last enemy. Use the FULL
     // `check_combat_end` (not a bare `is_over` read): a turn-start
@@ -1935,7 +1946,165 @@ fn finish_turn_start_tail(state: &mut CombatState) -> StepResult {
         }
     }
 
+    // An Earring-auto-played VoidForm called `PlayerCmd.EndTurn` (VoidForm.cs:26)
+    // during setup: C# marks the player ready to end the turn, so the turn ends
+    // as soon as the play phase is entered — the player gets no manual plays.
+    // Run the same end-turn chain the manual-play VoidForm rider runs
+    // (`finish_card_play`).
+    if earring_ended_turn && state.player.request_end_turn_after_play {
+        state.player.request_end_turn_after_play = false;
+        if state.phase == CombatPhase::PlayerPlayPhase && !state.is_over {
+            return end_turn_dispatch(state);
+        }
+    }
+
     StepResult::Advanced
+}
+
+/// Most cards one `WhisperingEarring` auto-plays (C# `maxCardsToPlay = 13`).
+pub const WHISPERING_EARRING_MAX_CARDS: u8 = 13;
+
+/// C# `WhisperingEarring.AfterAutoPrePlayPhaseEnteredLate`
+/// (`WhisperingEarring.cs`, identical in v0.107.1 and v0.111.0): on the
+/// owner's first turn (`TurnNumber <= 1`), under
+/// `CardSelectCmd.PushSelector(new VakuuCardSelector())`, play up to 13 cards
+/// from hand. Each iteration stops if combat is over or ending, if the player
+/// is ready to end the turn, or if the turn number changed; otherwise it takes
+/// the FIRST hand card whose `CanPlay()` holds (none → stop), picks its target
+/// (`GetTarget`), pays it with `card.SpendResources()` and runs
+/// `CardCmd.AutoPlay(card, target, AutoPlayType.Default, skipXCapture: true)`.
+///
+/// So these are genuine AUTO-plays (`IsAutoPlay` listeners such as
+/// BrilliantScarf / PaelsEye / VoidFormPower see them as such) that
+/// nevertheless pay their energy and star cost. The +1 max energy half of the
+/// relic is the `relic_modify_max_energy` arm in `hooks.rs`. A melted relic
+/// does nothing (its C# hooks are disabled). `Flash()` and the closing
+/// `TalkCmd` line are cosmetic.
+///
+/// Returns `true` iff an auto-played card raised
+/// `request_end_turn_after_play` (VoidForm's `PlayerCmd.EndTurn`), which the
+/// caller turns into an immediate end of turn.
+fn whispering_earring_auto_play(state: &mut CombatState) -> bool {
+    if state.is_over || state.turn_number() > 1 {
+        return false;
+    }
+    let copies = state
+        .relics
+        .iter()
+        .filter(|r| !r.is_melted && r.kind == crate::RelicKind::WhisperingEarring)
+        .count();
+    if copies == 0 {
+        return false;
+    }
+    let end_requested_before = state.player.request_end_turn_after_play;
+    let start_turn = state.turn_number();
+    // `using (CardSelectCmd.PushSelector(new VakuuCardSelector()))`.
+    let prev_vakuu = std::mem::replace(&mut state.vakuu_selector, true);
+    for _ in 0..copies {
+        for _ in 0..WHISPERING_EARRING_MAX_CARDS {
+            // `CombatManager.Instance.IsOverOrEnding` /
+            // `IsPlayerReadyToEndTurn(player)` / `TurnNumber != startTurn`.
+            if combat_is_ending(state)
+                || state.player.request_end_turn_after_play
+                || state.turn_number() != start_turn
+            {
+                break;
+            }
+            // A selection the previous play left open would have been answered
+            // by the Vakuu selector inside that play; never start the next play
+            // over a pending one.
+            if state.pending_choice.is_some() {
+                break;
+            }
+            let Some(uid) = whispering_earring_first_playable(state) else {
+                break;
+            };
+            let target = whispering_earring_target(state, uid);
+            // `await card.SpendResources()` — energy, then stars.
+            let idx = uid.0.get() as usize - 1;
+            let cost = crate::hooks::effective_card_cost(state, uid);
+            let _ = spend_card_energy(state, idx, cost);
+            let star_cost = crate::effective_star_cost_in_combat(state, &state.cards[idx]);
+            if star_cost > 0 {
+                let _ = state.spend_stars(star_cost);
+            }
+            // `CardCmd.AutoPlay` returns at once when combat is over or ending
+            // (CardCmd.cs:54) — a lethal `AfterStarsSpent` (BlackHole) leaves the
+            // paid card in hand. The loop then stops on the same check.
+            if combat_is_ending(state) {
+                continue;
+            }
+            // `OnPlayWrapper` adds an auto-played card to Play itself
+            // (CardModel.cs:1880); the card is still in hand here.
+            if cards::move_card(&mut state.player, uid, PileKind::Hand, PileKind::Play).is_err() {
+                break;
+            }
+            resolve_auto_played_card_with(
+                state, uid, target, /*force_exhaust=*/ false, /*skip_x_capture=*/ true,
+            );
+            // Anything a hook opened after the card's `OnPlay` (an
+            // `AfterCardPlayed` select, a reshuffle's Stratagem grid) is a
+            // selection under the same pushed selector.
+            if state.pending_choice.is_some() {
+                resolve_inline_auto_play_choices(state);
+            }
+            // `OnPlayWrapper` ends with `CheckForEmptyHand` (CardModel.cs:1993).
+            if state.pending_choice.is_none() && !state.is_over {
+                check_for_empty_hand(state);
+            }
+        }
+    }
+    state.vakuu_selector = prev_vakuu;
+    !end_requested_before && state.player.request_end_turn_after_play
+}
+
+/// The Earring's `pile.Cards.FirstOrDefault(c => c.CanPlay())`: the first card
+/// in hand order that the legal-action surface would let the player play now.
+/// [`crate::push_card_play_actions`] applies exactly the `CanPlay` gates
+/// (resources, Unplayable, NoLivingAllies, the `ShouldPlay` vetoes, the
+/// per-card `IsPlayable` rules); only its `Enemy`-target arm is stricter than
+/// C# — it drops an `AnyEnemy` card while no enemy is alive (a mid-revive
+/// corpse), where C# would pay for it and move it to its result pile unplayed.
+fn whispering_earring_first_playable(state: &CombatState) -> Option<crate::CardUid> {
+    let mut acts: smallvec::SmallVec<[crate::Action; 16]> = smallvec::SmallVec::new();
+    crate::push_card_play_actions(state, &mut acts);
+    let first = acts
+        .iter()
+        .filter_map(|a| match a {
+            crate::Action::PlayCard { hand_index, .. } => Some(*hand_index),
+            _ => None,
+        })
+        .min()?;
+    state.player.hand.get(usize::from(first)).copied()
+}
+
+/// C# `WhisperingEarring.GetTarget`: an `AnyEnemy` card hits the LEFTMOST
+/// hittable enemy (`HittableEnemies.FirstOrDefault()`, no RNG); an `AnyAlly`
+/// card rolls `Rng.CombatTargets.NextItem` over the other living players; an
+/// `AnyPlayer` card targets the owner; anything else gets no target.
+///
+/// The `AnyAlly` read is consumed here to keep the `combat_targets` stream in
+/// step; the ally the card lands on is still the card handler's own pick
+/// ([`CombatState::any_ally_card_target`], the first living ally), which is
+/// the same creature whenever there is a single teammate. `Self_` covers both
+/// C# `Self` and `AnyPlayer`; in the solo engine either resolves to the owner
+/// with no explicit target.
+fn whispering_earring_target(state: &mut CombatState, uid: crate::CardUid) -> Option<CreatureUid> {
+    let card = &state.cards[uid.0.get() as usize - 1];
+    if crate::card_effects::card_is_any_ally(card.card_id) {
+        let n = state.allies.iter().filter(|a| a.current_hp > 0).count();
+        if n > 0 {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+            let _ = state.run_rng.combat_targets.next_int_exclusive(0, n as i32);
+        }
+        return None;
+    }
+    match cards::effective_target_type(state, card) {
+        TargetType::Enemy => state.enemy_uids.iter().copied().find(|e| {
+            crate::creature_by_id(&state.creatures, e.0).is_some_and(|c| c.current_hp > 0)
+        }),
+        TargetType::Self_ | TargetType::None | TargetType::AllEnemies | TargetType::Random => None,
+    }
 }
 
 /// Resume the turn-start `AfterPlayerTurnStart` cluster after a
@@ -4345,6 +4514,7 @@ fn perform_intent(
             if let Some(end) = result {
                 return end;
             }
+            hit_allies(state, dealer, damage, props);
             // C# `VigorPower.AfterAttack` fires when the attack command
             // completes (before the move body's next line); consume the
             // attacker's one-shot Vigor here, ahead of `effect_fn`.
@@ -4377,6 +4547,7 @@ fn perform_intent(
             if let Some(end) = result {
                 return end;
             }
+            hit_allies(state, dealer, damage, props);
             consume_attacker_vigor(state, enemy_uid);
             // `SuckPower.AfterAttack` is owner-generic in C# — it would fire
             // for a DeathBlow attacker too (the dealer dies AFTER the attack
@@ -4464,6 +4635,7 @@ fn perform_intent(
                 if let Some(end) = result {
                     return end;
                 }
+                hit_allies(state, dealer, damage, props);
                 if hp_before.is_some_and(|before| suck_hit_landed(state, before)) {
                     sucked_hits += 1;
                 }
@@ -5109,6 +5281,47 @@ pub fn effective_intent_of(state: &CombatState, creature: &crate::Creature) -> O
         None,
     );
     Some((per_hit, intent.hits()))
+}
+
+/// One monster hit landing on the co-op teammates as well as on us.
+///
+/// C# `AttackCommand.FromMonster` targets every living player
+/// (`TargetingAllOpponents`), so each hit of an enemy attack reaches the
+/// teammates too. The engine models them only as HP and block — their powers,
+/// relics and reactions are not on the wire — so the hit runs the damage
+/// pipeline against `CreatureRef::Ally(i)` (the dealer's Strength / Weak still
+/// apply) and comes off their block, then their HP, with no hooks fired.
+///
+/// Only on the enemy turn of [`CombatState::ally_threat_round`]: see there.
+/// And not while we hold `InterceptPower` — the teammate is Covered (C#
+/// `CoveredPower` zeroes the hit), and the hit is already charged to us twice
+/// by Intercept's own damage multiplier.
+fn hit_allies(state: &mut CombatState, dealer: CreatureRef, raw_damage: i32, props: ValueProps) {
+    if state.allies.is_empty()
+        || state.ally_threat_round != Some(state.round)
+        || state.player_power_amount(crate::powers::PowerKind::Intercept) > 0
+    {
+        return;
+    }
+    for i in 0..state.allies.len() {
+        if state.allies[i].current_hp <= 0 {
+            continue;
+        }
+        let ctx = DamageCtx {
+            dealer,
+            target: CreatureRef::Ally(u8::try_from(i).unwrap_or(u8::MAX)),
+            props,
+        };
+        let damage = hooks::modify_damage(state, raw_damage, &ctx).max(0);
+        let ally = &mut state.allies[i];
+        let absorbed = if props.contains(ValueProps::UNBLOCKABLE) {
+            0
+        } else {
+            damage.min(ally.block)
+        };
+        ally.block -= absorbed;
+        ally.current_hp = (ally.current_hp - (damage - absorbed)).max(0);
+    }
 }
 
 pub fn apply_damage_to_player(
@@ -6779,13 +6992,8 @@ pub fn play_card(state: &mut CombatState, hand_index: u8, target: Option<u8>) ->
     };
 
     // ── Commit play: spend energy, move Hand → Play ──────────────────────
-    // Bead `sts2-rs-zlx.5`: spend the modifier-resolved cost (not the
-    // raw `card.cost`) so a Corrupted Skill / Free* card actually
-    // deducts zero. `effective_cost` is i32 ≥ 0; clamp to i8 before
-    // subtraction because `state.player.energy` is i8.
-    let cost_i8: i8 = i8::try_from(effective_cost.clamp(0, i32::from(i8::MAX)))
-        .expect("clamp keeps value in i8 range");
-    state.player.energy = state.player.energy.saturating_sub(cost_i8);
+    // The energy itself is paid by `spend_card_energy` below (after the
+    // EchoForm capture, which reads no energy).
 
     // ── EchoForm capture (bead `sts2-rs-8ett`) ──────────────────────────
     // C# `EchoFormPower.ModifyCardPlayCount` (`EchoFormPower.cs:18-27`,
@@ -6814,65 +7022,7 @@ pub fn play_card(state: &mut CombatState, hand_index: u8, target: Option<u8>) ->
         .saturating_add(1);
     bump_echo_form_series_tally(state);
 
-    // Bead `sts2-rs-n4wd`: X-cost surface. For X-cost cards
-    // (`card.cost == -1` and not an UNPLAYABLE Curse/Status sentinel),
-    // record the *currently-available* energy on the played
-    // `CardInstance.energy_spent`, then drain `state.player.energy`
-    // to 0. Mirrors Python's `_execute_card_play` X-cost branch
-    // (sets `card.energy_spent` before dispatching the on-play
-    // effect — see `cards/regent.py:735` `heavenly_drill`,
-    // `cards/silent.py` `skewer`, `cards/defect.py` `tempest`,
-    // `cards/ironclad.py` `whirlwind`). Downstream X-cost handlers
-    // read this value off the played card (via the matching index in
-    // `state.cards`) instead of re-reading `state.player.energy`
-    // themselves. The cost deducted above is `max(0, -1) = 0`, so
-    // the order (deduct → drain) is correct and `state.player.energy`
-    // at this point is the pre-X-spend amount.
-    // Energy actually paid for this card (C# `CardModel.SpendEnergy`'s
-    // `amount`): the effective cost for a normal card, or all available
-    // energy for an X-cost card (which then drains to 0).
-    let energy_spent_for_hook: i32 = if card.is_x_cost() {
-        let raw_x = i32::from(state.player.energy).max(0);
-        // C# `SpendEnergy` sets `CapturedXValue = amount` — the RAW energy
-        // spent, which is also the play's `EnergyValue`. The relic
-        // `modify_x_value` fold (ChemicalX +2) is NOT stamped here: C# applies
-        // it at read time (`CardModel.ResolveEnergyXValue`), so X-cost handlers
-        // read `card_effects::resolving_card_x_value` while RightHandHand /
-        // IvoryTile see the raw energy (GH #741 follow-up).
-        state.cards[card_idx].energy_spent = raw_x;
-        state.player.energy = 0;
-        raw_x
-    } else {
-        // GH #741: C# `PlayCardAction.ExecuteAction` sets `EnergyValue =
-        // EnergySpent = item` (the energy `SpendResources` paid) for EVERY
-        // play, so a non-X card stamps its paid cost too. RightHandHand's late
-        // effect and IvoryTile's `after_card_played` read it off the card.
-        let paid = i32::from(cost_i8);
-        state.cards[card_idx].energy_spent = paid;
-        paid
-    };
-
-    // C# `CardModel.SpendEnergy` fires `Hook.AfterEnergySpent` immediately
-    // after the energy is deducted and BEFORE the card's `OnPlay`
-    // (CardModel.cs:1414-1424). The sole player-side listener at the pin is
-    // OrbitPower's per-4-energy-spent grant. Regent parity coverage (Orbit).
-    crate::hooks::dispatch_after_energy_spent(state, energy_spent_for_hook);
-    // Tally this card's energy into the per-turn total (C# writes an
-    // `EnergySpentEntry` here). HelixDrill's hit count reads this sum.
-    state.combat_log.energy_spent_this_turn = state
-        .combat_log
-        .energy_spent_this_turn
-        .saturating_add(energy_spent_for_hook);
-    // Event log (C# `EnergySpentEntry`), at the pin the comment above names.
-    // Zero-cost plays record nothing — C# only writes an entry for a spend.
-    if energy_spent_for_hook > 0 {
-        crate::event_log::record(
-            state,
-            crate::event_log::EventLogEntry::EnergySpent {
-                amount: energy_spent_for_hook,
-            },
-        );
-    }
+    let energy_spent_for_hook = spend_card_energy(state, card_idx, effective_cost);
 
     // UI play-log: record this MANUAL play BEFORE the card body dispatches, so
     // a trigger that auto-plays other cards (Cascade / Havoc / Catastrophe)
@@ -7427,6 +7577,90 @@ fn consume_rebound_stack(state: &mut CombatState) {
             delta: -1,
         }],
     );
+}
+
+/// Pay a card's ENERGY cost — C# `CardModel.SpendEnergy` as called from
+/// `CardModel.SpendResources` (CardModel.cs:1817-1844). Returns the energy
+/// actually paid: the modifier-resolved `effective_cost` for a normal card, or
+/// all available energy for an X-cost card (whose X is captured on the card's
+/// `energy_spent`). Fires `AfterEnergySpent`, tallies the per-turn spend and
+/// writes the event-log entry, in that order.
+///
+/// Shared by the manual [`play_card`] path and the Whispering Earring's turn-1
+/// auto-plays, which pay their cost through the same `SpendResources` before
+/// `CardCmd.AutoPlay(..., skipXCapture: true)`.
+pub(crate) fn spend_card_energy(
+    state: &mut CombatState,
+    card_idx: usize,
+    effective_cost: i32,
+) -> i32 {
+    // Bead `sts2-rs-zlx.5`: spend the modifier-resolved cost (not the
+    // raw `card.cost`) so a Corrupted Skill / Free* card actually
+    // deducts zero. `effective_cost` is i32 ≥ 0; clamp to i8 before
+    // subtraction because `state.player.energy` is i8.
+    let cost_i8: i8 = i8::try_from(effective_cost.clamp(0, i32::from(i8::MAX)))
+        .expect("clamp keeps value in i8 range");
+    state.player.energy = state.player.energy.saturating_sub(cost_i8);
+    // Bead `sts2-rs-n4wd`: X-cost surface. For X-cost cards
+    // (`card.cost == -1` and not an UNPLAYABLE Curse/Status sentinel),
+    // record the *currently-available* energy on the played
+    // `CardInstance.energy_spent`, then drain `state.player.energy`
+    // to 0. Mirrors Python's `_execute_card_play` X-cost branch
+    // (sets `card.energy_spent` before dispatching the on-play
+    // effect — see `cards/regent.py:735` `heavenly_drill`,
+    // `cards/silent.py` `skewer`, `cards/defect.py` `tempest`,
+    // `cards/ironclad.py` `whirlwind`). Downstream X-cost handlers
+    // read this value off the played card (via the matching index in
+    // `state.cards`) instead of re-reading `state.player.energy`
+    // themselves. The cost deducted above is `max(0, -1) = 0`, so
+    // the order (deduct → drain) is correct and `state.player.energy`
+    // at this point is the pre-X-spend amount.
+    // Energy actually paid for this card (C# `CardModel.SpendEnergy`'s
+    // `amount`): the effective cost for a normal card, or all available
+    // energy for an X-cost card (which then drains to 0).
+    let energy_spent_for_hook: i32 = if state.cards[card_idx].is_x_cost() {
+        let raw_x = i32::from(state.player.energy).max(0);
+        // C# `SpendEnergy` sets `CapturedXValue = amount` — the RAW energy
+        // spent, which is also the play's `EnergyValue`. The relic
+        // `modify_x_value` fold (ChemicalX +2) is NOT stamped here: C# applies
+        // it at read time (`CardModel.ResolveEnergyXValue`), so X-cost handlers
+        // read `card_effects::resolving_card_x_value` while RightHandHand /
+        // IvoryTile see the raw energy (GH #741 follow-up).
+        state.cards[card_idx].energy_spent = raw_x;
+        state.player.energy = 0;
+        raw_x
+    } else {
+        // GH #741: C# `PlayCardAction.ExecuteAction` sets `EnergyValue =
+        // EnergySpent = item` (the energy `SpendResources` paid) for EVERY
+        // play, so a non-X card stamps its paid cost too. RightHandHand's late
+        // effect and IvoryTile's `after_card_played` read it off the card.
+        let paid = i32::from(cost_i8);
+        state.cards[card_idx].energy_spent = paid;
+        paid
+    };
+
+    // C# `CardModel.SpendEnergy` fires `Hook.AfterEnergySpent` immediately
+    // after the energy is deducted and BEFORE the card's `OnPlay`
+    // (CardModel.cs:1414-1424). The sole player-side listener at the pin is
+    // OrbitPower's per-4-energy-spent grant. Regent parity coverage (Orbit).
+    crate::hooks::dispatch_after_energy_spent(state, energy_spent_for_hook);
+    // Tally this card's energy into the per-turn total (C# writes an
+    // `EnergySpentEntry` here). HelixDrill's hit count reads this sum.
+    state.combat_log.energy_spent_this_turn = state
+        .combat_log
+        .energy_spent_this_turn
+        .saturating_add(energy_spent_for_hook);
+    // Event log (C# `EnergySpentEntry`), at the pin the comment above names.
+    // Zero-cost plays record nothing — C# only writes an entry for a spend.
+    if energy_spent_for_hook > 0 {
+        crate::event_log::record(
+            state,
+            crate::event_log::EventLogEntry::EnergySpent {
+                amount: energy_spent_for_hook,
+            },
+        );
+    }
+    energy_spent_for_hook
 }
 
 /// C# `CombatManager.CheckForEmptyHand` (v0.107.1 CombatManager.cs:890-896):
@@ -8902,9 +9136,38 @@ pub fn player_should_play_blocked(state: &CombatState, card: &crate::cards::Card
     false
 }
 
+/// The next `ResolveChoice` selection C#'s `VakuuCardSelector` makes for
+/// `pc`: `GetSelectedCards(options, min, max) => options.Take(maxSelect)` —
+/// the first `max_select` options in order, never a skip, regardless of
+/// `min_select` (`VakuuCardSelector.cs`). A multi-pick is driven through the
+/// sequential-pick decomposition (lowest still-unpicked option, then the empty
+/// FINALIZE once `min(max_select, options)` are picked); a single pick is
+/// option 0; an empty or zero-pick choice resolves empty.
+fn vakuu_selection(pc: &crate::PendingChoice) -> smallvec::SmallVec<[u8; 4]> {
+    if pc.options.is_empty() || pc.max_select == 0 {
+        return smallvec::SmallVec::new();
+    }
+    if pc.max_select == 1 {
+        return smallvec::smallvec![0u8];
+    }
+    let target = usize::from(pc.max_select).min(pc.options.len());
+    if pc.picked.len() >= target {
+        return smallvec::SmallVec::new();
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    let next = (0..pc.options.len() as u8)
+        .find(|i| !pc.picked.contains(i))
+        .unwrap_or(0u8);
+    smallvec::smallvec![next]
+}
+
 fn resolve_inline_auto_play_choices(state: &mut CombatState) {
-    // Bound matches the harness's `_drain_rust_choices(max_iters=16)`.
-    for _ in 0..16 {
+    // Bound matches the harness's `_drain_rust_choices(max_iters=16)`. A
+    // Vakuu drain takes up to `max_select` sequential picks per choice (plus
+    // its FINALIZE), so it gets more headroom; it is still only a guard
+    // against a pathological self-reopening choice.
+    let bound = if state.vakuu_selector { 64 } else { 16 };
+    for _ in 0..bound {
         if state.pending_choice.is_none() {
             return;
         }
@@ -8945,7 +9208,9 @@ fn resolve_inline_auto_play_choices(state: &mut CombatState) {
                 .pending_choice
                 .as_ref()
                 .expect("checked is_some above");
-            if pc.max_select > 1 {
+            if state.vakuu_selector {
+                vakuu_selection(pc)
+            } else if pc.max_select > 1 {
                 let target = usize::from(pc.min_select).max(1);
                 if pc.picked.len() >= target {
                     // Target satisfied: FINALIZE (runs the kind-resolver over
@@ -9065,6 +9330,28 @@ pub(crate) fn resolve_auto_played_card_at_target(
     top_uid: crate::CardUid,
     target_override: Option<CreatureUid>,
     force_exhaust: bool,
+) {
+    resolve_auto_played_card_with(
+        state,
+        top_uid,
+        target_override,
+        force_exhaust,
+        /*skip_x_capture=*/ false,
+    );
+}
+
+/// As [`resolve_auto_played_card_at_target`], plus C# `CardCmd.AutoPlay`'s
+/// `skipXCapture` flag (CardCmd.cs:82-95). A caller that already paid the card
+/// through `CardModel.SpendResources` — the Whispering Earring — passes `true`:
+/// the X value `SpendEnergy` captured (the energy actually spent, stamped by
+/// [`spend_card_energy`]) is kept rather than re-captured from the now-drained
+/// energy, and a star-X card's `LastStarsSpent` is not re-captured either.
+pub(crate) fn resolve_auto_played_card_with(
+    state: &mut CombatState,
+    top_uid: crate::CardUid,
+    target_override: Option<CreatureUid>,
+    force_exhaust: bool,
+    skip_x_capture: bool,
 ) {
     crate::cards::emit_pile_trace(
         &state.player,
@@ -9286,7 +9573,10 @@ pub(crate) fn resolve_auto_played_card_at_target(
     // (seed 1376: a DistilledChaos-auto-played Volley → combat_targets cs=2
     // rs=1). Stamp it here (no energy drain, mirroring C#).
     if state.cards[top_idx].is_x_cost() {
-        state.cards[top_idx].energy_spent = i32::from(state.player.energy.max(0));
+        // `skipXCapture`: the caller's `SpendResources` already captured X.
+        if !skip_x_capture {
+            state.cards[top_idx].energy_spent = i32::from(state.player.energy.max(0));
+        }
     } else {
         // GH #741: a non-X auto-play is free (C# `EnergySpent = 0`) but its
         // `EnergyValue` is `EnergyCost.GetAmountToSpend()` — the card's
@@ -9528,7 +9818,11 @@ pub(crate) fn resolve_auto_played_card_at_target(
     // the hit count without calling `spend_stars` — an auto-played Stardust
     // (Mayhem) hits `Stars` times but leaves the stars intact. regent-legal-action
     // Fix B (seed 2010). Manual plays never set this var, so they still spend.
-    if top_card_id == cards::CardId::Stardust {
+    // Under `skipXCapture` (Whispering Earring) the stars were NOT captured
+    // here: the var stays unset and `play_stardust` spends the stars itself,
+    // exactly as on the manual path (C# `SpendResources` → `SpendStars` set
+    // `LastStarsSpent` and fired `AfterStarsSpent` before this auto-play).
+    if top_card_id == cards::CardId::Stardust && !skip_x_capture {
         let captured = i32::from(state.player.stars).max(0);
         state.cards[top_idx].set_combat_var(crate::cards::VarKey::AutoPlayStarX, captured + 1);
     }
@@ -9787,7 +10081,9 @@ pub struct AutoPlayParentFrame {
 /// `AutoResolveInline` mirror). A combat-ending play has no live decision to
 /// surface, so it drains too. Anything else SURFACES.
 fn auto_play_choice_should_surface(state: &CombatState) -> bool {
-    if state.autoplay_inline_resolve || state.is_over {
+    // A pushed `VakuuCardSelector` (Whispering Earring) answers every
+    // selection itself, so nothing surfaces while it is active.
+    if state.autoplay_inline_resolve || state.vakuu_selector || state.is_over {
         return false;
     }
     let Some(pc) = state.pending_choice.as_ref() else {
@@ -14755,6 +15051,90 @@ mod tests {
             state.enemy_uids.push(CreatureUid(id));
         }
         state
+    }
+
+    /// A co-op board: one teammate (40/60 HP, `block`) whom the enemy turn of
+    /// the current round hits, as the wire loader marks it.
+    fn coop_enemy_turn(intent: Intent, block: i32) -> CombatState {
+        let mut state = state_for_enemy_turn_exec(1, MonsterKind::ShrinkerBeetle, intent);
+        state.round = 3;
+        state.ally_threat_round = Some(3);
+        state.allies.push(crate::PlayerCombatState {
+            current_hp: 40,
+            max_hp: 60,
+            block,
+            ..crate::PlayerCombatState::default()
+        });
+        state
+    }
+
+    /// C# `AttackCommand.FromMonster` targets every living player, so each
+    /// hit of a monster attack also lands on the teammate: through their
+    /// block first, and with the dealer's Strength.
+    #[test]
+    fn a_monster_attack_hits_the_teammate_through_their_block() {
+        let enemy_uid = CreatureUid(NonZeroU32::new(1).expect("nz"));
+        let mut state = coop_enemy_turn(Intent::MultiAttack { damage: 5, hits: 3 }, 7);
+        let pid = NonZeroU32::new(7001).expect("nz");
+        state.powers.push(Power {
+            id: pid,
+            kind: PowerKind::Strength,
+            amount: 1,
+            counter: 0,
+            applier: None,
+            skip_next_tick: false,
+        });
+        state.creatures[0].powers.push(PowerUid(pid));
+
+        let intent = state.creatures[0].intent;
+        perform_intent(&mut state, enemy_uid, intent);
+        // 3 hits of 6: 7 block soaks the first and 1 of the second.
+        assert_eq!(state.allies[0].block, 0);
+        assert_eq!(state.allies[0].current_hp, 40 - (18 - 7));
+        assert_eq!(state.player.current_hp, 50 - 18);
+    }
+
+    /// Only the enemy turn the board was read on reaches the teammate (their
+    /// own turns are not simulated), a dead teammate is not hit, and neither
+    /// is a Covered one while we hold Intercept.
+    #[test]
+    fn the_teammate_is_hit_only_on_the_visible_enemy_turn() {
+        let enemy_uid = CreatureUid(NonZeroU32::new(1).expect("nz"));
+        let attack = Some(Intent::Attack { damage: 6 });
+
+        let mut later = coop_enemy_turn(Intent::Attack { damage: 6 }, 0);
+        later.round = 4;
+        perform_intent(&mut later, enemy_uid, attack);
+        assert_eq!(later.allies[0].current_hp, 40);
+
+        let mut dead = coop_enemy_turn(Intent::Attack { damage: 6 }, 0);
+        dead.allies[0].current_hp = 0;
+        perform_intent(&mut dead, enemy_uid, attack);
+        assert_eq!(dead.allies[0].current_hp, 0);
+
+        let mut covered = coop_enemy_turn(Intent::Attack { damage: 6 }, 0);
+        let pid = NonZeroU32::new(7002).expect("nz");
+        covered.powers.push(Power {
+            id: pid,
+            kind: PowerKind::Intercept,
+            amount: 1,
+            counter: 0,
+            applier: None,
+            skip_next_tick: false,
+        });
+        covered.player.powers.push(PowerUid(pid));
+        perform_intent(&mut covered, enemy_uid, attack);
+        assert_eq!(covered.allies[0].current_hp, 40);
+        assert_eq!(
+            covered.player.current_hp,
+            50 - 12,
+            "Intercept takes both hits"
+        );
+
+        let mut solo =
+            state_for_enemy_turn_exec(1, MonsterKind::ShrinkerBeetle, Intent::Attack { damage: 6 });
+        perform_intent(&mut solo, enemy_uid, attack);
+        assert_eq!(solo.player.current_hp, 44);
     }
 
     /// Bead `sts2-rs-lam0b`: an enemy's `Vigor(6)` adds its bonus to the

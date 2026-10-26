@@ -11,8 +11,10 @@ use super::prelude::*;
 /// (`card_effects::card_is_any_ally`), so the play never resolves here and
 /// the ally's draw-pile pick is not modelled.
 pub(crate) fn play_tutor(_state: &mut CombatState, _t: Option<CreatureUid>) -> EffectResult {
-    // v0.111.0: the TARGET ally picks from its own draw pile
-    // (decomp Tutor.cs:20-29) — unreachable in single-player.
+    // C#: the teammate picks a card from their own draw pile into hand (Tutor.cs:20-29) — all of it lands on the co-op teammate
+    // (`cardPlay.Target`), whose turn is not simulated, so playing it
+    // changes nothing here but the energy and the card's own pile move.
+    // Unplayable without a living teammate (`card_is_any_ally`).
     EffectResult::Resolved
 }
 

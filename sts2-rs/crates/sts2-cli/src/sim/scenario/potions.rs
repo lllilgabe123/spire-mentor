@@ -281,7 +281,7 @@ fn suggest_potion(needle: &str) -> Option<&'static str> {
     for &k in &PotionKind::ALL {
         let cand = pascal_name(k);
         let d = levenshtein(needle, &normalize(cand));
-        if best.map_or(true, |(_, bd)| d < bd) {
+        if best.is_none_or(|(_, bd)| d < bd) {
             best = Some((cand, d));
         }
     }

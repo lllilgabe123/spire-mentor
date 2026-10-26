@@ -1845,6 +1845,24 @@ def test_coop_adopts_a_teammate_hit_instead_of_dropping() -> None:
     assert "teammate-adopted: $.encounter[].hp x1" in advisor.note()
 
 
+def test_coop_adopts_the_teammates_own_block() -> None:
+    """The teammate's creature (``$.allies``) moves on its own -- they block
+    and take hits -- so a change there is adopted like an enemy-side one."""
+    import copy
+
+    advisor = AdvisorMirror(HONEST)
+    wire = sts2_rs.state_to_dict(_burning_pact_state())
+    wire["allies"] = [{"hp": 60, "max_hp": 70, "block": 0}]
+    advisor.on_combat_board(wire, _coop_board(2))
+    mirror = advisor.live
+    moved = copy.deepcopy(wire)
+    moved["allies"][0]["block"] = 9
+    advisor.on_combat_board(moved, _coop_board(2))
+    assert advisor.stats["desyncs"] == 0
+    assert advisor.live is mirror and not mirror.tainted
+    assert sts2_rs.state_to_dict(mirror.state)["allies"][0]["block"] == 9
+
+
 def test_coop_still_reports_a_player_side_desync() -> None:
     """The exemption is scoped to the enemy side: our own HP is ours to
     predict, so a mismatch there drops the mirror exactly as solo."""

@@ -1154,7 +1154,7 @@ pub fn tezcatara_deck_has_basic_strike(state: &RunState) -> bool {
     use sts2_core::cards::CardTag;
     let rank = sts2_core::lookup_card_rarity_rank();
     state.master_deck.iter().any(|c| {
-        c.has_tag(CardTag::Strike) && rank.map_or(true, |f| f(c.card_id, state.game_version) == 1)
+        c.has_tag(CardTag::Strike) && rank.is_none_or(|f| f(c.card_id, state.game_version) == 1)
     })
 }
 

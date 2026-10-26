@@ -1056,7 +1056,7 @@ fn grouped_argmax(actions: &[ActionDesc], probs: &[f32]) -> Option<usize> {
     let mut best: Option<(usize, f32)> = None;
     for (i, action) in actions.iter().enumerate() {
         // `map_or(true, …)` not `is_none_or`: clippy.toml pins msrv 1.78.
-        if group_key(action, i) == winner && best.map_or(true, |(_, b)| probs[i] > b) {
+        if group_key(action, i) == winner && best.is_none_or(|(_, b)| probs[i] > b) {
             best = Some((i, probs[i]));
         }
     }

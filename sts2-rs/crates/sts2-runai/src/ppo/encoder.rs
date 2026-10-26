@@ -673,7 +673,7 @@ fn build_action_token(ctx: &Ctx<'_>, a: &ActionDesc) -> (i64, Cat, ContF64) {
                 .unwrap_or_else(|| event_payload(&format!("{label}. {description}"), ctx.max_hp));
             cont[C_GOLD_D] = gold_d * GOLD_SCALE;
             cont[C_HP_D] = hp_d;
-            cont[C_ENABLED] = if opt.map_or(true, |o| o.enabled) {
+            cont[C_ENABLED] = if opt.is_none_or(|o| o.enabled) {
                 1.0
             } else {
                 0.0

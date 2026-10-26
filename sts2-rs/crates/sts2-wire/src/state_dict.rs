@@ -287,6 +287,19 @@ pub struct ParsedState {
     /// output and saw a 12-damage Strength-buffed telegraph come back
     /// as 10.
     pub intent_amounts: IntentAmounts,
+    /// Co-op teammates (`$.allies`, optional; absent or empty in a solo
+    /// fight). Only what an `AnyAlly` card reads or writes is carried: the
+    /// engine does not play the teammate's turn, so their hand, energy and
+    /// powers stay out of the simulation.
+    pub allies: Vec<ParsedAlly>,
+}
+
+/// One co-op teammate on the wire (`$.allies[i]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParsedAlly {
+    pub hp: i32,
+    pub max_hp: i32,
+    pub block: i32,
 }
 
 /// See [`ParsedState::intent_amounts`].
@@ -825,6 +838,8 @@ pub fn parse_state_dict<V: WireValue>(d: &V) -> WireResult<ParsedState> {
     let deck_dict = as_dict(&deck_val, "$.deck")?;
     let deck = parse_deck(&deck_dict)?;
 
+    let allies = parse_allies(d)?;
+
     let enc_val = get_item(d, "$", "encounter")?;
     let enc_list = as_list(&enc_val, "$.encounter")?;
     let mut encounter = Vec::with_capacity(enc_list.len());
@@ -862,7 +877,34 @@ pub fn parse_state_dict<V: WireValue>(d: &V) -> WireResult<ParsedState> {
         game_version,
         intent_damage_known,
         intent_amounts,
+        allies,
     })
+}
+
+fn parse_allies<V: WireValue>(d: &V) -> WireResult<Vec<ParsedAlly>> {
+    let Some(v) = extract_optional(d, "allies") else {
+        return Ok(Vec::new());
+    };
+    let list = as_list(&v, "$.allies")?;
+    // `CreatureRef::Ally` indexes with a u8; co-op caps at 4 players.
+    if list.len() > 3 {
+        return Err(schema_err("$.allies", "at most 3 teammates"));
+    }
+    let mut allies = Vec::with_capacity(list.len());
+    for (i, item) in list.iter().enumerate() {
+        let path = format!("$.allies[{i}]");
+        let a = as_dict(item, &path)?;
+        let ally = ParsedAlly {
+            hp: extract_i32(&a, &path, "hp")?,
+            max_hp: extract_i32(&a, &path, "max_hp")?,
+            block: extract_i32(&a, &path, "block")?,
+        };
+        if ally.hp < 0 || ally.block < 0 || ally.hp > ally.max_hp {
+            return Err(schema_err(&path, &format!("bad hp/block {ally:?}")));
+        }
+        allies.push(ally);
+    }
+    Ok(allies)
 }
 
 fn parse_player<V: WireValue>(d: &V) -> WireResult<ParsedPlayer> {
@@ -3013,6 +3055,18 @@ pub fn state_from_dict_impl(parsed: &ParsedState) -> WireResult<CoreCombatState>
         ascension: parsed.ascension,
         game_version: parsed.game_version,
         is_elite: parsed.is_elite,
+        allies: parsed
+            .allies
+            .iter()
+            .map(|a| sts2_core::PlayerCombatState {
+                current_hp: a.hp,
+                max_hp: a.max_hp,
+                block: a.block,
+                ..sts2_core::PlayerCombatState::default()
+            })
+            .collect(),
+        ally_threat_round: (!parsed.allies.is_empty())
+            .then(|| u16::try_from(parsed.round).unwrap_or(0)),
         ..CoreCombatState::default()
     };
 

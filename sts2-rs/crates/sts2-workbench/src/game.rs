@@ -1259,7 +1259,7 @@ impl Game {
             .collect();
         let can_skip = actions.iter().any(|a| {
             rmx::action_kind(a) == "pick_card_reward"
-                && rmx::action_value(a).get("idx").map_or(true, Value::is_null)
+                && rmx::action_value(a).get("idx").is_none_or(Value::is_null)
         });
         let m = state.as_object_mut().expect("state dict");
         m.insert("cards".into(), Value::Array(cards));
@@ -1544,7 +1544,7 @@ impl Game {
             };
             let enabled = info
                 .and_then(|i| i.get("enabled"))
-                .map_or(true, combat_view::truthy);
+                .is_none_or(combat_view::truthy);
             options.push(json!({
                 "index": idx,
                 "title": if title.is_empty() { format!("Option {idx}") } else { title },

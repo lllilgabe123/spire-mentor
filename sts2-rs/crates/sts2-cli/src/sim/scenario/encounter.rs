@@ -336,7 +336,7 @@ fn suggest_monster_tag(needle: &str) -> Option<&'static str> {
     let mut best: Option<(&'static str, usize)> = None;
     for (tag, _, _) in SELECTABLE_MONSTERS {
         let d = levenshtein(needle, &normalize_alias(tag));
-        if best.map_or(true, |(_, bd)| d < bd) {
+        if best.is_none_or(|(_, bd)| d < bd) {
             best = Some((tag, d));
         }
     }
@@ -558,7 +558,7 @@ fn suggest_encounter(needle: &str) -> Option<&'static str> {
     let mut best: Option<(&'static str, usize)> = None;
     for (alias, _) in ENCOUNTERS {
         let d = levenshtein(needle, &normalize_alias(alias));
-        if best.map_or(true, |(_, bd)| d < bd) {
+        if best.is_none_or(|(_, bd)| d < bd) {
             best = Some((alias, d));
         }
     }

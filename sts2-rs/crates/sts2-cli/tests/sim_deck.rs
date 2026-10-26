@@ -305,14 +305,12 @@ fn empty_and_whitespace_only_inline_decks_are_rejected() {
 
 #[test]
 fn deck_size_cap_is_inclusive() {
-    let at_cap = std::iter::repeat("Strike")
-        .take(MAX_DECK_SIZE)
+    let at_cap = std::iter::repeat_n("Strike", MAX_DECK_SIZE)
         .collect::<Vec<_>>()
         .join(",");
     assert_eq!(inline(&at_cap).unwrap().len(), MAX_DECK_SIZE);
 
-    let over_cap = std::iter::repeat("Strike")
-        .take(MAX_DECK_SIZE + 1)
+    let over_cap = std::iter::repeat_n("Strike", MAX_DECK_SIZE + 1)
         .collect::<Vec<_>>()
         .join(",");
     match inline(&over_cap).unwrap_err() {

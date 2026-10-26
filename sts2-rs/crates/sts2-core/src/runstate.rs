@@ -3037,7 +3037,7 @@ impl RunState {
         let removable = crate::lookup_card_removable();
         self.master_deck
             .iter()
-            .filter(|c| removable.map_or(true, |f| f(c)))
+            .filter(|c| removable.is_none_or(|f| f(c)))
             .count()
     }
 
@@ -3069,7 +3069,7 @@ impl RunState {
     pub fn removal_offer_order(&self) -> Vec<usize> {
         let removable = crate::lookup_card_removable();
         let mut order: Vec<usize> = (0..self.master_deck.len())
-            .filter(|&i| removable.map_or(true, |f| f(&self.master_deck[i])))
+            .filter(|&i| removable.is_none_or(|f| f(&self.master_deck[i])))
             .collect();
         // Stable sort: Curse → key 0 (front, deck order preserved), else key 1
         // (deck order). `sort_by_key` is stable, matching C#'s OrderBy.
@@ -4105,7 +4105,7 @@ impl RunState {
         let rank = crate::lookup_card_rarity_rank();
         let tezcatara_basic_strike = self.master_deck.iter().any(|c| {
             c.tags.contains(CardTag::Strike)
-                && rank.map_or(true, |f| f(c.card_id, self.game_version) == 1)
+                && rank.is_none_or(|f| f(c.card_id, self.game_version) == 1)
         });
         crate::boss_ancient_offers::AncientConditions {
             act_index: act_index_0based,

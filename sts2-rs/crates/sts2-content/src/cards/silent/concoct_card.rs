@@ -10,8 +10,10 @@ use super::prelude::*;
 /// unplayable without a living ally, which single-player never has
 /// (`card_effects::card_is_any_ally`), so this handler does not run in SP.
 pub(crate) fn play_concoct(_state: &mut CombatState, _t: Option<CreatureUid>) -> EffectResult {
-    // TODO(S8b #794): ConcoctPower 3 (upg 4) on the target ally once the
-    // power is ported. Unreachable in single-player (AnyAlly, no allies).
+    // C# `PowerCmd.Apply<ConcoctPower>(cardPlay.Target, 3 (upg 4))` — all of it lands on the co-op teammate
+    // (`cardPlay.Target`), whose turn is not simulated, so playing it
+    // changes nothing here but the energy and the card's own pile move.
+    // Unplayable without a living teammate (`card_is_any_ally`).
     EffectResult::Resolved
 }
 
