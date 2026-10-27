@@ -560,7 +560,7 @@ def compute_combat_advice(
         if not kill_note:
             try:
                 checked = realgame_topup.double_check(
-                    sts2_rs, cs, advice, wire["deck"]["hand"], sims=max(2000, sims // 4),
+                    sts2_rs, cs, advice, wire["deck"]["hand"], sims=max(2000, min(4000, sims // 16)),
                     hidden_info=call_cfg.hidden_info,
                 )
             except Exception as exc:
@@ -591,7 +591,7 @@ def compute_combat_advice(
             names = {str(c.get("id")): str(c.get("name")) for c in state.get("hand") or [] if c.get("id") and c.get("name")}
             order, line = realgame_turnplan.plan_turn(
                 sts2_rs, cs, advice.get("best") or {}, wire["deck"]["hand"], names,
-                sims=max(400, sims // 10), seed=call_cfg.seed or 1, hidden_info=call_cfg.hidden_info,
+                sims=max(400, min(1600, sims // 40)), seed=call_cfg.seed or 1, hidden_info=call_cfg.hidden_info,
             )
             if order:
                 realgame_turnplan.setup_first(order, line, state)
