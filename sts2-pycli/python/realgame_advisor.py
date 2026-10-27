@@ -36,13 +36,14 @@ it must never answer them.
 Usage::
 
     uv run python python/realgame_advisor.py [--host 127.0.0.1] [--port 9002]
-        [--sims 16000] [--boss-sims 64000] [--threads 1]
+        [--sims 16000] [--boss-sims 64000] [--threads 4] [--boss-threads 8]
         [--log-dir logs/realgame_advisor]
 """
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import dataclasses
 import json
 import logging
@@ -469,6 +470,9 @@ def compute_combat_advice(
     # for the forecast.
     coop = state.get("coop") or {}
     share = float(coop.get("teammate_share") or 0.0)
+    # Personal build: the teammates' searches do not need ours, so they run
+    # alongside it instead of after it (co-op advice latency, 2026-10-27).
+    mate_jobs = _start_teammate_tips(coop, share, cfg, sims) if foresight else None
     real_wire = wire
     wire = realgame_foresight.scale_for_teammate(wire, share)
     if KNOWN_DRAWS:
@@ -571,7 +575,7 @@ def compute_combat_advice(
                 checked = f"{checked} · {vfirst}" if checked else vfirst
         except Exception as exc:
             logger.warning("vulnerable-first failed: %s", exc)
-        _add_foresight(advice, state, real_wire, coop, share, cfg, sims)
+        _add_foresight(advice, state, real_wire, coop, share, cfg, sims, mate_jobs)
         if checked:
             advice["forecast_lines"] = [checked, *(advice.get("forecast_lines") or [])]
         # Personal build: number this turn's plays (1, 2, 3...) by playing
@@ -603,6 +607,30 @@ def compute_combat_advice(
 #: voice, not the move you play, so it gets a fraction of yours.
 TEAMMATE_SIMS = 3000
 
+_teammate_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="teammate")
+
+
+def _teammate_tip(mate: dict[str, Any], share: float, cfg: RecommendConfig, sims: int) -> str | None:
+    board = mate.get("board")
+    if not isinstance(board, dict):
+        return None
+    board = dict(board)
+    # From the teammate's seat, everyone else's share is the rest.
+    board["coop"] = {"teammate_share": max(0.0, 1.0 - share)}
+    mate_advice, *_ = compute_combat_advice(board, cfg, min(sims, TEAMMATE_SIMS), None, foresight=False)
+    line = mate_advice.get("pv") or []
+    best = (mate_advice.get("best") or {}).get("label")
+    what = " -> ".join(line[:4]) if line else (best or "end turn")
+    return f"{mate.get('name') or 'Teammate'}: {what}"
+
+
+def _start_teammate_tips(coop: dict[str, Any], share: float, cfg: RecommendConfig,
+                         sims: int) -> list[concurrent.futures.Future[str | None]]:
+    """Start each teammate's search on the pool; the sts2_rs searches release
+    the GIL, so they run while this seat's own search does."""
+    return [_teammate_pool.submit(_teammate_tip, mate, share, cfg, sims)
+            for mate in coop.get("teammates") or [] if isinstance(mate, dict)]
+
 
 def _add_foresight(
     advice: dict[str, Any],
@@ -612,6 +640,7 @@ def _add_foresight(
     share: float,
     cfg: RecommendConfig,
     sims: int,
+    mate_jobs: list[concurrent.futures.Future[str | None]] | None = None,
 ) -> None:
     """Attach the personal-build extras to combat ``advice``, each on its own
     so one failing never costs the move advice: the end-turn forecast and
@@ -667,21 +696,13 @@ def _add_foresight(
             f"co-op: your teammate has done {share:.0%} of the damage this fight; advice plans with that"
         )
     tips = []
-    for mate in coop.get("teammates") or []:
-        board = mate.get("board")
-        if not isinstance(board, dict):
-            continue
+    if mate_jobs is None:
+        mate_jobs = _start_teammate_tips(coop, share, cfg, sims)
+    for job in mate_jobs:
         try:
-            board = dict(board)
-            # From the teammate's seat, everyone else's share is the rest.
-            board["coop"] = {"teammate_share": max(0.0, 1.0 - share)}
-            mate_advice, *_ = compute_combat_advice(
-                board, cfg, min(sims, TEAMMATE_SIMS), None, foresight=False
-            )
-            line = mate_advice.get("pv") or []
-            best = (mate_advice.get("best") or {}).get("label")
-            what = " -> ".join(line[:4]) if line else (best or "end turn")
-            tips.append(f"{mate.get('name') or 'Teammate'}: {what}")
+            tip = job.result()
+            if tip:
+                tips.append(tip)
         except Exception as exc:
             logger.warning("teammate advice failed: %s", exc)
     if tips:
@@ -1967,6 +1988,10 @@ def _handle_advice_request(
         if coop.get("teammates") or int(coop.get("players") or state.get("player_count") or 1) > 1:
             sims = max(1, sims // 4)
         fight_cfg = fight_search_cfg(cfg, state)
+        # Personal build: root-parallel trees per decision (--threads /
+        # --boss-threads). On 50 logged decisions 16k on 4 trees matched one
+        # tree's quality at ~0.27 s vs ~1 s; 64k on 8 trees, ~0.6 s vs 6-12 s.
+        fight_cfg = dataclasses.replace(fight_cfg, threads=args.boss_threads if is_boss else args.threads)
         if advice_for in SCREEN_ADVICE_FOR:
             advice = compute_screen_advice(
                 state,
@@ -2189,7 +2214,8 @@ def main(argv: list[str] | None = None) -> int:
     # trees). 1 = the run agent's single tree. More trees trade decision
     # fidelity to the measured agent for wall-clock; only for a box too slow
     # for the single-tree budget.
-    parser.add_argument("--threads", type=int, default=1)
+    parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--boss-threads", type=int, default=8)
     parser.add_argument(
         "--log-dir",
         # Frozen exe: the CWD is the install dir (Program Files on a default
@@ -2323,6 +2349,7 @@ def main(argv: list[str] | None = None) -> int:
     # cores cannot buy wall-clock, and each extra worker still shrinks the
     # per-tree sim budget, so oversubscription is a pure quality loss.
     cores = os.cpu_count() or 1
+    args.boss_threads = max(1, min(args.boss_threads, cores))
     if args.threads > cores:
         logger.warning(
             "--threads %d exceeds %d available cores; using %d",

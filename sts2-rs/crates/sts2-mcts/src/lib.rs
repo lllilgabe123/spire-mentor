@@ -7383,8 +7383,20 @@ where
         .filter(|o| legal.contains(&o.action))
         .map(|o| (o.action.clone(), o.visits, o.mean_value))
         .collect();
+    // Same HP exception as `Mcts::sure_win_keeps_more_hp`: a proof says the
+    // fight is won, not at what HP, so a sibling that won every one of its
+    // merged playouts with a clearly higher mean outranks it. Without this
+    // the live advisor's root-parallel search ended a Tunneler turn into 19
+    // damage with Shrug It Off in hand.
+    let proven_q = |a: &Action| merged.iter().find(|o| &o.action == a).map(|o| o.mean_value);
+    let sure_best = merged
+        .iter()
+        .filter(|o| o.visits >= SURE_WIN_MIN_VISITS && o.wins == o.visits)
+        .map(|o| o.mean_value)
+        .fold(f32::NEG_INFINITY, f32::max);
     let best_action = proven_win
         .filter(|a| legal.contains(a))
+        .filter(|a| proven_q(a).is_none_or(|q| sure_best <= q + config.tie_eps.max(0.0)))
         .or_else(|| {
             pick_from_root_stats(&root_state, &config, &legal_stats)
                 .map(|i| legal_stats[i].0.clone())
