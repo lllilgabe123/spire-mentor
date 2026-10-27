@@ -59,11 +59,7 @@ pub(crate) fn remove_constrict_from_dead_applier(state: &mut CombatState, dead: 
         .map(|p| p.id)
         .collect();
     for pid in ids {
-        state.powers.retain(|p| p.id != pid);
-        state.player.powers.retain(|u| u.0 != pid);
-        for c in &mut state.creatures {
-            c.powers.retain(|u| u.0 != pid);
-        }
+        state.drop_power(pid);
     }
 }
 
@@ -80,11 +76,7 @@ pub(crate) fn remove_hex_from_dead_applier(state: &mut CombatState, dead: Creatu
         .map(|p| p.id)
         .collect();
     for pid in ids {
-        state.powers.retain(|p| p.id != pid);
-        state.player.powers.retain(|u| u.0 != pid);
-        for c in &mut state.creatures {
-            c.powers.retain(|u| u.0 != pid);
-        }
+        state.drop_power(pid);
     }
 }
 
@@ -119,11 +111,7 @@ pub(crate) fn remove_dampen_from_dead_applier(state: &mut CombatState, dead: Cre
         );
     }
     for pid in ids {
-        state.powers.retain(|p| p.id != pid);
-        state.player.powers.retain(|u| u.0 != pid);
-        for c in &mut state.creatures {
-            c.powers.retain(|u| u.0 != pid);
-        }
+        state.drop_power(pid);
     }
 }
 
@@ -142,11 +130,7 @@ pub(crate) fn remove_shrink_from_dead_applier(state: &mut CombatState, dead: Cre
         .map(|p| p.id)
         .collect();
     for pid in ids {
-        state.powers.retain(|p| p.id != pid);
-        state.player.powers.retain(|u| u.0 != pid);
-        for c in &mut state.creatures {
-            c.powers.retain(|u| u.0 != pid);
-        }
+        state.drop_power(pid);
     }
 }
 

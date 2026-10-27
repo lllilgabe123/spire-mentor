@@ -31,7 +31,7 @@ use std::sync::OnceLock;
 use regex::Regex;
 
 use super::features::Features;
-use super::obs::{ActionDesc, EventOptionObs, PpoObs, ShopCardObs, ShopEntryObs};
+use super::obs::{ActionDesc, CardEnchantObs, EventOptionObs, PpoObs, ShopCardObs, ShopEntryObs};
 use super::{mapfeat, vocab};
 
 // ── schema constants (mirror `model.py` verbatim) ───────────────────────
@@ -56,7 +56,7 @@ pub const N_CAT: usize = 12;
 /// that wants "the boss column" must name this constant rather than derive
 /// it from the width (`N_CAT - 1` silently became the enchant column).
 pub const CAT_BOSS: usize = 9;
-pub const N_CONT: usize = 25;
+pub const N_CONT: usize = 26;
 pub const GOLD_SCALE: f64 = 0.01;
 pub const DECK_SCALE: f64 = 0.05;
 pub const FLOOR_SCALE: f64 = 1.0 / 45.0;
@@ -104,6 +104,13 @@ pub const C_POTION_GAIN: usize = 21;
 pub const C_POTION_LOSS: usize = 22;
 pub const C_CARD_GAIN: usize = 23;
 pub const C_CARD_LOSS: usize = 24;
+/// The card's own enchantment amount (GH #947), on card and deck tokens,
+/// scaled by [`ENCH_AMT_SCALE`]. Written only under the `card_mods` feature;
+/// appended slot ⇒ a 25-cont champion drops it (see [`super::net`]).
+pub const C_ENCH_AMT: usize = 25;
+/// Enchantment amount * 0.1: stacks run 1..~10 (Sharp / Nimble carry their
+/// payload in the amount), so this keeps the slot ~O(1).
+pub const ENCH_AMT_SCALE: f64 = 0.1;
 
 /// One token's categorical id row (`[card, upg, relic, potion, room,
 /// event, fixed, optidx, surface, boss, deck_op, enchant]`).
@@ -362,6 +369,27 @@ fn card_tok(card_id: Option<&str>, upgraded: bool, price: i64, op: &str) -> (i64
     (SEC_CARD, cat, cont)
 }
 
+/// Stamp a card's own enchantment onto its token (GH #947): the id into the
+/// enchantment column, the amount into [`C_ENCH_AMT`]. A no-op unless
+/// [`Features::card_mods`] is on, and for an unenchanted card (the pad row
+/// stays). `list[i]` out of range — a short or absent list — is "not
+/// enchanted", like the upgrade flags. Mirrors `encoder.py::_stamp_enchant`.
+fn stamp_enchant(
+    features: Features,
+    cat: &mut Cat,
+    cont: &mut ContF64,
+    list: &[CardEnchantObs],
+    i: Option<i64>,
+) {
+    if !features.card_mods {
+        return;
+    }
+    if let Some((name, amount)) = i.and_then(|i| at(list, i)).and_then(Option::as_ref) {
+        cat[11] = vocab::enchantments().index(name) as i64;
+        cont[C_ENCH_AMT] = *amount as f64 * ENCH_AMT_SCALE;
+    }
+}
+
 fn fixed_tok(kind: &str, price: i64) -> (i64, Cat, ContF64) {
     let mut cat = empty_cat();
     cat[6] = vocab::fixed_index(kind) as i64;
@@ -398,6 +426,14 @@ struct Ctx<'a> {
     smith: &'a [String],
     removal: &'a [(String, bool)],
     grants: &'a [(String, bool)],
+    /// Per-card enchantments aligned with `deck` / `card_reward_ids` /
+    /// `smith` / `removal` / `grants` (GH #947). Short or empty means "not enchanted".
+    /// Only read under [`Features::card_mods`].
+    deck_ench: &'a [CardEnchantObs],
+    card_reward_ench: &'a [CardEnchantObs],
+    smith_ench: &'a [CardEnchantObs],
+    removal_ench: &'a [CardEnchantObs],
+    grants_ench: &'a [CardEnchantObs],
     transform_idxs: &'a [i64],
     enchant_idxs: &'a [i64],
     /// The UPPER_SNAKE enchantment id a pending deck-enchant pick will stamp
@@ -455,6 +491,17 @@ impl<'a> Ctx<'a> {
             smith: obs.smith_options.as_deref().unwrap_or(&[]),
             removal: obs.card_removal_options.as_deref().unwrap_or(&[]),
             grants: obs.card_grant_options.as_deref().unwrap_or(&[]),
+            deck_ench: obs.deck_enchantments.as_deref().unwrap_or(&[]),
+            card_reward_ench: obs
+                .card_reward_option_enchantments
+                .as_deref()
+                .unwrap_or(&[]),
+            smith_ench: obs.smith_option_enchantments.as_deref().unwrap_or(&[]),
+            removal_ench: obs
+                .card_removal_option_enchantments
+                .as_deref()
+                .unwrap_or(&[]),
+            grants_ench: obs.card_grant_option_enchantments.as_deref().unwrap_or(&[]),
             transform_idxs: obs.transform_select_deck_indices.as_deref().unwrap_or(&[]),
             enchant_idxs: obs.enchant_select_deck_indices.as_deref().unwrap_or(&[]),
             pending_enchantment: obs
@@ -507,7 +554,15 @@ fn build_action_token(ctx: &Ctx<'_>, a: &ActionDesc) -> (i64, Cat, ContF64) {
                 // mid-life is worse than keeping it blind.
                 let up = ctx.features.reward_upgrade
                     && at(ctx.card_reward_upgraded, *i).copied().unwrap_or(false);
-                card_tok(cid, up, 0, "reward")
+                let (sec, mut cat, mut cont) = card_tok(cid, up, 0, "reward");
+                stamp_enchant(
+                    ctx.features,
+                    &mut cat,
+                    &mut cont,
+                    ctx.card_reward_ench,
+                    Some(*i),
+                );
+                (sec, cat, cont)
             }
         },
         ActionDesc::SacrificeCardReward => fixed_tok("sacrifice", 0),
@@ -528,12 +583,30 @@ fn build_action_token(ctx: &Ctx<'_>, a: &ActionDesc) -> (i64, Cat, ContF64) {
         }
         ActionDesc::SmithCard { idx } => {
             let cid = at(ctx.smith, *idx).map(String::as_str);
-            card_tok(cid, false, 0, "smith")
+            let (sec, mut cat, mut cont) = card_tok(cid, false, 0, "smith");
+            stamp_enchant(
+                ctx.features,
+                &mut cat,
+                &mut cont,
+                ctx.smith_ench,
+                Some(*idx),
+            );
+            (sec, cat, cont)
         }
-        ActionDesc::RemoveDeckCard { idx } => match at(ctx.removal, *idx) {
-            Some((cid, up)) => card_tok(Some(cid.as_str()), *up, 0, "remove"),
-            None => card_tok(None, false, 0, "remove"),
-        },
+        ActionDesc::RemoveDeckCard { idx } => {
+            let (sec, mut cat, mut cont) = match at(ctx.removal, *idx) {
+                Some((cid, up)) => card_tok(Some(cid.as_str()), *up, 0, "remove"),
+                None => card_tok(None, false, 0, "remove"),
+            };
+            stamp_enchant(
+                ctx.features,
+                &mut cat,
+                &mut cont,
+                ctx.removal_ench,
+                Some(*idx),
+            );
+            (sec, cat, cont)
+        }
         ActionDesc::UpgradeDeckCard { idx } => {
             // `idx` is a position in the engine's `is_upgradable()` subset
             // (`run_manager.rs:954-968` offers it, `do_upgrade_deck_card_at`
@@ -543,40 +616,57 @@ fn build_action_token(ctx: &Ctx<'_>, a: &ActionDesc) -> (i64, Cat, ContF64) {
             // Ascender's Bane puts a curse in EVERY A5+ deck from floor 1).
             // The obs therefore carries the engine's own offer map, exactly
             // as transform/enchant do.
-            let ent = at(ctx.upgrade_idxs, *idx)
-                .copied()
-                .and_then(|di| at(ctx.deck, di));
-            match ent {
+            let di = at(ctx.upgrade_idxs, *idx).copied();
+            let ent = di.and_then(|di| at(ctx.deck, di));
+            let (sec, mut cat, mut cont) = match ent {
                 Some((cid, up)) => card_tok(Some(cid.as_str()), *up, 0, "upgrade"),
                 None => card_tok(None, false, 0, "upgrade"),
-            }
+            };
+            stamp_enchant(ctx.features, &mut cat, &mut cont, ctx.deck_ench, di);
+            (sec, cat, cont)
         }
         ActionDesc::TransformDeckCard { idx } => {
-            let ent = at(ctx.transform_idxs, *idx)
-                .copied()
-                .and_then(|di| at(ctx.deck, di));
-            match ent {
+            let di = at(ctx.transform_idxs, *idx).copied();
+            let ent = di.and_then(|di| at(ctx.deck, di));
+            let (sec, mut cat, mut cont) = match ent {
                 Some((cid, up)) => card_tok(Some(cid.as_str()), *up, 0, "transform"),
                 None => card_tok(None, false, 0, "transform"),
-            }
+            };
+            stamp_enchant(ctx.features, &mut cat, &mut cont, ctx.deck_ench, di);
+            (sec, cat, cont)
         }
         ActionDesc::EnchantDeckCard { idx } => {
-            let ent = at(ctx.enchant_idxs, *idx)
-                .copied()
-                .and_then(|di| at(ctx.deck, di));
-            let (sec, mut cat, cont) = match ent {
+            let di = at(ctx.enchant_idxs, *idx).copied();
+            let ent = di.and_then(|di| at(ctx.deck, di));
+            let (sec, mut cat, mut cont) = match ent {
                 Some((cid, up)) => card_tok(Some(cid.as_str()), *up, 0, "enchant"),
                 None => card_tok(None, false, 0, "enchant"),
             };
+            // The target's own enchantment first, then the pending one over
+            // its id: `CanEnchant` only admits a target that is unenchanted or
+            // already holds this same (stackable) enchantment, so the id
+            // agrees whenever both are set and the amount says how many
+            // stacks the target already has.
+            stamp_enchant(ctx.features, &mut cat, &mut cont, ctx.deck_ench, di);
             if let Some(name) = ctx.pending_enchantment {
                 cat[11] = vocab::enchantments().index(name) as i64;
             }
             (sec, cat, cont)
         }
-        ActionDesc::GrantDeckCard { idx } => match at(ctx.grants, *idx) {
-            Some((cid, up)) => card_tok(Some(cid.as_str()), *up, 0, "grant"),
-            None => card_tok(None, false, 0, "grant"),
-        },
+        ActionDesc::GrantDeckCard { idx } => {
+            let (sec, mut cat, mut cont) = match at(ctx.grants, *idx) {
+                Some((cid, up)) => card_tok(Some(cid.as_str()), *up, 0, "grant"),
+                None => card_tok(None, false, 0, "grant"),
+            };
+            stamp_enchant(
+                ctx.features,
+                &mut cat,
+                &mut cont,
+                ctx.grants_ench,
+                Some(*idx),
+            );
+            (sec, cat, cont)
+        }
         ActionDesc::ShopBuyCard { idx } => {
             let e = at(ctx.shop_cards, *idx);
             let cid = e.and_then(|e| e.id.as_deref());
@@ -624,8 +714,15 @@ fn build_action_token(ctx: &Ctx<'_>, a: &ActionDesc) -> (i64, Cat, ContF64) {
                 Some((c, u)) => (Some(c.as_str()), *u),
                 None => (None, false),
             };
-            let (sec, mut cat, cont) = card_tok(cid, up, ctx.shop_removal_cost, "shop_remove");
+            let (sec, mut cat, mut cont) = card_tok(cid, up, ctx.shop_removal_cost, "shop_remove");
             cat[6] = vocab::fixed_index("shop_remove") as i64;
+            stamp_enchant(
+                ctx.features,
+                &mut cat,
+                &mut cont,
+                ctx.deck_ench,
+                Some(*deck_idx),
+            );
             (sec, cat, cont)
         }
         ActionDesc::LeaveShop => fixed_tok("leave_shop", 0),
@@ -673,7 +770,7 @@ fn build_action_token(ctx: &Ctx<'_>, a: &ActionDesc) -> (i64, Cat, ContF64) {
                 .unwrap_or_else(|| event_payload(&format!("{label}. {description}"), ctx.max_hp));
             cont[C_GOLD_D] = gold_d * GOLD_SCALE;
             cont[C_HP_D] = hp_d;
-            cont[C_ENABLED] = if opt.map_or(true, |o| o.enabled) {
+            cont[C_ENABLED] = if opt.is_none_or(|o| o.enabled) {
                 1.0
             } else {
                 0.0
@@ -773,12 +870,20 @@ pub fn featurize_with(obs: &PpoObs, actions: &[ActionDesc], features: Features) 
     obs_sec.push(SEC_STATE);
 
     // Deck / relic / potion tokens.
-    for (cid, up) in ctx.deck {
+    for (i, (cid, up)) in ctx.deck.iter().enumerate() {
         let mut cat = empty_cat();
         cat[0] = vocab::cards().index(cid) as i64;
         cat[1] = i64::from(*up).min(vocab::MAX_UPGRADE);
+        let mut cont = [0.0f64; N_CONT];
+        stamp_enchant(
+            ctx.features,
+            &mut cat,
+            &mut cont,
+            ctx.deck_ench,
+            Some(i as i64),
+        );
         obs_cat.push(cat);
-        obs_cont.push([0.0f32; N_CONT]);
+        obs_cont.push(to_f32_arr(cont));
         obs_sec.push(SEC_DECK);
     }
     for rid in &obs.relics {
@@ -952,6 +1057,7 @@ mod tests {
             &actions,
             Features {
                 reward_upgrade: true,
+                card_mods: false,
             },
         );
         assert_eq!(f.act_cat[0][1], 0);
@@ -973,6 +1079,7 @@ mod tests {
             &actions,
             Features {
                 reward_upgrade: true,
+                card_mods: false,
             },
         );
         assert_eq!(f.act_cat[0][1], 0);
@@ -1155,5 +1262,146 @@ mod tests {
         assert_eq!(vocab::N_DECK_OP, vocab::DECK_OPS.len() + 1);
         assert_eq!(vocab::deck_op_index("enchant"), 6);
         assert_eq!(vocab::deck_op_index("nonsense"), 0); // "none"
+    }
+
+    // ── card_mods (GH #947) ─────────────────────────────────────────────
+
+    const CARD_MODS: Features = Features {
+        reward_upgrade: false,
+        card_mods: true,
+    };
+
+    /// A three-card deck whose middle card is Sharp ×3, an enchant pick
+    /// pending (Sharp) over deck positions 0 and 1, and a reward slate whose
+    /// second option is relic-stamped Nimble ×2.
+    fn enchanted_obs() -> (PpoObs, Vec<ActionDesc>) {
+        let obs: PpoObs = serde_json::from_value(serde_json::json!({
+            "phase": "CardReward",
+            "surface": "card-pick",
+            "seed": 0, "ascension": 0,
+            "deck": [["StrikeIronclad", false], ["Bash", false], ["DefendIronclad", true]],
+            "deck_enchantments": [null, ["SHARP", 3], null],
+            "relics": [], "potions": [],
+            "map": null, "map_coord": null,
+            "total_floor": 20, "act_index": 1, "act_floor": 4,
+            "hp": 80, "max_hp": 80, "gold": 99,
+            "deck_size": 3, "num_upgraded": 1, "num_relics": 0, "num_potions": 0,
+            "card_reward_option_ids": ["CARD.BASH", "CARD.SHRUG_IT_OFF"],
+            "card_reward_option_enchantments": [null, ["NIMBLE", 2]],
+            "enchant_select_deck_indices": [0, 1],
+            "pending_enchantment": "SHARP",
+        }))
+        .expect("obs");
+        let actions = vec![
+            ActionDesc::PickCardReward { idx: Some(0) },
+            ActionDesc::PickCardReward { idx: Some(1) },
+            ActionDesc::EnchantDeckCard { idx: 0 },
+            ActionDesc::EnchantDeckCard { idx: 1 },
+        ];
+        (obs, actions)
+    }
+
+    fn ench(name: &str) -> i64 {
+        vocab::enchantments().index(name) as i64
+    }
+
+    #[test]
+    fn card_mods_off_is_byte_identical_to_an_obs_without_the_fields() {
+        let (obs, actions) = enchanted_obs();
+        let mut bare = obs.clone();
+        bare.deck_enchantments = None;
+        bare.card_reward_option_enchantments = None;
+        let f = featurize_with(&obs, &actions, Features::default());
+        assert_eq!(f, featurize_with(&bare, &actions, Features::default()));
+        // Deck tokens (obs rows 1..=3) keep the pad enchantment and zero cont.
+        let pad = empty_cat()[11];
+        for t in 1..=3 {
+            assert_eq!(f.obs_cat[t][11], pad);
+            assert_eq!(f.obs_cont[t][C_ENCH_AMT].to_bits(), (0.0f32).to_bits());
+        }
+    }
+
+    #[test]
+    fn card_mods_stamps_deck_tokens_with_their_own_enchantment() {
+        let (obs, actions) = enchanted_obs();
+        let f = featurize_with(&obs, &actions, CARD_MODS);
+        let pad = empty_cat()[11];
+        assert_eq!(f.obs_sec[2], SEC_DECK);
+        assert_eq!(f.obs_cat[1][11], pad);
+        assert_eq!(f.obs_cat[2][11], ench("SHARP"));
+        assert_eq!(
+            f.obs_cont[2][C_ENCH_AMT].to_bits(),
+            ((3.0 * ENCH_AMT_SCALE) as f32).to_bits()
+        );
+        assert_eq!(f.obs_cat[3][11], pad);
+        // The card identity and upgrade columns are untouched.
+        let off = featurize_with(&obs, &actions, Features::default());
+        for t in 1..=3 {
+            assert_eq!(f.obs_cat[t][..11], off.obs_cat[t][..11]);
+        }
+    }
+
+    #[test]
+    fn card_mods_stamps_a_relic_stamped_reward_option() {
+        let (obs, actions) = enchanted_obs();
+        let f = featurize_with(&obs, &actions, CARD_MODS);
+        assert_eq!(f.act_cat[0][11], empty_cat()[11]);
+        assert_eq!(f.act_cat[1][11], ench("NIMBLE"));
+        assert_eq!(
+            f.act_cont[1][C_ENCH_AMT].to_bits(),
+            ((2.0 * ENCH_AMT_SCALE) as f32).to_bits()
+        );
+    }
+
+    #[test]
+    fn card_mods_enchant_target_keeps_the_pending_id_and_shows_existing_stacks() {
+        let (obs, actions) = enchanted_obs();
+        let f = featurize_with(&obs, &actions, CARD_MODS);
+        // Both targets carry the PENDING id (GH #545, unchanged) …
+        assert_eq!(f.act_cat[2][11], ench("SHARP"));
+        assert_eq!(f.act_cat[3][11], ench("SHARP"));
+        // … and only the already-Sharp target shows stacks in the amount.
+        assert_eq!(f.act_cont[2][C_ENCH_AMT].to_bits(), (0.0f32).to_bits());
+        assert_eq!(
+            f.act_cont[3][C_ENCH_AMT].to_bits(),
+            ((3.0 * ENCH_AMT_SCALE) as f32).to_bits()
+        );
+    }
+
+    #[test]
+    fn card_mods_tolerates_a_short_or_missing_enchantment_list() {
+        let (mut obs, actions) = enchanted_obs();
+        obs.deck_enchantments = Some(vec![None]);
+        obs.card_reward_option_enchantments = None;
+        let f = featurize_with(&obs, &actions, CARD_MODS);
+        let pad = empty_cat()[11];
+        assert_eq!(f.obs_cat[2][11], pad);
+        assert_eq!(f.act_cat[1][11], pad);
+    }
+
+    #[test]
+    fn card_mods_stamps_a_smith_option_through_its_own_list() {
+        let (mut obs, _) = enchanted_obs();
+        obs.smith_options = Some(vec!["StrikeIronclad".into(), "Bash".into()]);
+        obs.smith_option_enchantments = Some(vec![None, Some(("SHARP".into(), 3))]);
+        let actions = vec![
+            ActionDesc::SmithCard { idx: 0 },
+            ActionDesc::SmithCard { idx: 1 },
+        ];
+        let f = featurize_with(&obs, &actions, CARD_MODS);
+        assert_eq!(f.act_cat[0][11], empty_cat()[11]);
+        assert_eq!(f.act_cat[1][11], ench("SHARP"));
+        assert_eq!(
+            f.act_cont[1][C_ENCH_AMT].to_bits(),
+            ((3.0 * ENCH_AMT_SCALE) as f32).to_bits()
+        );
+    }
+
+    #[test]
+    fn enchant_amount_slot_is_appended_after_the_event_payload() {
+        // Appended, never inserted: a 25-cont champion is fed the first 25
+        // columns and must see exactly what it was trained on.
+        assert_eq!(C_ENCH_AMT, C_CARD_LOSS + 1);
+        assert_eq!(N_CONT, C_ENCH_AMT + 1);
     }
 }

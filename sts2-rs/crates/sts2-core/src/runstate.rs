@@ -3037,7 +3037,7 @@ impl RunState {
         let removable = crate::lookup_card_removable();
         self.master_deck
             .iter()
-            .filter(|c| removable.map_or(true, |f| f(c)))
+            .filter(|c| removable.is_none_or(|f| f(c)))
             .count()
     }
 
@@ -3069,7 +3069,7 @@ impl RunState {
     pub fn removal_offer_order(&self) -> Vec<usize> {
         let removable = crate::lookup_card_removable();
         let mut order: Vec<usize> = (0..self.master_deck.len())
-            .filter(|&i| removable.map_or(true, |f| f(&self.master_deck[i])))
+            .filter(|&i| removable.is_none_or(|f| f(&self.master_deck[i])))
             .collect();
         // Stable sort: Curse → key 0 (front, deck order preserved), else key 1
         // (deck order). `sort_by_key` is stable, matching C#'s OrderBy.
@@ -3097,6 +3097,45 @@ impl RunState {
             .iter()
             .filter(|c| c.is_upgradable())
             .map(|c| c.card_id)
+            .collect()
+    }
+
+    /// Master-deck position behind each option of the open run-level
+    /// [`crate::ChoiceKind::CardSelect`] prompt, index-aligned with its
+    /// `options`; empty when none is open.
+    ///
+    /// The rest-site Smith prompt is built 1:1 from
+    /// [`Self::upgradable_deck_cards`] in deck order and resolved by position
+    /// (`RunManager::do_smith_card_at`), so option `k` is the `k`-th
+    /// upgradable deck card. An option whose id does not match that card
+    /// (a prompt built some other way) gets `None` rather than a guess. Lets
+    /// a host read per-instance state (the enchantment, GH #947) that the
+    /// option itself, carrying only `(id, upgraded)`, has lost.
+    #[must_use]
+    pub fn card_select_option_deck_indices(&self) -> Vec<Option<usize>> {
+        let Some(pc) = self
+            .pending_choice
+            .as_ref()
+            .filter(|pc| pc.kind == crate::ChoiceKind::CardSelect)
+        else {
+            return Vec::new();
+        };
+        let upgradable: Vec<usize> = self
+            .master_deck
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.is_upgradable())
+            .map(|(i, _)| i)
+            .collect();
+        pc.options
+            .iter()
+            .enumerate()
+            .map(|(k, opt)| {
+                upgradable
+                    .get(k)
+                    .copied()
+                    .filter(|&i| self.master_deck[i].card_id == opt.card_id)
+            })
             .collect()
     }
 
@@ -4105,7 +4144,7 @@ impl RunState {
         let rank = crate::lookup_card_rarity_rank();
         let tezcatara_basic_strike = self.master_deck.iter().any(|c| {
             c.tags.contains(CardTag::Strike)
-                && rank.map_or(true, |f| f(c.card_id, self.game_version) == 1)
+                && rank.is_none_or(|f| f(c.card_id, self.game_version) == 1)
         });
         crate::boss_ancient_offers::AncientConditions {
             act_index: act_index_0based,
@@ -5411,7 +5450,7 @@ impl RunState {
     }
 }
 
-/// `Guilty.maxCombats` (v0.111.0 `Models.Cards/Guilty.cs:13`): the combats a
+/// `Guilty.maxCombats` (`Models.Cards/Guilty.cs:13`, both builds): the combats a
 /// Guilty stays in the deck before it removes itself.
 pub const GUILTY_MAX_COMBATS: i32 = 5;
 
@@ -8851,6 +8890,38 @@ mod tests {
         rs.master_deck.extend([anger, anger_up, strike]);
         let pool = rs.upgradable_deck_cards();
         assert_eq!(pool, vec![CardId::Anger, CardId::StrikeIronclad]);
+    }
+
+    /// GH #947: each Smith option names the k-th upgradable deck card, so an
+    /// upgraded copy ahead of it shifts the position; an option whose id does
+    /// not match its slot is left unplaced rather than guessed.
+    #[test]
+    fn card_select_option_deck_indices_skips_non_upgradable_cards() {
+        let opt = |card_id| crate::ChoiceOption {
+            card_id,
+            upgraded: false,
+            card_uid: None,
+            source_pile: None,
+        };
+        let mut rs = RunState::new();
+        assert!(rs.card_select_option_deck_indices().is_empty());
+        let mut anger_up = Card::pod_defaults();
+        anger_up.card_id = CardId::Anger;
+        anger_up.upgraded = true;
+        let mut anger = Card::pod_defaults();
+        anger.card_id = CardId::Anger;
+        let mut strike = Card::pod_defaults();
+        strike.card_id = CardId::StrikeIronclad;
+        rs.master_deck.extend([anger_up, anger, strike]);
+
+        let options: Vec<_> = rs.upgradable_deck_cards().into_iter().map(opt).collect();
+        assert!(rs.request_card_choice(crate::ChoiceKind::CardSelect, options, 1, 1, false));
+        assert_eq!(rs.card_select_option_deck_indices(), vec![Some(1), Some(2)]);
+
+        rs.pending_choice = None;
+        let options = vec![opt(CardId::StrikeIronclad)];
+        assert!(rs.request_card_choice(crate::ChoiceKind::CardSelect, options, 1, 1, false));
+        assert_eq!(rs.card_select_option_deck_indices(), vec![None]);
     }
 
     /// `offer_upgrade_cards_reward(count, None)` pushes a

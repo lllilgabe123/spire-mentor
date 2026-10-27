@@ -142,7 +142,8 @@ fn a_committed_champion_ignores_a_hostile_process_wide_feature_flag() {
     assert_eq!(
         Features::active(),
         Features {
-            reward_upgrade: true
+            reward_upgrade: true,
+            card_mods: false,
         },
         "the env var this test exists to defeat is not actually set"
     );
@@ -198,7 +199,8 @@ fn the_manifest_supplies_a_feature_the_environment_never_mentions() {
         assert_eq!(
             features_for(character),
             Features {
-                reward_upgrade: true
+                reward_upgrade: true,
+                card_mods: false,
             },
             "{character:?}'s champion declares features=\"reward_upgrade\" in \
              champions.toml, but resolved to the default schema with the \
@@ -229,7 +231,8 @@ fn an_explicit_model_override_still_reads_the_environment() {
         assert_eq!(
             features_for(character),
             Features {
-                reward_upgrade: true
+                reward_upgrade: true,
+                card_mods: false,
             },
             "{character:?}: with STS2_RUNAI_PPO pointing at a net no manifest \
              describes, STS2_PPO_FEATURES is the only schema declaration there \

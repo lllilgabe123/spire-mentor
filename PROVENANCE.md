@@ -92,7 +92,7 @@ file against the pinned donor source (`just fetch-donors`), and
   `sts2-rs/data/runai/nets/value_human_a0*` and `nets/*ranker*` (trained on
   the corpus's outcome labels), and the synergy catalogs above.
   Redistribution rights for player-uploaded data are unresolved.
-  One exception ships: the MCTS playout nets
+  Two exceptions ship. The first is the MCTS playout nets
   `sts2-rs/data/rollout_nets/ironclad.json` (owner decision, 2026-10-18),
   `sts2-rs/data/rollout_nets/defect.json` (owner decision, 2026-10-21, GH
   #825), `regent.json` (owner decision, 2026-10-21, GH #822), and
@@ -100,6 +100,16 @@ file against the pinned donor source (`just fetch-donors`), and
   extended by the owner, 2026-10-21, GH #823, #824). They were trained by the simulator's own search and playouts; the
   scraped runs supplied only the fight start positions (deck, relics, HP).
   The files hold network weights and no run data.
+  The second is the Ironclad MCTS move prior
+  `sts2-rs/data/prior_nets/ironclad.json` (owner decision, 2026-10-25, GH
+  #830): the PUCT prior the Ironclad run agent uses in elite and boss fights
+  (`sts2-rs/data/prior_nets/README.md`). Unlike the playout nets, it was
+  trained on human play: by behaviour cloning on 137,357 human combat
+  decisions, reconstructed from community-uploaded per-action replays. The
+  rights for that underlying player data stay unresolved; the owner decided
+  to ship the trained weights regardless. The file holds network weights and
+  a card/potion action-key vocabulary, no run data (its training metadata
+  was stripped). It is not one of the own-output trained artifacts of §3.
 - **Private infrastructure** — `sts2-pycli/deploy/` (Terraform, GCP identity,
   the deploy justfile), `sts2-pycli/web/wrangler.toml`, the root `Dockerfile`,
   `.gcloudignore`, `.dockerignore`, `sts2-pycli/packaging/`.

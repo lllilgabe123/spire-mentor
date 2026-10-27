@@ -433,7 +433,7 @@ pub fn dispatch_after_damage_received_on_monster_powers(
 
 /// Every card UID across the player's draw / hand / discard / exhaust piles,
 /// in that order. Shared helper for the per-card power-hook bodies below.
-fn all_player_card_uids(state: &CombatState) -> smallvec::SmallVec<[CardUid; 32]> {
+pub(crate) fn all_player_card_uids(state: &CombatState) -> smallvec::SmallVec<[CardUid; 32]> {
     let mut out: smallvec::SmallVec<[CardUid; 32]> = smallvec::SmallVec::new();
     out.extend(state.player.draw.iter().copied());
     out.extend(state.player.hand.iter().copied());

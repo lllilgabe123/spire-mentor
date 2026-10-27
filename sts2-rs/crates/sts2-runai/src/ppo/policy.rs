@@ -39,8 +39,8 @@ use super::net::PpoNet;
 #[cfg(feature = "ppo")]
 use super::obs::ActionDesc;
 use super::obs::{
-    BossNodeObs, Coord, EventOptionObs, FullMapObs, MapNodeObs, PpoObs, ShopCardObs, ShopEntryObs,
-    ShopObs,
+    card_enchant_obs, BossNodeObs, CardEnchantObs, Coord, EventOptionObs, FullMapObs, MapNodeObs,
+    PpoObs, ShopCardObs, ShopEntryObs, ShopObs,
 };
 
 /// `sts2-py::run_manager::phase_str` mirror. Kept local (rather than
@@ -400,12 +400,17 @@ fn build_shop_obs(inv: &ShopInventory) -> ShopObs {
 pub fn build_obs(rm: &RunManager, phase: &str, surface: Option<&str>) -> PpoObs {
     let rs = &rm.run_state;
 
-    let deck: Vec<(String, bool)> = effective_master_deck_indices(rm)
-        .into_iter()
-        .map(|i| {
+    let deck_idx = effective_master_deck_indices(rm);
+    let deck: Vec<(String, bool)> = deck_idx
+        .iter()
+        .map(|&i| {
             let c = &rs.master_deck[i];
             (format!("{:?}", c.card_id), c.upgraded)
         })
+        .collect();
+    let deck_enchantments: Vec<CardEnchantObs> = deck_idx
+        .iter()
+        .map(|&i| card_enchant_obs(&rs.master_deck[i].enchantments))
         .collect();
     let relics: Vec<String> = rs
         .relics
@@ -432,6 +437,7 @@ pub fn build_obs(rm: &RunManager, phase: &str, surface: Option<&str>) -> PpoObs 
         seed: i64::from(rm.seed),
         ascension: i64::from(rs.ascension_level),
         deck,
+        deck_enchantments: Some(deck_enchantments),
         relics,
         potions,
         map,
@@ -448,12 +454,16 @@ pub fn build_obs(rm: &RunManager, phase: &str, surface: Option<&str>) -> PpoObs 
         num_potions: rs.potions.len() as i64,
         card_reward_option_ids: None,
         card_reward_option_upgraded: None,
+        card_reward_option_enchantments: None,
         card_reward_bundles: None,
         relic_reward_ids: None,
         boss_relic_options: None,
         smith_options: None,
+        smith_option_enchantments: None,
         card_removal_options: None,
         card_grant_options: None,
+        card_removal_option_enchantments: None,
+        card_grant_option_enchantments: None,
         transform_select_deck_indices: None,
         enchant_select_deck_indices: None,
         pending_enchantment: None,
@@ -474,6 +484,12 @@ pub fn build_obs(rm: &RunManager, phase: &str, surface: Option<&str>) -> PpoObs 
                     .collect(),
             );
             obs.card_reward_option_upgraded = Some(rm.card_reward_upgraded_flags().to_vec());
+            obs.card_reward_option_enchantments = Some(
+                rm.card_reward_enchantments()
+                    .iter()
+                    .map(card_enchant_obs)
+                    .collect(),
+            );
             obs.card_reward_bundles = Some(rm.card_reward_bundles().map(|packs| {
                 packs
                     .iter()
@@ -517,6 +533,29 @@ pub fn build_obs(rm: &RunManager, phase: &str, surface: Option<&str>) -> PpoObs 
                         (format!("{:?}", c.card_id), c.upgraded)
                     })
                     .collect(),
+            );
+            obs.smith_option_enchantments = Some(
+                rs.card_select_option_deck_indices()
+                    .into_iter()
+                    .map(|i| i.and_then(|i| card_enchant_obs(&rs.master_deck[i].enchantments)))
+                    .collect(),
+            );
+            obs.card_removal_option_enchantments = Some(
+                rs.removal_offer_order()
+                    .into_iter()
+                    .map(|i| card_enchant_obs(&rs.master_deck[i].enchantments))
+                    .collect(),
+            );
+            obs.card_grant_option_enchantments = Some(
+                rs.pending_card_grants
+                    .first()
+                    .map(|g| {
+                        g.options
+                            .iter()
+                            .map(|c| card_enchant_obs(&c.enchantments))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             );
             obs.card_grant_options = Some(
                 rs.pending_card_grants
@@ -1056,7 +1095,7 @@ fn grouped_argmax(actions: &[ActionDesc], probs: &[f32]) -> Option<usize> {
     let mut best: Option<(usize, f32)> = None;
     for (i, action) in actions.iter().enumerate() {
         // `map_or(true, …)` not `is_none_or`: clippy.toml pins msrv 1.78.
-        if group_key(action, i) == winner && best.map_or(true, |(_, b)| probs[i] > b) {
+        if group_key(action, i) == winner && best.is_none_or(|(_, b)| probs[i] > b) {
             best = Some((i, probs[i]));
         }
     }

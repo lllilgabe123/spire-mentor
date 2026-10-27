@@ -23,7 +23,7 @@ exclude = ["fuzz"]
 [workspace.package]
 version = "0.0.1"
 edition = "2021"
-rust-version = "1.96"
+rust-version = "1.99"
 license = "MIT"
 authors = ["Thomas Friedel"]
 repository = "https://github.com/tfriedel/sts2-rs"
@@ -141,6 +141,9 @@ format_push_string = "allow"
 doc_markdown = "allow"
 doc_overindented_list_items = "allow"
 doc_lazy_continuation = "allow"
+# New in clippy 1.99: `assert!(x.is_empty())` → `assert_eq!(x, [] as [T; 0])`.
+# ~200 test asserts; the suggested rewrite reads worse and needs `T: PartialEq`.
+assert_is_empty = "allow"
 # `excessive_precision` was previously allow-listed because the texel
 # writeback flow (`scripts/texel_writeback.py`) emitted `repr(float)` into
 # f32 slots, re-introducing f64-precision literals on every tuning pass

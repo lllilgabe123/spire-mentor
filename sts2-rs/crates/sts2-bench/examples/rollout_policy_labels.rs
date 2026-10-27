@@ -274,7 +274,7 @@ fn main() -> std::io::Result<()> {
             let _ = w.flush();
         }
         let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if n % 10 == 0 || n == total {
+        if n.is_multiple_of(10) || n == total {
             eprintln!(
                 "[labels] {n}/{total} fights done ({rel}: {} rows)",
                 lines.len()

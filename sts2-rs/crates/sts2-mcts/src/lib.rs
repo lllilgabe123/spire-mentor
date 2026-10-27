@@ -55,8 +55,8 @@ use smallvec::SmallVec;
 use sts2_core::StepResult;
 use sts2_core::{
     apply as core_apply, evaluate_victory, evaluate_victory_carry, is_terminal, legal_actions,
-    loot_at_risk_hp_equiv, state_hash, terminal_value, victory_hp_equiv_to_q, victory_hp_surplus,
-    Action, CombatState,
+    loot_at_risk_hp_equiv, persistent_gain_hp_equiv, state_hash, terminal_value,
+    victory_hp_equiv_to_q, victory_hp_surplus, Action, CombatState, PersistentBaseline,
 };
 
 pub mod action_index;
@@ -68,6 +68,7 @@ pub mod hint;
 pub mod lethal_detector;
 pub mod motif;
 pub mod npz;
+pub mod prior_counts;
 pub mod quiescence;
 pub mod rollout_net;
 pub mod tt;
@@ -79,6 +80,8 @@ pub mod values;
 
 #[cfg(test)]
 mod leaf_playouts_tests;
+#[cfg(test)]
+mod prior_tests;
 #[cfg(test)]
 mod tree_reuse_tests;
 
@@ -474,6 +477,23 @@ pub struct MctsConfig {
     /// aggressively. Swept through `STS2_RUNAI_MCTS_OVERRIDES`
     /// (`loot_weight=…`).
     pub loot_weight: f32,
+    /// Multiplier on the persistent-gain bonus ([`persistent_gain_q`])
+    /// added at RichBoth win terminals: max HP, gold and run-scaling card
+    /// growth gained since the search root, all of which outlast the fight
+    /// (GH #839). Default `0.0` — off, byte-identical to the pre-#839
+    /// search — until a paired run A/B prices it. Swept through
+    /// `STS2_RUNAI_MCTS_OVERRIDES` (`persistent_weight=…`).
+    pub persistent_weight: f32,
+    /// The search root's run-level values that [`persistent_gain_q`]
+    /// measures gains against. Per-search state, not a knob:
+    /// [`prepare_search_root`] overwrites it from the root state (a fresh
+    /// search and a reused tree alike), so callers leave it at the default.
+    /// GH #839.
+    pub persistent_baseline: PersistentBaseline,
+    /// Multiplier on the co-op teammate penalty ([`teammate_penalty_q`]):
+    /// HP-equivalents per point of teammate HP missing. Default `1.0` — a
+    /// teammate's HP is worth what ours is. Inert solo (no `state.allies`).
+    pub teammate_weight: f32,
     /// Cheap 1-ply root guards inside the [`Self::tie_eps`] band
     /// (2026-08-09 A8 audit, FINDINGS §5 / recommendation 5). When
     /// `true` (default), [`Mcts::pick_root_action`] refines a
@@ -1056,6 +1076,14 @@ impl MctsConfig {
     /// Before GH #758 the advisor and the hint carried their own copy of
     /// the pre-#467 dialect and searched EndTurn at the engine's 0.5 / 0.4.
     ///
+    /// The run agent adds a per-character layer on top of this base, which
+    /// the interactive surfaces deliberately do not take: for Ironclad, the
+    /// gated knobs `sts2_runai::policy::IRONCLAD_SEARCH_KNOBS` (forms-aware
+    /// loss band, EndTurn widening 23.148, draw widening 4.0) and a built-in
+    /// move prior in elite and boss fights (GH #830). So "the deployed
+    /// search" means two things for Ironclad: this base for the advisor and
+    /// the hint, the layered one for the run agent.
+    ///
     /// BeliefDraw gets, in addition to the engine defaults:
     ///
     /// * `c_puct` = [`belief_draw_c_puct`] of the budget (F2 retune,
@@ -1064,9 +1092,10 @@ impl MctsConfig {
     /// * `endturn_widening_c / alpha` = [`BELIEF_DRAW_ENDTURN_WIDENING`]
     ///   (PR #467);
     /// * `rollout_policy` = [`RolloutPolicyKind::Net`] (GH #777): the
-    ///   built-in playout net for a character that has one, which today is
-    ///   only Ironclad. Every other character keeps the heuristic playout,
-    ///   with identical draws.
+    ///   built-in playout net of the fight's character
+    ///   ([`rollout_net::net_for`]). All five characters ship one; a fight
+    ///   without a net (no character, or a checkout without the file) keeps
+    ///   the heuristic playout, with identical draws.
     ///
     /// Every other mode is left untouched: those retunes were measured only
     /// under BeliefDraw. Call this BEFORE applying a caller's explicit
@@ -1225,6 +1254,9 @@ impl Default for MctsConfig {
             loss_turns_half_life: LOSS_QUALITY_TURNS_HALF_LIFE,
             loss_span: LOSS_GRADIENT_LEAF_SPAN,
             loot_weight: 1.0,
+            persistent_weight: 0.0,
+            persistent_baseline: PersistentBaseline::default(),
+            teammate_weight: 1.0,
             root_guards: true,
             potion_charge_q: None,
             root_drink_mask: false,
@@ -1254,6 +1286,14 @@ impl Default for MctsConfig {
 /// only [`UniformPolicy`].
 pub trait Policy {
     /// Return a probability vector aligned with `actions`.
+    ///
+    /// Must be pure in its output: equal arguments give the same vector,
+    /// bit for bit, on every call (no RNG, no state carried between calls
+    /// that moves the output). The search caches it per node
+    /// ([`Mcts::with_prior_cache`]), so an impl that is not pure would make
+    /// the cached search differ from the uncached one. Diagnostic counters
+    /// an impl keeps (e.g. [`LearnedPolicyPriorStats`]) count evaluations,
+    /// which the cache makes per node rather than per read.
     fn prior(&self, state: &CombatState, actions: &[Action]) -> SmallVec<[f32; 16]>;
 }
 
@@ -2427,6 +2467,20 @@ pub struct Mcts<P: Policy = UniformPolicy> {
     /// What [`MctsConfig::net_expand_order`] did. See
     /// [`Self::expand_order_stats`].
     expand_order: ExpandOrderStats,
+    /// The PUCT prior of each decision node the descent has read it at,
+    /// indexed by `NodeId`, with the child count it was computed for (GH
+    /// #830). Touched only under [`MctsConfig::use_puct_prior`]. A node's
+    /// state never changes within a search and [`Policy::prior`] is pure,
+    /// so an entry is the vector a fresh call returns while the node keeps
+    /// that many children. Under `fpu_reduction == None` the descent reads
+    /// the prior only once every edge is expanded, so the count never
+    /// changes after the first read. Cleared wholesale wherever nodes,
+    /// their states or the policy change ([`Self::reroot`],
+    /// [`Self::reroot_observed`], [`Self::with_root_allowed`],
+    /// [`Self::set_policy`]).
+    prior_cache: Vec<Option<(u16, Box<[f32]>)>>,
+    /// [`Self::with_prior_cache`].
+    prior_cache_on: bool,
 }
 
 impl Mcts<UniformPolicy> {
@@ -2468,6 +2522,52 @@ fn prepare_search_root(root_state: &mut CombatState, config: &mut MctsConfig) {
     // (`CHANCE_TT_SIZE_LOG2`) since chance trees are small and the table is
     // reallocated per move in closed-loop play.
     config.use_transposition_table = true;
+    // GH #839: persistent gains are priced against the root, whatever
+    // the caller left in the field.
+    config.persistent_baseline = PersistentBaseline::of(root_state);
+}
+
+/// The PUCT prior of decision node `node_id` (`node`, holding `state`): its
+/// [`Mcts::prior_cache`] entry when that was computed for this many
+/// children, else `policy`'s prior over the child edges resolved against
+/// `state`, stored when `cache_on`. Counts the read
+/// ([`prior_counts`]) and nothing else.
+///
+/// Out of line: inlined, it grew the descent enough to slow every search,
+/// the prior-less default included.
+#[inline(never)]
+fn node_prior<P: Policy>(
+    policy: &P,
+    cache: &mut Vec<Option<(u16, Box<[f32]>)>>,
+    cache_on: bool,
+    node_id: NodeId,
+    node: &MctsNode,
+    state: &CombatState,
+) -> SmallVec<[f32; 16]> {
+    prior_counts::count_lookup();
+    let k = node.children.len();
+    let slot = node_id.0 as usize;
+    if cache_on {
+        if let Some(Some((count, p))) = cache.get(slot) {
+            if usize::from(*count) == k {
+                return SmallVec::from_slice(p);
+            }
+        }
+    }
+    // Unresolved (filtered) children get a placeholder EndTurn.
+    let actions: SmallVec<[Action; 16]> = node
+        .children
+        .iter()
+        .map(|(edge, _)| edge.resolve(state).unwrap_or(Action::EndTurn))
+        .collect();
+    let p = policy.prior(state, &actions);
+    if let (true, Ok(count)) = (cache_on, u16::try_from(k)) {
+        if cache.len() <= slot {
+            cache.resize_with(slot + 1, || None);
+        }
+        cache[slot] = Some((count, p.as_slice().into()));
+    }
+    p
 }
 
 /// The child edges a decision node holding `state` expands, in expansion
@@ -2605,6 +2705,8 @@ pub struct RerootKept {
 impl<P: Policy> Mcts<P> {
     /// Construct an MCTS engine with a custom policy.
     pub fn with_policy(mut root_state: CombatState, mut config: MctsConfig, policy: P) -> Self {
+        // Co-op teammates play their remaining hand inside `apply(EndTurn)`.
+        sts2_core::coop::register_teammate_policy(expert::teammate_policy);
         prepare_search_root(&mut root_state, &mut config);
         let mut tree = MctsTree::new(root_state, config.use_lethal_detector);
         // Reserve the node arena up front from the simulation budget so the
@@ -2657,7 +2759,29 @@ impl<P: Policy> Mcts<P> {
             dpw_cap_params: [(0, 0), (0, 0), (0, 0)],
             endturn_prefix_guess: 1,
             expand_order: ExpandOrderStats::default(),
+            prior_cache: Vec::new(),
+            prior_cache_on: true,
         }
+    }
+
+    /// Cache the PUCT prior per node (the default) or recompute it on every
+    /// read ([`Self::prior_cache`]). The two searches are identical; the
+    /// switch exists to check that (GH #830) and to measure what the cache
+    /// saves. Not a tuning knob.
+    #[must_use]
+    pub fn with_prior_cache(mut self, on: bool) -> Self {
+        self.prior_cache_on = on;
+        self.prior_cache.clear();
+        self
+    }
+
+    /// Swap the PUCT prior, e.g. on a kept tree ([`Self::reroot_observed`])
+    /// that the next decision searches under its own prior. Clears the
+    /// per-node prior cache, which holds the old prior's vectors. Prefer this
+    /// over assigning [`Self::policy`].
+    pub fn set_policy(&mut self, policy: P) {
+        self.policy = policy;
+        self.prior_cache.clear();
     }
 
     /// Swap the leaf-score function. Default is [`LeafEval::Texel`]
@@ -2697,6 +2821,8 @@ impl<P: Policy> Mcts<P> {
         }
         self.root_allowed = Some(edges);
         self.root_stats.clear();
+        // The root's cached prior was computed over its old children.
+        self.prior_cache.clear();
         self
     }
 
@@ -3549,7 +3675,7 @@ impl<P: Policy> Mcts<P> {
         let mut best: Option<(Action, u32)> = None;
         for (edge, cid) in &node.children {
             let child = self.tree.node(*cid);
-            if child.proven_win && best.as_ref().map_or(true, |&(_, v)| child.visits > v) {
+            if child.proven_win && best.as_ref().is_none_or(|&(_, v)| child.visits > v) {
                 if let Some(action) = edge.resolve(&self.tree.root_state) {
                     best = Some((action, child.visits));
                 }
@@ -3825,6 +3951,9 @@ impl<P: Policy> Mcts<P> {
         if let Some(tt) = self.transposition.as_mut() {
             tt.clear();
         }
+        // The prior cache is keyed by the same stale NodeIds, and the new
+        // root holds a new state.
+        self.prior_cache.clear();
         // W4 (`sts2-rs-dm5z`): reroot invalidates the best-sequence
         // tracker — those actions started at the OLD root and have
         // already been (partially) committed by the caller. Reset to
@@ -4156,6 +4285,9 @@ impl<P: Policy> Mcts<P> {
         self.depth_cap_hits = 0;
         self.rollout_leaves = 0;
         self.expand_order = ExpandOrderStats::default();
+        // Renumbered nodes, and a root whose state was replaced (a chance
+        // outcome's hand order and uids can differ from the realized ones).
+        self.prior_cache.clear();
         self.stale_child_edges = 0;
         self.failed_apply = 0;
         self.invalid_target = 0;
@@ -4437,7 +4569,8 @@ impl<P: Policy> Mcts<P> {
             match self.config.terminal_eval_mode {
                 TerminalEvalMode::Binary | TerminalEvalMode::RichLoss => 1.0,
                 TerminalEvalMode::RichBoth => {
-                    win_value(state, &self.config) - loot_penalty_q(state, &self.config)
+                    win_value(state, &self.config) - run_penalty_q(state, &self.config)
+                        + persistent_gain_q(state, &self.config)
                 }
             }
         } else if leaf_proven_loss {
@@ -4657,25 +4790,18 @@ impl<P: Policy> Mcts<P> {
                 .realized
                 .as_deref()
                 .expect("decision node has realized state in chance mode");
-            // Resolve each child edge once, for the learned prior's action
-            // list. Skipped entirely when the prior is off, so the default
-            // config does no extra resolve work.
-            let resolved: SmallVec<[Option<Action>; 16]> = if self.config.use_puct_prior {
-                n.children
-                    .iter()
-                    .map(|(edge, _)| edge.resolve(state_ref))
-                    .collect()
-            } else {
-                SmallVec::new()
-            };
+            // The learned prior ([`node_prior`]). Skipped entirely when the
+            // prior is off, so the default config does no extra resolve work
+            // and never touches the cache.
             let puct_priors: Option<SmallVec<[f32; 16]>> = if self.config.use_puct_prior {
-                // Unresolved (filtered) children get a placeholder EndTurn; the
-                // slot is never consumed (their `resolved` entry is `None`).
-                let actions: SmallVec<[Action; 16]> = resolved
-                    .iter()
-                    .map(|r| r.clone().unwrap_or(Action::EndTurn))
-                    .collect();
-                Some(self.policy.prior(state_ref, &actions))
+                Some(node_prior(
+                    &self.policy,
+                    &mut self.prior_cache,
+                    self.prior_cache_on,
+                    node_id,
+                    n,
+                    state_ref,
+                ))
             } else {
                 None
             };
@@ -6027,7 +6153,7 @@ pub fn terminal_state_value_with(
         }
         TerminalEvalMode::RichBoth => {
             if state.player_won {
-                win_value(state, cfg) - loot_penalty_q(state, cfg)
+                win_value(state, cfg) - run_penalty_q(state, cfg) + persistent_gain_q(state, cfg)
             } else {
                 -1.0 + 0.5 * loss_leaf_value(state, leaf_eval, cfg)
             }
@@ -6081,6 +6207,72 @@ pub fn loot_penalty_q(state: &CombatState, cfg: &MctsConfig) -> f32 {
     } else {
         0.0
     }
+}
+
+/// Hard cap on [`persistent_gain_q`]'s magnitude, in root-Q units. The
+/// RichBoth win band bottoms out at `+1.0` and `Bucket::from_value` splits
+/// wins from ties at `+0.5`, so a loss-signed term under `0.5` (Debt's
+/// gold, Brightest Flame's max HP) keeps a won combat bucketing as a win;
+/// the same bound on the gain side stops a far-future growth estimate from
+/// swamping the HP the fight actually costs. Mirrors [`LOOT_PENALTY_Q_CAP`].
+const PERSISTENT_GAIN_Q_CAP: f32 = 0.45;
+
+/// The persistent-gain bonus, in root-Q units, for a WON combat: what the
+/// position gained since the search root that outlasts the fight
+/// ([`sts2_core::persistent_gain_hp_equiv`]), at the victory band's HP
+/// exchange rate. Scaled by [`MctsConfig::persistent_weight`] and clamped
+/// to `±`[`PERSISTENT_GAIN_Q_CAP`]. Charged at win terminals only, not at
+/// depth-cut leaves: a leaf's value is tanh-bounded under `1.0` so every
+/// win outranks it, and a bonus there could lift an unresolved line above
+/// a certain win. GH #839.
+#[must_use]
+pub fn persistent_gain_q(state: &CombatState, cfg: &MctsConfig) -> f32 {
+    if cfg.persistent_weight == 0.0 {
+        return 0.0;
+    }
+    let q = victory_hp_equiv_to_q(persistent_gain_hp_equiv(state, &cfg.persistent_baseline))
+        * cfg.persistent_weight;
+    if q.is_finite() {
+        q.clamp(-PERSISTENT_GAIN_Q_CAP, PERSISTENT_GAIN_Q_CAP)
+    } else {
+        0.0
+    }
+}
+
+/// The co-op teammates' missing HP, in root-Q units at the victory band's HP
+/// exchange rate, scaled by [`MctsConfig::teammate_weight`]. Always `>= 0`
+/// and `0` solo.
+///
+/// The search scores our HP and the fight's outcome; without this a card
+/// that blocks or heals a teammate (Lift, Demonic Shield, Intercept's cover)
+/// buys nothing. The enemy turn the board was read on hits the teammates
+/// (see `CoopState::threat_round`), so what this charges is the damage
+/// that turn lands on them, on top of what they were already missing — a
+/// constant across one root's lines, so it ranks them by the HP they lose.
+#[must_use]
+pub fn teammate_penalty_q(state: &CombatState, cfg: &MctsConfig) -> f32 {
+    if cfg.teammate_weight == 0.0 || state.allies.is_empty() {
+        return 0.0;
+    }
+    let missing: i32 = state
+        .allies
+        .iter()
+        .map(|a| (a.max_hp - a.current_hp).max(0))
+        .sum();
+    #[allow(clippy::cast_precision_loss)]
+    let q = victory_hp_equiv_to_q(missing as f32) * cfg.teammate_weight;
+    if q.is_finite() {
+        q.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+/// Everything a won or cut-off line still owes the run beyond our own HP:
+/// [`loot_penalty_q`] plus [`teammate_penalty_q`], jointly capped at
+/// [`LOOT_PENALTY_Q_CAP`] so a won combat still buckets as a win.
+fn run_penalty_q(state: &CombatState, cfg: &MctsConfig) -> f32 {
+    (loot_penalty_q(state, cfg) + teammate_penalty_q(state, cfg)).min(LOOT_PENALTY_Q_CAP)
 }
 
 /// Denominator offset for the turns-survived term of [`loss_quality`]:
@@ -6595,7 +6787,7 @@ pub fn pick_from_root_stats(
     // visit tie (first-max semantics, `pick_root_action` rule 6).
     let mut pick: Option<(usize, u32)> = None;
     for (i, &(_, visits, score)) in scored.iter().enumerate() {
-        if score >= best_score - eps && pick.map_or(true, |(_, best_v)| visits > best_v) {
+        if score >= best_score - eps && pick.is_none_or(|(_, best_v)| visits > best_v) {
             pick = Some((i, visits));
         }
     }
@@ -6610,7 +6802,7 @@ pub fn pick_from_root_stats(
             for (i, (action, visits, score)) in scored.iter().enumerate() {
                 if *score >= best_score - eps
                     && root_hand_card(state, action).is_some_and(satisfies)
-                    && best.map_or(true, |(_, v)| *visits > v)
+                    && best.is_none_or(|(_, v)| *visits > v)
                 {
                     best = Some((i, *visits));
                 }
@@ -6715,8 +6907,7 @@ fn junk_dispose_band_pick(
         let Some(rank) = root_choice_junk_rank(state, action) else {
             continue;
         };
-        if rank < winner_rank
-            && best.map_or(true, |(_, r, v)| rank < r || (rank == r && *visits > v))
+        if rank < winner_rank && best.is_none_or(|(_, r, v)| rank < r || (rank == r && *visits > v))
         {
             best = Some((i, rank, *visits));
         }
@@ -6825,7 +7016,7 @@ fn depth_cut_value(state: &CombatState, leaf_eval: &LeafEval, cfg: &MctsConfig) 
     // `SwipeStolen` entry to `reclaimed` / banks its `HeistPower` gold, which
     // is exactly what zeroes the term. Floored just inside `-1.0` to preserve
     // the loss-band ordering `LOSS_GRADIENT_LEAF_SPAN` documents.
-    (base - loot_penalty_q(state, cfg)).max(LOOT_ADJUSTED_LEAF_FLOOR)
+    (base - run_penalty_q(state, cfg)).max(LOOT_ADJUSTED_LEAF_FLOOR)
 }
 
 /// The [`EdgeAction::PlayCard`] identity of a `PlayCard` action — the key
@@ -7375,6 +7566,7 @@ mod tests {
             is_over: true,
             player_won: true,
             escaped_creatures: 1,
+            coop: sts2_core::coop::CoopState::default(),
             ..CombatState::default()
         };
         fled.player.current_hp = 40;
@@ -7439,6 +7631,40 @@ mod tests {
         clean.reclaim_swipe_on_death(thief);
         assert_eq!(loot_penalty_q(&clean, &on), 0.0);
         assert_eq!(depth_cut_value(&clean, &leaf, &on), leaf.evaluate(&clean));
+    }
+
+    /// Co-op: a teammate's missing HP costs what ours would, at the victory
+    /// band's exchange rate; solo (or with the weight at 0) nothing changes,
+    /// and with the loot it stays under the shared cap.
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn teammate_penalty_charges_their_missing_hp() {
+        let leaf = LeafEval::Texel;
+        let on = MctsConfig::default();
+        let mut solo = CombatState::default();
+        solo.player.current_hp = 40;
+        solo.player.max_hp = 80;
+        assert_eq!(teammate_penalty_q(&solo, &on), 0.0);
+        assert_eq!(depth_cut_value(&solo, &leaf, &on), leaf.evaluate(&solo));
+
+        let mut coop = solo.clone();
+        coop.allies.push(sts2_core::PlayerCombatState {
+            current_hp: 50,
+            max_hp: 61,
+            ..sts2_core::PlayerCombatState::default()
+        });
+        let q = teammate_penalty_q(&coop, &on);
+        assert!((q - victory_hp_equiv_to_q(11.0)).abs() < 1e-6, "{q}");
+        assert!(depth_cut_value(&coop, &leaf, &on) < leaf.evaluate(&coop));
+        let off = MctsConfig {
+            teammate_weight: 0.0,
+            ..MctsConfig::default()
+        };
+        assert_eq!(teammate_penalty_q(&coop, &off), 0.0);
+
+        coop.allies[0].current_hp = 0;
+        coop.allies[0].max_hp = 1000;
+        assert_eq!(run_penalty_q(&coop, &on), LOOT_PENALTY_Q_CAP);
     }
 
     /// The charge is bounded on both sides: never negative, never past
@@ -7624,12 +7850,14 @@ mod tests {
                 pending_end_turn_resume: None,
                 pending_autoplay_resume: None,
                 autoplay_inline_resolve: false,
+                vakuu_selector: false,
                 pending_curse_choice: None,
                 pending_potion_hook_resume: None,
                 pending_enemy_exec_resume: None,
                 combat_log: TurnEvents::default(),
                 swipe_stolen: Vec::new(),
                 escaped_creatures: 0,
+                coop: sts2_core::coop::CoopState::default(),
                 heist_recovered_gold: 0,
                 event_combat_timed_out: false,
                 gold: 0,
@@ -7903,12 +8131,14 @@ mod tests {
             pending_end_turn_resume: None,
             pending_autoplay_resume: None,
             autoplay_inline_resolve: false,
+            vakuu_selector: false,
             pending_curse_choice: None,
             pending_potion_hook_resume: None,
             pending_enemy_exec_resume: None,
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
+            coop: sts2_core::coop::CoopState::default(),
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,
@@ -8258,12 +8488,14 @@ mod tests {
                 pending_end_turn_resume: None,
                 pending_autoplay_resume: None,
                 autoplay_inline_resolve: false,
+                vakuu_selector: false,
                 pending_curse_choice: None,
                 pending_potion_hook_resume: None,
                 pending_enemy_exec_resume: None,
                 combat_log: TurnEvents::default(),
                 swipe_stolen: Vec::new(),
                 escaped_creatures: 0,
+                coop: sts2_core::coop::CoopState::default(),
                 heist_recovered_gold: 0,
                 event_combat_timed_out: false,
                 gold: 0,
@@ -8450,12 +8682,14 @@ mod tests {
             pending_end_turn_resume: None,
             pending_autoplay_resume: None,
             autoplay_inline_resolve: false,
+            vakuu_selector: false,
             pending_curse_choice: None,
             pending_potion_hook_resume: None,
             pending_enemy_exec_resume: None,
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
+            coop: sts2_core::coop::CoopState::default(),
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,
@@ -8622,12 +8856,14 @@ mod tests {
             pending_end_turn_resume: None,
             pending_autoplay_resume: None,
             autoplay_inline_resolve: false,
+            vakuu_selector: false,
             pending_curse_choice: None,
             pending_potion_hook_resume: None,
             pending_enemy_exec_resume: None,
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
+            coop: sts2_core::coop::CoopState::default(),
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,
@@ -12098,12 +12334,14 @@ mod tests {
             pending_end_turn_resume: None,
             pending_autoplay_resume: None,
             autoplay_inline_resolve: false,
+            vakuu_selector: false,
             pending_curse_choice: None,
             pending_potion_hook_resume: None,
             pending_enemy_exec_resume: None,
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
+            coop: sts2_core::coop::CoopState::default(),
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,

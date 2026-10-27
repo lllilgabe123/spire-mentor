@@ -287,6 +287,28 @@ pub struct ParsedState {
     /// output and saw a 12-damage Strength-buffed telegraph come back
     /// as 10.
     pub intent_amounts: IntentAmounts,
+    /// Co-op teammates (`$.allies`, optional; absent or empty in a solo
+    /// fight). HP and block always; with `hand` the teammate is a whole seat
+    /// whose remaining plays the engine simulates (`sts2_core::coop`).
+    pub allies: Vec<ParsedAlly>,
+}
+
+/// One co-op teammate on the wire (`$.allies[i]`).
+#[derive(Debug, Clone)]
+pub struct ParsedAlly {
+    pub hp: i32,
+    pub max_hp: i32,
+    pub block: i32,
+    /// `class` (e.g. `"Silent"`), optional.
+    pub class: Option<String>,
+    pub energy: i32,
+    pub max_energy: i32,
+    pub powers: Vec<ParsedPower>,
+    /// The teammate's hand, in the player hand's card shape. `None` when the
+    /// producer sent only HP and block: such a teammate is not simulated.
+    pub hand: Option<Vec<ParsedCard>>,
+    /// They pressed end turn already: nothing of theirs is left to simulate.
+    pub ended_turn: bool,
 }
 
 /// See [`ParsedState::intent_amounts`].
@@ -825,6 +847,8 @@ pub fn parse_state_dict<V: WireValue>(d: &V) -> WireResult<ParsedState> {
     let deck_dict = as_dict(&deck_val, "$.deck")?;
     let deck = parse_deck(&deck_dict)?;
 
+    let allies = parse_allies(d)?;
+
     let enc_val = get_item(d, "$", "encounter")?;
     let enc_list = as_list(&enc_val, "$.encounter")?;
     let mut encounter = Vec::with_capacity(enc_list.len());
@@ -862,7 +886,66 @@ pub fn parse_state_dict<V: WireValue>(d: &V) -> WireResult<ParsedState> {
         game_version,
         intent_damage_known,
         intent_amounts,
+        allies,
     })
+}
+
+fn parse_allies<V: WireValue>(d: &V) -> WireResult<Vec<ParsedAlly>> {
+    let Some(v) = extract_optional(d, "allies") else {
+        return Ok(Vec::new());
+    };
+    let list = as_list(&v, "$.allies")?;
+    // `CreatureRef::Ally` indexes with a u8; co-op caps at 4 players.
+    if list.len() > 3 {
+        return Err(schema_err("$.allies", "at most 3 teammates"));
+    }
+    let mut allies = Vec::with_capacity(list.len());
+    for (i, item) in list.iter().enumerate() {
+        let path = format!("$.allies[{i}]");
+        let a = as_dict(item, &path)?;
+        let opt_i32 = |key: &str| -> WireResult<i32> {
+            if extract_optional(&a, key).is_some() {
+                extract_i32(&a, &path, key)
+            } else {
+                Ok(0)
+            }
+        };
+        let class = match extract_optional(&a, "class") {
+            Some(_) => Some(extract_str(&a, &path, "class")?),
+            None => None,
+        };
+        let powers = match extract_optional(&a, "powers") {
+            Some(v) => parse_powers(&v, &format!("{path}.powers"))?,
+            None => Vec::new(),
+        };
+        let hand = match extract_optional(&a, "hand") {
+            Some(v) => Some(parse_pile(&v, &format!("{path}.hand"))?),
+            None => None,
+        };
+        let ended_turn = match extract_optional(&a, "ended_turn") {
+            Some(_) => extract_bool(&a, &path, "ended_turn")?,
+            None => false,
+        };
+        let ally = ParsedAlly {
+            hp: extract_i32(&a, &path, "hp")?,
+            max_hp: extract_i32(&a, &path, "max_hp")?,
+            block: extract_i32(&a, &path, "block")?,
+            class,
+            energy: opt_i32("energy")?,
+            max_energy: opt_i32("max_energy")?,
+            powers,
+            hand,
+            ended_turn,
+        };
+        if ally.energy < 0 || ally.max_energy < 0 {
+            return Err(schema_err(&path, "energy must be >= 0"));
+        }
+        if ally.hp < 0 || ally.block < 0 || ally.hp > ally.max_hp {
+            return Err(schema_err(&path, &format!("bad hp/block {ally:?}")));
+        }
+        allies.push(ally);
+    }
+    Ok(allies)
 }
 
 fn parse_player<V: WireValue>(d: &V) -> WireResult<ParsedPlayer> {
@@ -3013,6 +3096,21 @@ pub fn state_from_dict_impl(parsed: &ParsedState) -> WireResult<CoreCombatState>
         ascension: parsed.ascension,
         game_version: parsed.game_version,
         is_elite: parsed.is_elite,
+        allies: parsed
+            .allies
+            .iter()
+            .map(|a| sts2_core::PlayerCombatState {
+                current_hp: a.hp,
+                max_hp: a.max_hp,
+                block: a.block,
+                ..sts2_core::PlayerCombatState::default()
+            })
+            .collect(),
+        coop: sts2_core::coop::CoopState {
+            threat_round: (!parsed.allies.is_empty())
+                .then(|| u16::try_from(parsed.round).unwrap_or(0)),
+            ..sts2_core::coop::CoopState::default()
+        },
         ..CoreCombatState::default()
     };
 
@@ -4070,6 +4168,49 @@ pub fn state_from_dict_impl(parsed: &ParsedState) -> WireResult<CoreCombatState>
     // serialization outright ("power uid 3 not in arena").
     if let Some(osty) = parsed.player.osty.as_ref() {
         state.restore_osty(osty.hp, osty.max_hp, osty.block);
+    }
+
+    // Co-op seats. A teammate that came with a hand is a whole player whose
+    // remaining plays the engine simulates (`sts2_core::coop`): their powers
+    // and hand join the arenas AFTER everything else, so every solo uid is
+    // unchanged, and their relics (not on the wire) start empty.
+    if parsed.allies.iter().any(|a| a.hand.is_some()) {
+        sts2_core::coop::open_seats(&mut state);
+    }
+    for (i, a) in parsed.allies.iter().enumerate() {
+        let Some(hand) = a.hand.as_ref() else {
+            continue;
+        };
+        let seat = &mut state.allies[i];
+        seat.energy = i8::try_from(a.energy).unwrap_or(i8::MAX);
+        seat.max_energy = i8::try_from(a.max_energy).unwrap_or(i8::MAX);
+        seat.character = a.class.as_deref().and_then(character_id_from_class);
+        for pp in &a.powers {
+            let raw = state.powers.iter().map(|p| p.id.get()).max().unwrap_or(0) + 1;
+            let id = NonZeroU32::new(raw).expect("non-zero power id");
+            state.powers.push(Power {
+                id,
+                kind: pp.kind,
+                amount: pp.amount,
+                counter: pp.counter.unwrap_or(0),
+                applier: None,
+                skip_next_tick: false,
+            });
+            state.coop.stash[i].powers.push(PowerUid(id));
+        }
+        for (j, pc) in hand.iter().enumerate() {
+            let path = format!("$.allies[{i}].hand[{j}]");
+            let uid = u32::try_from(state.cards.len() + 1)
+                .ok()
+                .and_then(CardUid::new)
+                .ok_or_else(|| schema_err(&path, "uid overflow"))?;
+            let card = build_card(pc, uid, &path)?;
+            state.cards.push(card);
+            state.allies[i].hand.push(uid);
+        }
+        if !a.ended_turn && a.hp > 0 {
+            state.coop.to_play |= 1 << i;
+        }
     }
 
     Ok(state)

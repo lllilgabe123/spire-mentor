@@ -581,7 +581,7 @@ fn run_invariance(work: &[CorpusEntry], args: &Args) {
     let rows = par_map(work, args.threads, |_, e| {
         let r = invariance_one(e, args);
         let d = done.fetch_add(1, Ordering::Relaxed) + 1;
-        if d % 25 == 0 {
+        if d.is_multiple_of(25) {
             eprintln!("[invariance] {d}/{} states", work.len());
         }
         r
@@ -902,7 +902,7 @@ fn run_closedloop(work: &[CorpusEntry], args: &Args) {
             .collect();
         let fs = FightSet { tier: e.tier, outs };
         let d = done.fetch_add(1, Ordering::Relaxed) + 1;
-        if d % 20 == 0 {
+        if d.is_multiple_of(20) {
             eprintln!(
                 "[closedloop] {d}/{} fights x{} arms done ({:.0}s)",
                 work.len(),

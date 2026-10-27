@@ -18,4 +18,6 @@ Source comments cite file paths inside a decompilation of the game as
 references ("see Foo.cs:12"); the quoted code itself is stripped before
 export. Trained neural-network weights under sts2-pycli/data/ppo/,
 sts2-rs/data/runai/ and sts2-rs/data/rollout_nets/ were produced by this
-project's own simulator.
+project's own simulator. The exception is sts2-rs/data/prior_nets/, trained
+by behaviour cloning on actions from community-uploaded runs
+(PROVENANCE.md §2).

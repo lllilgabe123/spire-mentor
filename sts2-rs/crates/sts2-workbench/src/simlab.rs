@@ -1326,7 +1326,6 @@ fn monster_move_table(kind: &str, ascension: i64) -> PResult<Vec<Value>> {
 }
 
 /// The default title-case name resolver, for callers with no catalog handy.
-#[must_use]
 pub fn default_names() -> Box<NameOf<'static>> {
     Box::new(default_name_of)
 }

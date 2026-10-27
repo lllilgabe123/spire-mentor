@@ -118,6 +118,53 @@ CURSE_UPGRADE_ASCENSION = 5
 # the gate would pass while pinning nothing.
 REWARD_UPGRADE_ROWS = 3
 
+# GH #947, `card_mods`: the gated branch needs a card that carries an
+# enchantment, and the deck holds one in only ~8% of act-1 decisions (21% over
+# a run; `docs/experiments/2026-10-26-card-modifier-prevalence.md`). Of those
+# rows, at least `CARD_MODS_OPTION_ROWS` must have the enchanted card among the
+# OPTIONS, so the action-token branch is pinned and not only the deck tokens.
+CARD_MODS_ROWS = 5
+CARD_MODS_OPTION_ROWS = 1
+_OPTION_ENCH_KEYS = (
+    "card_reward_option_enchantments",
+    "smith_option_enchantments",
+    "card_removal_option_enchantments",
+    "card_grant_option_enchantments",
+)
+
+
+def _gated(obs: dict) -> dict[str, bool]:
+    """Which experiment features' gated branch this obs exercises."""
+    option_mod = any(any(obs.get(k) or []) for k in _OPTION_ENCH_KEYS)
+    deck_ench = obs.get("deck_enchantments") or []
+    deck_idx = (
+        list(obs.get("upgrade_select_deck_indices") or [])
+        + list(obs.get("transform_select_deck_indices") or [])
+        + list(obs.get("enchant_select_deck_indices") or [])
+    )
+    option_mod = option_mod or any(0 <= i < len(deck_ench) and deck_ench[i] for i in deck_idx)
+    return {
+        schema.REWARD_UPGRADE: any(obs.get("card_reward_option_upgraded") or []),
+        schema.CARD_MODS: any(deck_ench) or option_mod,
+        "card_mods_option": option_mod,
+    }
+
+
+#: Rows each feature's fixture must hold that exercise its gated branch.
+_FEATURE_QUOTA = {
+    schema.REWARD_UPGRADE: REWARD_UPGRADE_ROWS,
+    schema.CARD_MODS: CARD_MODS_ROWS,
+    "card_mods_option": CARD_MODS_OPTION_ROWS,
+}
+
+
+def _quota_keys(features: list[str]) -> list[str]:
+    keys = [f for f in features if f in _FEATURE_QUOTA]
+    if schema.CARD_MODS in features:
+        keys.append("card_mods_option")
+    return keys
+
+
 T_MAX, A_MAX = 320, 160
 
 
@@ -188,7 +235,8 @@ def dump(ckpt: str, out: str, seeds: list[int], max_rows: int, asc_seeds: list[i
             f"STS2_PPO_FEATURES to match the checkpoint's cfg, or dump against "
             f"a checkpoint whose cfg matches the schema you want to record."
         )
-    reward_upgrade_rows = 0
+    quota_keys = _quota_keys(features)
+    gated_rows = dict.fromkeys(quota_keys, 0)
     rows: list[dict] = []
     seen: set[str] = set()
     fine_kept: dict[str, int] = {}
@@ -208,9 +256,7 @@ def dump(ckpt: str, out: str, seeds: list[int], max_rows: int, asc_seeds: list[i
             and all(fine_kept.get(s, 0) >= COVERAGE_ROWS_PER_FINE for s in REQUIRED_FINE_SURFACES)
             and curse_upgrades >= CURSE_UPGRADE_ROWS
         )
-        if features:
-            return base and reward_upgrade_rows >= REWARD_UPGRADE_ROWS
-        return base
+        return base and all(gated_rows[k] >= _FEATURE_QUOTA[k] for k in quota_keys)
 
     for seed, ascension in cells:
         # Coverage is complete: dense budget spent AND every required fine
@@ -228,7 +274,8 @@ def dump(ckpt: str, out: str, seeds: list[int], max_rows: int, asc_seeds: list[i
             # surfaces and the T_MAX/A_MAX budget). Tail: keep only rows for a
             # required fine surface that is still short of its quota.
             split = fine == "card-upgrade" and _upgrade_index_spaces_differ(out_d.obs)
-            upgraded_reward = any(out_d.obs.get("card_reward_option_upgraded") or [])
+            hits = _gated(out_d.obs)
+            wanted = [k for k in quota_keys if hits[k] and gated_rows[k] < _FEATURE_QUOTA[k]]
             covers = (
                 dense < max_rows
                 or (
@@ -250,11 +297,10 @@ def dump(ckpt: str, out: str, seeds: list[int], max_rows: int, asc_seeds: list[i
             # 3-row supplement would leave it scoring 3 of 158 rows on one
             # surface. Whichever schema the champion declares needs a fixture
             # with full surface coverage.
-            keep = covers or (
-                bool(features) and upgraded_reward and reward_upgrade_rows < REWARD_UPGRADE_ROWS
-            )
+            keep = covers or bool(wanted)
             if keep:
-                reward_upgrade_rows += int(upgraded_reward)
+                for k in quota_keys:
+                    gated_rows[k] += int(hits[k])
                 if dense < max_rows:
                     dense += 1
                 fine_kept[fine] = fine_kept.get(fine, 0) + 1
@@ -292,16 +338,16 @@ def dump(ckpt: str, out: str, seeds: list[int], max_rows: int, asc_seeds: list[i
                     }
                 )
             out_d = env.step(int(np.argmax(probs)))
-    if features:
-        # The whole point of the supplementary fixture: without a row the
-        # engine actually pre-upgraded, both arms of the gated branch emit the
-        # same tokens and the Rust gate pins nothing (act 1 can never produce
-        # one — see `REWARD_UPGRADE_ROWS`).
-        assert reward_upgrade_rows >= REWARD_UPGRADE_ROWS, (
-            f"{features} fixture has {reward_upgrade_rows} rows with a "
-            f"pre-upgraded card reward (need {REWARD_UPGRADE_ROWS}) — the walk "
-            "never reached an act-2+ reward roll. Add seeds."
-        )
+    # The whole point of the supplementary fixture: without a row that
+    # exercises the gated branch, both arms emit the same tokens and the Rust
+    # gate pins nothing (`reward_upgrade`: act 1 can never produce one, see
+    # `REWARD_UPGRADE_ROWS`; `card_mods`: see `CARD_MODS_ROWS`).
+    short = {k: gated_rows[k] for k in quota_keys if gated_rows[k] < _FEATURE_QUOTA[k]}
+    assert not short, (
+        f"{features} fixture is short of gated rows {short} (need "
+        f"{ {k: _FEATURE_QUOTA[k] for k in short} }) — the walk never reached "
+        "enough of them. Add seeds."
+    )
     _assert_default_coverage(seen, fine_kept, curse_upgrades)
     assert tmax_seen <= T_MAX and amax_seen <= A_MAX, (tmax_seen, amax_seen)
     p = Path(out)

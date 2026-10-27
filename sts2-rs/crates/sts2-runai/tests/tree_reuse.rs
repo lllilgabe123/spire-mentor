@@ -5,7 +5,8 @@
 //! The overrides are read when a policy is constructed, so each test sets
 //! the env var before building one (nextest runs every test in its own
 //! process). Default-off identity is pinned by `leaf_playouts_identity.rs`
-//! (the deployed policy fight is byte-identical to its golden); here,
+//! (the policy fight under the Ironclad off switches is byte-identical to
+//! its pre-knob golden, and the shipped default to its own); here,
 //! `tree_reuse_is_off_by_default` checks that the knob's machinery never
 //! runs at default.
 

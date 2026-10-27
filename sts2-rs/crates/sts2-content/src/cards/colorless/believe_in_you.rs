@@ -5,15 +5,17 @@ use super::prelude::*;
 /// truth is C# `BelieveInYou.cs`: `EnergyVar(2)` → gain 2 energy, upgrade
 /// `+1` → 3. The Python-pin port (`colorless.py` `effect_vars.get("energy",
 /// 3)`) used Python's default of 3 — which is actually the *upgraded*
-/// value — so the unupgraded card over-granted by 1. In the single-player
-/// Rust port the target collapses to self. Bead `sts2-rs-c9exw`
+/// value — so the unupgraded card over-granted by 1. The energy goes to the
+/// co-op teammate (`cardPlay.Target.Player`), not the player. Bead `sts2-rs-c9exw`
 /// (was `sts2-rs-thno`).
 pub(crate) fn play_believe_in_you(
-    state: &mut CombatState,
+    _state: &mut CombatState,
     _t: Option<CreatureUid>,
 ) -> EffectResult {
-    let energy = if current_upgraded(state) { 3 } else { 2 };
-    state.gain_energy(energy);
+    // C# `PlayerCmd.GainEnergy(Energy, cardPlay.Target.Player)`: the teammate gains 2 (upg 3) energy — all of it lands on the co-op teammate
+    // (`cardPlay.Target`), whose turn is not simulated, so playing it
+    // changes nothing here but the energy and the card's own pile move.
+    // Unplayable without a living teammate (`card_is_any_ally`).
     EffectResult::Resolved
 }
 

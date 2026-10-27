@@ -118,7 +118,7 @@ impl TranspositionTable {
     /// reroot — surviving nodes get re-inserted lazily as the search
     /// re-traverses them.
     pub fn clear(&mut self) {
-        for e in self.entries.iter_mut() {
+        for e in &mut self.entries {
             *e = Entry::EMPTY;
         }
         self.hits = 0;

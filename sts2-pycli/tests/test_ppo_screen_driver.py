@@ -72,3 +72,13 @@ def test_tail_pooled_weights_by_run_count_not_by_iteration():
     assert rate == pytest.approx((0 + 100 + 2) / 204)
 
     assert tail_pooled([], 5) == (0.0, 0)
+
+
+def test_wall_hours_sums_iterations_not_phases():
+    """Under `async_collect` the phases overlap, so the arm's cost is the sum
+    of `iter_s`, not of `collect_s + train_s`."""
+    from ppo.screen import wall_hours
+
+    stats = [{"iter_s": 1800.0, "collect_s": 1700.0, "train_s": 900.0}] * 2
+    assert wall_hours(stats) == {"iter_h": 1.0, "collect_h": 0.944, "train_h": 0.5}
+    assert wall_hours([]) == {"iter_h": 0.0, "collect_h": 0.0, "train_h": 0.0}

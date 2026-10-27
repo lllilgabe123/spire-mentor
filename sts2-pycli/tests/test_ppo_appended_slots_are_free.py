@@ -25,6 +25,7 @@ import math
 import tomllib
 from pathlib import Path
 
+import numpy as np
 from ppo import schema, vocab
 from ppo.encoder import featurize_row
 
@@ -143,3 +144,42 @@ def test_the_first_ten_pad_columns_are_frozen():
     # 298 -> 300, 64 -> 65) and re-exported every champion over them
     # (`scripts/reexport_champions_vocab.py`, the `_v0111vocab` nets).
     assert schema.empty_cat()[:10] == [600, 17, 300, 65, 10, 70, 12, 8, 16, 13]
+
+
+def test_every_champion_predating_card_mods_serves_under_the_wider_cont_encoder():
+    """GH #947 appended cont slot 25 (`C_ENCH_AMT`). No committed champion was
+    exported with it, and each must still serve: `OnnxPolicy` slices the
+    trailing column off, exactly as `ppo::net` does for its `cont_dim`.
+    Discovered, not named, for the reason the cat test above gives."""
+    from ppo.onnx_policy import OnnxPolicy
+
+    champs = tomllib.loads((PPO_DIR / "champions.toml").read_text(encoding="utf-8"))
+    narrow = [
+        entry
+        for _name, entry in sorted(champs.items())
+        if OnnxPolicy(str(PPO_DIR / entry["onnx"])).n_cont == schema.C_ENCH_AMT
+    ]
+    assert narrow, (
+        "no committed champion is still a 25-cont export, so the narrower-graph "
+        "property is no longer observable on the real fleet; retire this test"
+    )
+    pol = OnnxPolicy(str(PPO_DIR / narrow[0]["onnx"]))
+    obs = {"deck": [["STRIKE", False]], "deck_enchantments": [["SHARP", 2]], "max_hp": 80}
+    probs, value = pol.distribution(obs, [{"action": "pick_card_reward", "idx": 0}], {})
+    assert len(probs) == 1 and abs(sum(probs) - 1.0) < 1e-6
+    assert isinstance(value, float) and math.isfinite(value)
+
+
+def test_the_enchant_amount_slot_sits_at_literal_column_25():
+    """Positional, by literal index, for the reason
+    `test_positional_identity_would_catch_a_mid_table_insertion` gives: an
+    assertion through `schema.C_ENCH_AMT` would move with an insertion."""
+    obs = {"deck": [["STRIKE", False]], "deck_enchantments": [["SHARP", 2]], "max_hp": 80}
+    feat = featurize_row(obs, [], {}, frozenset({schema.CARD_MODS}))
+    deck_row = feat.obs_cont[feat.obs_sec == schema.SEC_DECK][0]
+    assert len(deck_row) == 26
+    assert deck_row[25] == np.float32(0.2)
+    assert not deck_row[:25].any()
+    assert feat.obs_cat[feat.obs_sec == schema.SEC_DECK][0][11] == vocab.enchantments().index(
+        "SHARP"
+    )

@@ -21,6 +21,404 @@
     ],
     "player_hp": 78
   },
+  "policy_fight_ironclad_default": {
+    "fight": {
+      "actions": [
+        "PlayCard { hand_idx: 1, target: None }",
+        "PlayCard { hand_idx: 0, target: Some(2) }",
+        "PlayCard { hand_idx: 0, target: Some(2) }",
+        "EndTurn",
+        "PlayCard { hand_idx: 2, target: None }",
+        "PlayCard { hand_idx: 2, target: None }",
+        "PlayCard { hand_idx: 0, target: Some(0) }",
+        "EndTurn",
+        "PlayCard { hand_idx: 0, target: None }",
+        "PlayCard { hand_idx: 0, target: None }",
+        "PlayCard { hand_idx: 0, target: None }",
+        "EndTurn",
+        "PlayCard { hand_idx: 1, target: None }",
+        "PlayCard { hand_idx: 4, target: Some(0) }",
+        "EndTurn",
+        "PlayCard { hand_idx: 1, target: None }",
+        "PlayCard { hand_idx: 3, target: None }",
+        "PlayCard { hand_idx: 0, target: None }",
+        "EndTurn",
+        "PlayCard { hand_idx: 0, target: None }",
+        "PlayCard { hand_idx: 0, target: None }",
+        "PlayCard { hand_idx: 2, target: Some(1) }",
+        "EndTurn",
+        "PlayCard { hand_idx: 0, target: Some(1) }",
+        "PlayCard { hand_idx: 1, target: Some(1) }",
+        "PlayCard { hand_idx: 2, target: Some(1) }",
+        "EndTurn",
+        "PlayCard { hand_idx: 1, target: Some(1) }"
+      ],
+      "budget_spent": [
+        0,
+        0,
+        0,
+        21000
+      ],
+      "player_hp": 80
+    },
+    "searches": [
+      [
+        200,
+        201,
+        209,
+        213,
+        177
+      ],
+      [
+        192,
+        206,
+        211,
+        203,
+        188
+      ],
+      [
+        196,
+        199,
+        211,
+        200,
+        194
+      ],
+      [
+        0
+      ],
+      [
+        170,
+        167,
+        167,
+        168,
+        173,
+        155
+      ],
+      [
+        168,
+        165,
+        167,
+        167,
+        173,
+        160
+      ],
+      [
+        338,
+        336,
+        326
+      ],
+      [
+        0
+      ],
+      [
+        258,
+        252,
+        263,
+        227
+      ],
+      [
+        255,
+        251,
+        261,
+        233
+      ],
+      [
+        248,
+        250,
+        260,
+        242
+      ],
+      [
+        0
+      ],
+      [
+        203,
+        203,
+        201,
+        204,
+        189
+      ],
+      [
+        170,
+        166,
+        170,
+        169,
+        164,
+        161
+      ],
+      [
+        0
+      ],
+      [
+        249,
+        267,
+        250,
+        234
+      ],
+      [
+        249,
+        259,
+        250,
+        242
+      ],
+      [
+        333,
+        335,
+        332
+      ],
+      [
+        0
+      ],
+      [
+        200,
+        199,
+        213,
+        198,
+        190
+      ],
+      [
+        199,
+        201,
+        206,
+        200,
+        194
+      ],
+      [
+        338,
+        329,
+        333
+      ],
+      [
+        0
+      ],
+      [
+        257,
+        249,
+        250,
+        244
+      ],
+      [
+        256,
+        248,
+        249,
+        247
+      ],
+      [
+        255,
+        249,
+        249,
+        247
+      ],
+      [
+        0
+      ],
+      [
+        260,
+        260,
+        256,
+        224
+      ]
+    ]
+  },
+  "policy_fight_seed6_pre_layer": {
+    "fight": {
+      "actions": [
+        "PlayCard { hand_idx: 1, target: None }",
+        "PlayCard { hand_idx: 0, target: Some(2) }",
+        "PlayCard { hand_idx: 0, target: Some(2) }",
+        "EndTurn",
+        "PlayCard { hand_idx: 2, target: None }",
+        "PlayCard { hand_idx: 2, target: None }",
+        "PlayCard { hand_idx: 0, target: Some(0) }",
+        "EndTurn",
+        "PlayCard { hand_idx: 0, target: None }",
+        "PlayCard { hand_idx: 0, target: None }",
+        "PlayCard { hand_idx: 0, target: None }",
+        "EndTurn",
+        "PlayCard { hand_idx: 1, target: None }",
+        "PlayCard { hand_idx: 4, target: Some(0) }",
+        "EndTurn",
+        "PlayCard { hand_idx: 1, target: None }",
+        "PlayCard { hand_idx: 3, target: None }",
+        "PlayCard { hand_idx: 0, target: None }",
+        "EndTurn",
+        "PlayCard { hand_idx: 0, target: None }",
+        "PlayCard { hand_idx: 0, target: None }",
+        "PlayCard { hand_idx: 2, target: Some(1) }",
+        "EndTurn",
+        "PlayCard { hand_idx: 0, target: Some(1) }",
+        "PlayCard { hand_idx: 1, target: Some(1) }",
+        "PlayCard { hand_idx: 2, target: Some(1) }",
+        "EndTurn",
+        "PlayCard { hand_idx: 1, target: Some(1) }"
+      ],
+      "budget_spent": [
+        0,
+        0,
+        0,
+        21000
+      ],
+      "player_hp": 80
+    },
+    "searches": [
+      [
+        200,
+        201,
+        209,
+        213,
+        177
+      ],
+      [
+        192,
+        206,
+        211,
+        203,
+        188
+      ],
+      [
+        196,
+        199,
+        211,
+        200,
+        194
+      ],
+      [
+        0
+      ],
+      [
+        170,
+        167,
+        169,
+        167,
+        173,
+        154
+      ],
+      [
+        167,
+        166,
+        168,
+        168,
+        173,
+        158
+      ],
+      [
+        336,
+        335,
+        329
+      ],
+      [
+        0
+      ],
+      [
+        258,
+        252,
+        263,
+        227
+      ],
+      [
+        255,
+        251,
+        261,
+        233
+      ],
+      [
+        248,
+        250,
+        260,
+        242
+      ],
+      [
+        0
+      ],
+      [
+        203,
+        203,
+        201,
+        204,
+        189
+      ],
+      [
+        170,
+        166,
+        170,
+        169,
+        164,
+        161
+      ],
+      [
+        0
+      ],
+      [
+        249,
+        267,
+        250,
+        234
+      ],
+      [
+        249,
+        259,
+        250,
+        242
+      ],
+      [
+        333,
+        335,
+        332
+      ],
+      [
+        0
+      ],
+      [
+        200,
+        199,
+        213,
+        198,
+        190
+      ],
+      [
+        199,
+        201,
+        206,
+        200,
+        194
+      ],
+      [
+        338,
+        329,
+        333
+      ],
+      [
+        0
+      ],
+      [
+        257,
+        249,
+        250,
+        244
+      ],
+      [
+        256,
+        248,
+        249,
+        247
+      ],
+      [
+        255,
+        249,
+        249,
+        247
+      ],
+      [
+        0
+      ],
+      [
+        260,
+        260,
+        256,
+        224
+      ]
+    ]
+  },
   "searches": [
     {
       "chosen": "PlayCard { hand_index: 0, target: Some(0) }",

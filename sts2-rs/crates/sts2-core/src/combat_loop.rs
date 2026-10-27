@@ -366,6 +366,20 @@ pub fn start_combat(state: &mut CombatState) -> StepResult {
     // listener bodies registered by `sts2-content`'s P7 pool beads.
     // Both must fire so future retrofits (bead `sts2-rs-01o`) light up.
     let _ = crate::relic_effects::dispatch_before_combat_start(state);
+    // Co-op: every teammate's own combat start, seated — their deck shuffle,
+    // fresh log and orb slots, then their relics' `BeforeCombatStart`.
+    crate::coop::each_teammate(state, |state| {
+        state.player.energy = 0;
+        state.player.stars = 0;
+        crate::cards::shuffle(&mut state.player, &mut state.run_rng.shuffle);
+        state.combat_log = crate::TurnEvents::default();
+        state.player.generated_cards_this_combat = 0;
+        state.player.sly_this_combat.clear();
+        if state.player.character == Some(crate::potions::CharacterId::Defect) {
+            state.player.orbs = crate::orbs::OrbSlots::with_default_capacity();
+        }
+        let _ = crate::relic_effects::dispatch_before_combat_start(state);
+    });
 
     // Step 5: roll initial intent for each enemy. We collect the
     // enemy UIDs into a fixed SmallVec first to release the immutable
@@ -455,6 +469,102 @@ pub fn start_combat(state: &mut CombatState) -> StepResult {
     state.phase = CombatPhase::PlayerTurnStart;
 
     StepResult::Advanced
+}
+
+/// Step 2 of [`start_player_turn`] for the seated player: clear their
+/// per-turn event log, play tallies and latches.
+fn reset_seat_for_turn(state: &mut CombatState) {
+    // Step 2: clear per-turn event lists. Bead `sts2-rs-xsvp9`:
+    // use `reset_per_turn` so the combat-wide
+    // `unblocked_damage_received_this_combat` counter (consumed by
+    // TearAsunder's `CalculatedHits`) survives the turn boundary.
+    state.combat_log.reset_per_turn();
+    // Bead `sts2-rs-zlx.3`: reset the per-turn Shiv counter for
+    // PhantomBlades. Mirrors the Python `_shiv_played_this_turn = False`
+    // reset in `PhantomBladesPower.before_side_turn_start`
+    // (`card_play_effects.py:411-413`).
+    state.player.shivs_played_this_turn = 0;
+    // Bead `sts2-rs-r6l9`: reset the per-turn cards-played bucket
+    // counter (Attack / Skill / Power / Curse / Status). Mirrors
+    // Python's `_played_cards_this_turn = []` at the top of
+    // `_start_player_turn` (`sts2-rl-agent@01c094d:sts2_env/core/
+    // combat.py:678`). Read by
+    // `CombatState::count_player_cards_played_this_turn` (the analogue
+    // of Python's `count_cards_played_this_turn(owner, card_type=...)`).
+    state.player.cards_played_this_turn = [0; 5];
+    state.player.card_plays_started_this_turn = 0;
+    // GH #363 A2: C# `VoidFormPower.BeforeSideTurnStart` (VoidFormPower.cs:75-83)
+    // zeroes its own `Data.cardsPlayedThisTurn` when the owner is among the
+    // participants. That tally is NOT the same quantity as the bucket array
+    // above — see [`reset_void_form_play_tally`].
+    reset_void_form_play_tally(state);
+    // Round boundary for the HistoryCourse slot: everything stamped during
+    // the round that just ended becomes "last round's last Attack/Skill";
+    // the new round (incl. its turn-start Mayhem auto-plays) accumulates
+    // into the live slot. Mirrors C#'s `RoundNumber == round - 1` scan key.
+    state.combat_log.prev_round_last_attack_skill_played =
+        state.combat_log.last_attack_skill_played.take();
+    // Bead `sts2-rs-x646`: reset the per-turn stars-gained tally.
+    // Mirrors Python's `_stars_gained_this_turn = []` at the top of
+    // `_start_player_turn` (`sts2-rl-agent@01c094d:sts2_env/core/
+    // combat.py:677`). Read by
+    // `CombatState::count_player_stars_gained_this_turn` (the Rust
+    // analogue of `combat.count_stars_gained_this_turn(owner)` —
+    // `combat.py:1550-1551`); consumed by `Radiate`
+    // (hits = stars gained this turn — `cards/regent.py:L500-504`).
+    state.player.stars_gained_this_turn = 0;
+    // Bead `sts2-rs-jm6e` (ozy.4-rider): reset the per-turn
+    // player-as-dealer powered-hits counter consumed by
+    // BeatIntoShape (`sts2-rl-agent@01c094d:sts2_env/cards/
+    // regent.py:599-607`). Mirrors Python's
+    // `_damage_events_this_turn = []` clear at
+    // `sts2-rl-agent@01c094d:sts2_env/core/combat.py:678`.
+    state.player.powered_hits_this_turn = 0;
+    // Reset the per-target powered-hits tally alongside the combat-wide
+    // scalar (BeatIntoShape's strictly-per-target forge multiplier,
+    // issue #177).
+    state.player.powered_hits_by_target_this_turn.clear();
+    // Keep the Vigor-consume snapshot (`ph5mx`) in step with the counter it
+    // gates on — a stale previous-turn stamp must never survive into the new
+    // turn's first play (sweep seed 5816).
+    state.player.powered_hits_at_card_play_start = 0;
+    state.player.attack_command_suppressed_this_play = false;
+    // Bead `sts2-rs-j9x8`: reset the per-turn Skill counter for
+    // MakeItSo's late-effect rider. Mirrors Python's implicit
+    // `count_cards_played_this_turn` semantics — the counter rolls
+    // over at side-turn start.
+    state.player.skills_played_this_turn = 0;
+    // Bead `sts2-rs-3guy`: clear the VoidForm-style end-turn-after-play
+    // rider at the top of each player turn. The flag is set by handlers
+    // that call the Rust analogue of Python's
+    // `combat.request_end_turn_after_current_play()` (VoidForm at
+    // `sts2-rl-agent@01c094d:sts2_env/cards/regent.py:846`); if a turn
+    // started with the flag still high (e.g. a save/load round-trip
+    // captured mid-play before the bottom-of-`play_card` consumer), this
+    // reset prevents it from prematurely ending the fresh turn.
+    state.player.request_end_turn_after_play = false;
+    // q6bix F-A: player-owned `NoDraw` (BattleTrance) is now removed at the
+    // owning turn's end via `hooks::after_turn_end` (mirroring C#
+    // `NoDrawPower.AfterTurnEnd`, which has no side guard), so it never
+    // survives into the next player turn. The bead-16p0 start-of-turn strip
+    // that previously worked around the missing listener has been removed.
+    // Bead `sts2-rs-8ett`: reset the per-turn first-in-series play counter
+    // that drives EchoForm. C# `EchoFormPower.ModifyCardPlayCount` echoes a
+    // card while the number of first-in-series plays this turn is `< Amount`,
+    // so the counter starts at 0 each turn and the LIVE EchoForm amount is
+    // read per play (see `cards_first_in_series_this_turn` and the echo block
+    // in `play_card`). The prior turn-start snapshot of the EchoForm stack sum
+    // missed mid-turn gains and let one card drain the whole budget.
+    state.player.cards_first_in_series_this_turn = 0;
+    // ...and the wire-durable twin of the same tally (GH #368.1). Both are
+    // reset here so `echo_form_first_in_series_this_turn`'s max cannot be held
+    // up by a stale half.
+    reset_echo_form_series_tally(state);
+    // Release any stale Vigor command-latch at turn start (bead
+    // `sts2-rs-vigor-cmd`): the latch normally clears on Vigor consume, but a
+    // turn that ends with un-consumed Vigor (no attack played) must not carry a
+    // stale latch into the next turn's first attack.
+    state.player.vigor_latch_card = None;
 }
 
 /// Run the player turn-start phase. Mirrors Python's
@@ -553,39 +663,23 @@ pub fn start_player_turn(state: &mut CombatState) -> StepResult {
     // `continue_player_turn_setup` and the resume-after-choice path.
     state.side = Side::Player;
 
-    // Step 2: clear per-turn event lists. Bead `sts2-rs-xsvp9`:
-    // use `reset_per_turn` so the combat-wide
-    // `unblocked_damage_received_this_combat` counter (consumed by
-    // TearAsunder's `CalculatedHits`) survives the turn boundary.
-    state.combat_log.reset_per_turn();
-    // Bead `sts2-rs-zlx.3`: reset the per-turn Shiv counter for
-    // PhantomBlades. Mirrors the Python `_shiv_played_this_turn = False`
-    // reset in `PhantomBladesPower.before_side_turn_start`
-    // (`card_play_effects.py:411-413`).
-    state.player.shivs_played_this_turn = 0;
-    // Bead `sts2-rs-r6l9`: reset the per-turn cards-played bucket
-    // counter (Attack / Skill / Power / Curse / Status). Mirrors
-    // Python's `_played_cards_this_turn = []` at the top of
-    // `_start_player_turn` (`sts2-rl-agent@01c094d:sts2_env/core/
-    // combat.py:678`). Read by
-    // `CombatState::count_player_cards_played_this_turn` (the analogue
-    // of Python's `count_cards_played_this_turn(owner, card_type=...)`).
-    state.player.cards_played_this_turn = [0; 5];
-    state.player.card_plays_started_this_turn = 0;
-    // GH #363 A2: C# `VoidFormPower.BeforeSideTurnStart` (VoidFormPower.cs:75-83)
-    // zeroes its own `Data.cardsPlayedThisTurn` when the owner is among the
-    // participants. That tally is NOT the same quantity as the bucket array
-    // above — see [`reset_void_form_play_tally`].
-    reset_void_form_play_tally(state);
-    // Round boundary for the HistoryCourse slot: everything stamped during
-    // the round that just ended becomes "last round's last Attack/Skill";
-    // the new round (incl. its turn-start Mayhem auto-plays) accumulates
-    // into the live slot. Mirrors C#'s `RoundNumber == round - 1` scan key.
-    state.combat_log.prev_round_last_attack_skill_played =
-        state.combat_log.last_attack_skill_played.take();
+    // Step 2: the per-turn resets, for every seat (C# reads "this turn" off
+    // the shared history, so a new round restarts every player's tallies at
+    // once).
+    reset_seat_for_turn(state);
+    if state.coop.full {
+        for ally in 0..state.allies.len() {
+            if state.coop.stash.get(ally).is_some() {
+                crate::coop::swap_seat(state, ally);
+                reset_seat_for_turn(state);
+                crate::coop::swap_seat(state, ally);
+            }
+        }
+    }
     // Bead `sts2-rs-stomp`: undo Stomp's per-turn cost discount (C#
     // `EnergyCost.AddThisTurn` resets at the owner's turn start). Restores
-    // each Stomp's cost by the amount shaved off last turn.
+    // each Stomp's cost by the amount shaved off last turn. These four walk
+    // the whole card arena, every seat's cards at once.
     state.restore_stomp_costs_for_turn_start();
     // Undo Pinpoint's per-turn Skill-cost discount (same C#
     // `EnergyCost.AddThisTurn` reset shape as Stomp above).
@@ -600,67 +694,6 @@ pub fn start_player_turn(state: &mut CombatState) -> StepResult {
     // from a C# wire inherits the shaved cost with no bank behind it, so
     // without this the discount never expires.
     state.restore_wire_transient_costs_for_turn_start();
-    // Bead `sts2-rs-x646`: reset the per-turn stars-gained tally.
-    // Mirrors Python's `_stars_gained_this_turn = []` at the top of
-    // `_start_player_turn` (`sts2-rl-agent@01c094d:sts2_env/core/
-    // combat.py:677`). Read by
-    // `CombatState::count_player_stars_gained_this_turn` (the Rust
-    // analogue of `combat.count_stars_gained_this_turn(owner)` —
-    // `combat.py:1550-1551`); consumed by `Radiate`
-    // (hits = stars gained this turn — `cards/regent.py:L500-504`).
-    state.player.stars_gained_this_turn = 0;
-    // Bead `sts2-rs-jm6e` (ozy.4-rider): reset the per-turn
-    // player-as-dealer powered-hits counter consumed by
-    // BeatIntoShape (`sts2-rl-agent@01c094d:sts2_env/cards/
-    // regent.py:599-607`). Mirrors Python's
-    // `_damage_events_this_turn = []` clear at
-    // `sts2-rl-agent@01c094d:sts2_env/core/combat.py:678`.
-    state.player.powered_hits_this_turn = 0;
-    // Reset the per-target powered-hits tally alongside the combat-wide
-    // scalar (BeatIntoShape's strictly-per-target forge multiplier,
-    // issue #177).
-    state.player.powered_hits_by_target_this_turn.clear();
-    // Keep the Vigor-consume snapshot (`ph5mx`) in step with the counter it
-    // gates on — a stale previous-turn stamp must never survive into the new
-    // turn's first play (sweep seed 5816).
-    state.player.powered_hits_at_card_play_start = 0;
-    state.player.attack_command_suppressed_this_play = false;
-    // Bead `sts2-rs-j9x8`: reset the per-turn Skill counter for
-    // MakeItSo's late-effect rider. Mirrors Python's implicit
-    // `count_cards_played_this_turn` semantics — the counter rolls
-    // over at side-turn start.
-    state.player.skills_played_this_turn = 0;
-    // Bead `sts2-rs-3guy`: clear the VoidForm-style end-turn-after-play
-    // rider at the top of each player turn. The flag is set by handlers
-    // that call the Rust analogue of Python's
-    // `combat.request_end_turn_after_current_play()` (VoidForm at
-    // `sts2-rl-agent@01c094d:sts2_env/cards/regent.py:846`); if a turn
-    // started with the flag still high (e.g. a save/load round-trip
-    // captured mid-play before the bottom-of-`play_card` consumer), this
-    // reset prevents it from prematurely ending the fresh turn.
-    state.player.request_end_turn_after_play = false;
-    // q6bix F-A: player-owned `NoDraw` (BattleTrance) is now removed at the
-    // owning turn's end via `hooks::after_turn_end` (mirroring C#
-    // `NoDrawPower.AfterTurnEnd`, which has no side guard), so it never
-    // survives into the next player turn. The bead-16p0 start-of-turn strip
-    // that previously worked around the missing listener has been removed.
-    // Bead `sts2-rs-8ett`: reset the per-turn first-in-series play counter
-    // that drives EchoForm. C# `EchoFormPower.ModifyCardPlayCount` echoes a
-    // card while the number of first-in-series plays this turn is `< Amount`,
-    // so the counter starts at 0 each turn and the LIVE EchoForm amount is
-    // read per play (see `cards_first_in_series_this_turn` and the echo block
-    // in `play_card`). The prior turn-start snapshot of the EchoForm stack sum
-    // missed mid-turn gains and let one card drain the whole budget.
-    state.player.cards_first_in_series_this_turn = 0;
-    // ...and the wire-durable twin of the same tally (GH #368.1). Both are
-    // reset here so `echo_form_first_in_series_this_turn`'s max cannot be held
-    // up by a stale half.
-    reset_echo_form_series_tally(state);
-    // Release any stale Vigor command-latch at turn start (bead
-    // `sts2-rs-vigor-cmd`): the latch normally clears on Vigor consume, but a
-    // turn that ends with un-consumed Vigor (no attack played) must not carry a
-    // stale latch into the next turn's first attack.
-    state.player.vigor_latch_card = None;
 
     // Step 3: fire before_side_turn_start(PLAYER). The TurnSideCtx is
     // a placeholder POD at this pin — Phase 6 grows it to carry the
@@ -669,9 +702,9 @@ pub fn start_player_turn(state: &mut CombatState) -> StepResult {
     // discriminates on side so the no-op default is correct.
     hooks::dispatch_before_side_turn_start(state, &hooks::TurnSideCtx::default());
     // Bead `sts2-rs-j87`: parallel relic-effects bus drain.
-    if relic_channel_live(state, PlannedChannel::BeforeSideTurnStart) {
+    relic_side_dispatch(state, PlannedChannel::BeforeSideTurnStart, |state| {
         let _ = crate::relic_effects::dispatch_before_side_turn_start(state, Side::Player);
-    }
+    });
 
     // NOTE (bead `sts2-rs-ybtmu`, retimed): a KnowledgeDemon
     // CURSE_OF_KNOWLEDGE used to defer its player card-select to HERE, on the
@@ -1311,15 +1344,32 @@ fn auto_play_collect_suspending(
     None
 }
 
+/// Drain a side-wide relic channel: the seated player's relics, then each
+/// living teammate's with them seated (C# walks every player's relics).
+fn relic_side_dispatch(
+    state: &mut CombatState,
+    channel: PlannedChannel,
+    mut dispatch: impl FnMut(&mut CombatState),
+) {
+    if relic_channel_live(state, channel) {
+        dispatch(state);
+    }
+    crate::coop::each_teammate(state, |state| {
+        if relic_channel_live(state, channel) {
+            dispatch(state);
+        }
+    });
+}
+
 /// Fire the player-side `after_side_turn_start` walk (power + relic buses).
 /// C# outer-loop `Hook.AfterSideTurnStart` (`CombatManager.cs:437` — Rampart /
 /// DemonForm / PrepTime / CreativeAi). Skips the folded `AfterPlayerTurnStart`
 /// kinds (those are dispatched in the cluster). Bead `sts2-rs-o0rz3`.
 fn fire_after_side_turn_start(state: &mut CombatState) {
     hooks::dispatch_after_side_turn_start(state, &hooks::TurnSideCtx::default());
-    if relic_channel_live(state, PlannedChannel::AfterSideTurnStart) {
+    relic_side_dispatch(state, PlannedChannel::AfterSideTurnStart, |state| {
         let _ = crate::relic_effects::dispatch_after_side_turn_start(state, Side::Player);
-    }
+    });
 }
 
 /// The `AfterPlayerTurnStart` auto-play cluster (RollingBoulder / Entropy /
@@ -1730,10 +1780,38 @@ pub(crate) fn run_turn_start_relic_tail(
     // `side_turn_start_fired` gate is retained for the `AfterPlayerTurnStart`
     // walk-resume path (always `false` there); Mayhem's own suspend resumes via
     // `mayhem_phase` above and never re-enters this point (bead `sts2-rs-o0rz3`).
+    //
+    // Co-op: a teammate's `SetupPlayerTurn` ends here; ours is followed by
+    // every teammate's before the side's `AfterSideTurnStart` (C# sets up each
+    // player first, `CombatManager.cs:424-607`).
+    if state.coop.seat_run.is_some() {
+        return StepResult::Advanced;
+    }
     if !side_turn_start_fired && !state.is_over {
-        fire_after_side_turn_start(state);
+        crate::coop::run_seat_stage(state, crate::coop::SeatRun::Setup);
+        if !state.is_over {
+            fire_after_side_turn_start(state);
+        }
     }
 
+    run_auto_pre_play(state, snapshot)
+}
+
+/// A teammate's `RunAutoPrePlayPhase` ([`crate::coop::SeatRun::AutoPrePlay`]):
+/// [`run_auto_pre_play`] over their powers as they stand.
+pub(crate) fn run_auto_pre_play_for_seat(state: &mut CombatState) -> StepResult {
+    let snapshot = state.player_power_uids();
+    run_auto_pre_play(state, snapshot)
+}
+
+/// The seated player's `RunAutoPrePlayPhase`: v0.111.0's empty-hand check, the
+/// Bombardment and Mayhem auto-plays, then [`finish_turn_start_tail`].
+/// `snapshot` holds the player's powers from the top of the turn (Mayhem fires
+/// only if it was there).
+fn run_auto_pre_play(
+    state: &mut CombatState,
+    snapshot: smallvec::SmallVec<[crate::PowerUid; 8]>,
+) -> StepResult {
     // v0.111.0 `RunAutoPrePlayPhase` runs `CheckForEmptyHand` right here, on
     // entering AutoPrePlay and before any `AfterAutoPrePlayPhaseEntered*`
     // listener (decomp CombatManager.cs:868); v0.107.1 has no check at this
@@ -1866,6 +1944,24 @@ pub(crate) fn run_turn_start_relic_tail(
 /// `PlayerPlayPhase`, the `before_play_phase_start` relic dispatch, and a final
 /// combat-end re-check. Bead `sts2-rs-181`.
 fn finish_turn_start_tail(state: &mut CombatState) -> StepResult {
+    // ── Whispering Earring AutoPrePlay(Late) auto-play (GH #946) ───────────
+    //
+    // `WhisperingEarring.AfterAutoPrePlayPhaseEnteredLate` is the LAST
+    // AutoPrePlay listener C# runs (`Hook.AfterAutoPrePlayPhaseEntered` walks
+    // Early → normal → Late), so it fires after Bombardment (Early) and Mayhem
+    // / Imbued (normal) above, and before the phase advances to Play. Both the
+    // normal cluster path and the Mayhem-resume path reach it here, once. Its
+    // plays never suspend (the Vakuu selector answers every selection), so
+    // this needs no resume state of its own.
+    let earring_ended_turn = whispering_earring_auto_play(state);
+
+    // Co-op: a teammate's `RunAutoPrePlayPhase` ends here; ours is followed by
+    // every teammate's before the play phase opens.
+    if state.coop.seat_run.is_some() {
+        return StepResult::Advanced;
+    }
+    crate::coop::run_seat_stage(state, crate::coop::SeatRun::AutoPrePlay);
+
     // Step 10: combat-end check. Hooks / turn-start auto-plays fired
     // between steps 5-9 may have downed the last enemy. Use the FULL
     // `check_combat_end` (not a bare `is_over` read): a turn-start
@@ -1935,7 +2031,165 @@ fn finish_turn_start_tail(state: &mut CombatState) -> StepResult {
         }
     }
 
+    // An Earring-auto-played VoidForm called `PlayerCmd.EndTurn` (VoidForm.cs:26)
+    // during setup: C# marks the player ready to end the turn, so the turn ends
+    // as soon as the play phase is entered — the player gets no manual plays.
+    // Run the same end-turn chain the manual-play VoidForm rider runs
+    // (`finish_card_play`).
+    if earring_ended_turn && state.player.request_end_turn_after_play {
+        state.player.request_end_turn_after_play = false;
+        if state.phase == CombatPhase::PlayerPlayPhase && !state.is_over {
+            return end_turn_dispatch(state);
+        }
+    }
+
     StepResult::Advanced
+}
+
+/// Most cards one `WhisperingEarring` auto-plays (C# `maxCardsToPlay = 13`).
+pub const WHISPERING_EARRING_MAX_CARDS: u8 = 13;
+
+/// C# `WhisperingEarring.AfterAutoPrePlayPhaseEnteredLate`
+/// (`WhisperingEarring.cs`, identical in v0.107.1 and v0.111.0): on the
+/// owner's first turn (`TurnNumber <= 1`), under
+/// `CardSelectCmd.PushSelector(new VakuuCardSelector())`, play up to 13 cards
+/// from hand. Each iteration stops if combat is over or ending, if the player
+/// is ready to end the turn, or if the turn number changed; otherwise it takes
+/// the FIRST hand card whose `CanPlay()` holds (none → stop), picks its target
+/// (`GetTarget`), pays it with `card.SpendResources()` and runs
+/// `CardCmd.AutoPlay(card, target, AutoPlayType.Default, skipXCapture: true)`.
+///
+/// So these are genuine AUTO-plays (`IsAutoPlay` listeners such as
+/// BrilliantScarf / PaelsEye / VoidFormPower see them as such) that
+/// nevertheless pay their energy and star cost. The +1 max energy half of the
+/// relic is the `relic_modify_max_energy` arm in `hooks.rs`. A melted relic
+/// does nothing (its C# hooks are disabled). `Flash()` and the closing
+/// `TalkCmd` line are cosmetic.
+///
+/// Returns `true` iff an auto-played card raised
+/// `request_end_turn_after_play` (VoidForm's `PlayerCmd.EndTurn`), which the
+/// caller turns into an immediate end of turn.
+fn whispering_earring_auto_play(state: &mut CombatState) -> bool {
+    if state.is_over || state.turn_number() > 1 {
+        return false;
+    }
+    let copies = state
+        .relics
+        .iter()
+        .filter(|r| !r.is_melted && r.kind == crate::RelicKind::WhisperingEarring)
+        .count();
+    if copies == 0 {
+        return false;
+    }
+    let end_requested_before = state.player.request_end_turn_after_play;
+    let start_turn = state.turn_number();
+    // `using (CardSelectCmd.PushSelector(new VakuuCardSelector()))`.
+    let prev_vakuu = std::mem::replace(&mut state.vakuu_selector, true);
+    for _ in 0..copies {
+        for _ in 0..WHISPERING_EARRING_MAX_CARDS {
+            // `CombatManager.Instance.IsOverOrEnding` /
+            // `IsPlayerReadyToEndTurn(player)` / `TurnNumber != startTurn`.
+            if combat_is_ending(state)
+                || state.player.request_end_turn_after_play
+                || state.turn_number() != start_turn
+            {
+                break;
+            }
+            // A selection the previous play left open would have been answered
+            // by the Vakuu selector inside that play; never start the next play
+            // over a pending one.
+            if state.pending_choice.is_some() {
+                break;
+            }
+            let Some(uid) = whispering_earring_first_playable(state) else {
+                break;
+            };
+            let target = whispering_earring_target(state, uid);
+            // `await card.SpendResources()` — energy, then stars.
+            let idx = uid.0.get() as usize - 1;
+            let cost = crate::hooks::effective_card_cost(state, uid);
+            let _ = spend_card_energy(state, idx, cost);
+            let star_cost = crate::effective_star_cost_in_combat(state, &state.cards[idx]);
+            if star_cost > 0 {
+                let _ = state.spend_stars(star_cost);
+            }
+            // `CardCmd.AutoPlay` returns at once when combat is over or ending
+            // (CardCmd.cs:54) — a lethal `AfterStarsSpent` (BlackHole) leaves the
+            // paid card in hand. The loop then stops on the same check.
+            if combat_is_ending(state) {
+                continue;
+            }
+            // `OnPlayWrapper` adds an auto-played card to Play itself
+            // (CardModel.cs:1880); the card is still in hand here.
+            if cards::move_card(&mut state.player, uid, PileKind::Hand, PileKind::Play).is_err() {
+                break;
+            }
+            resolve_auto_played_card_with(
+                state, uid, target, /*force_exhaust=*/ false, /*skip_x_capture=*/ true,
+            );
+            // Anything a hook opened after the card's `OnPlay` (an
+            // `AfterCardPlayed` select, a reshuffle's Stratagem grid) is a
+            // selection under the same pushed selector.
+            if state.pending_choice.is_some() {
+                resolve_inline_auto_play_choices(state);
+            }
+            // `OnPlayWrapper` ends with `CheckForEmptyHand` (CardModel.cs:1993).
+            if state.pending_choice.is_none() && !state.is_over {
+                check_for_empty_hand(state);
+            }
+        }
+    }
+    state.vakuu_selector = prev_vakuu;
+    !end_requested_before && state.player.request_end_turn_after_play
+}
+
+/// The Earring's `pile.Cards.FirstOrDefault(c => c.CanPlay())`: the first card
+/// in hand order that the legal-action surface would let the player play now.
+/// [`crate::push_card_play_actions`] applies exactly the `CanPlay` gates
+/// (resources, Unplayable, NoLivingAllies, the `ShouldPlay` vetoes, the
+/// per-card `IsPlayable` rules); only its `Enemy`-target arm is stricter than
+/// C# — it drops an `AnyEnemy` card while no enemy is alive (a mid-revive
+/// corpse), where C# would pay for it and move it to its result pile unplayed.
+fn whispering_earring_first_playable(state: &CombatState) -> Option<crate::CardUid> {
+    let mut acts: smallvec::SmallVec<[crate::Action; 16]> = smallvec::SmallVec::new();
+    crate::push_card_play_actions(state, &mut acts);
+    let first = acts
+        .iter()
+        .filter_map(|a| match a {
+            crate::Action::PlayCard { hand_index, .. } => Some(*hand_index),
+            _ => None,
+        })
+        .min()?;
+    state.player.hand.get(usize::from(first)).copied()
+}
+
+/// C# `WhisperingEarring.GetTarget`: an `AnyEnemy` card hits the LEFTMOST
+/// hittable enemy (`HittableEnemies.FirstOrDefault()`, no RNG); an `AnyAlly`
+/// card rolls `Rng.CombatTargets.NextItem` over the other living players; an
+/// `AnyPlayer` card targets the owner; anything else gets no target.
+///
+/// The `AnyAlly` read is consumed here to keep the `combat_targets` stream in
+/// step; the ally the card lands on is still the card handler's own pick
+/// ([`CombatState::any_ally_card_target`], the first living ally), which is
+/// the same creature whenever there is a single teammate. `Self_` covers both
+/// C# `Self` and `AnyPlayer`; in the solo engine either resolves to the owner
+/// with no explicit target.
+fn whispering_earring_target(state: &mut CombatState, uid: crate::CardUid) -> Option<CreatureUid> {
+    let card = &state.cards[uid.0.get() as usize - 1];
+    if crate::card_effects::card_is_any_ally(card.card_id) {
+        let n = state.allies.iter().filter(|a| a.current_hp > 0).count();
+        if n > 0 {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+            let _ = state.run_rng.combat_targets.next_int_exclusive(0, n as i32);
+        }
+        return None;
+    }
+    match cards::effective_target_type(state, card) {
+        TargetType::Enemy => state.enemy_uids.iter().copied().find(|e| {
+            crate::creature_by_id(&state.creatures, e.0).is_some_and(|c| c.current_hp > 0)
+        }),
+        TargetType::Self_ | TargetType::None | TargetType::AllEnemies | TargetType::Random => None,
+    }
 }
 
 /// Resume the turn-start `AfterPlayerTurnStart` cluster after a
@@ -2057,6 +2311,12 @@ pub(crate) fn run_stampede_auto_post_play(state: &mut CombatState) -> bool {
 }
 
 pub fn end_player_turn_phase_one(state: &mut CombatState) -> StepResult {
+    // Co-op: the teammates' remaining plays land between ours and the side's
+    // end of turn (`crate::coop`). Here rather than in `apply(EndTurn)` so
+    // every way a turn ends (the search's phase-by-phase end turn, a card or
+    // potion that ends it) reaches it. Runs once; a no-op solo.
+    crate::coop::play_teammates(state);
+
     // Step 1: combat-end short-circuit.
     if state.is_over {
         return if state.player_won {
@@ -2068,6 +2328,14 @@ pub fn end_player_turn_phase_one(state: &mut CombatState) -> StepResult {
 
     debug_assert_eq!(state.phase, CombatPhase::PlayerPlayPhase);
 
+    run_auto_post_play(state)
+}
+
+/// The seated player's `AfterAutoPostPlayPhaseEntered` share of
+/// [`end_player_turn_phase_one`] — Stampede, then
+/// [`end_player_turn_phase_one_after_auto_post_play_stampede`]. Also a
+/// teammate's [`crate::coop::SeatRun::AutoPostPlay`].
+pub(crate) fn run_auto_post_play(state: &mut CombatState) -> StepResult {
     // C# `StampedePower.AfterAutoPostPlayPhaseEntered` (StampedePower.cs:18-34,
     // v0.107.1): Stampede's random-Attack auto-play fires when the turn enters
     // `AutoPostPlay` — BEFORE `BeforeTurnEnd` and BEFORE the card-side
@@ -2187,9 +2455,12 @@ fn end_player_turn_phase_one_after_auto_post_play_stampede(state: &mut CombatSta
     // counter reflects the player's actual unspent budget — listeners
     // that mutate `player.energy` during the chain (e.g. zero-it-out
     // power hooks) don't retroactively reduce the wasted total.
-    state.energy_wasted = state
-        .energy_wasted
-        .saturating_add(i32::from(state.player.energy.max(0)));
+    // Ours only: the run statistic counts the player the state was built for.
+    if state.coop.seat_run.is_none() {
+        state.energy_wasted = state
+            .energy_wasted
+            .saturating_add(i32::from(state.player.energy.max(0)));
+    }
 
     // Bead `sts2-rs-xk9yo`: snapshot "player had 0 block at turn-end start"
     // BEFORE any `before_turn_end` block grant runs. C# Orichalcum /
@@ -2201,15 +2472,25 @@ fn end_player_turn_phase_one_after_auto_post_play_stampede(state: &mut CombatSta
     // instead of live `player.block`.
     state.combat_log.block_zero_at_turn_end = state.player.block == 0;
 
+    // Co-op: a teammate's `AfterAutoPostPlayPhaseEntered` ends here; ours is
+    // followed by every teammate's before the side's `BeforeTurnEnd`.
+    if state.coop.seat_run.is_some() {
+        return StepResult::Advanced;
+    }
+    crate::coop::run_seat_stage(state, crate::coop::SeatRun::AutoPostPlay);
+    if state.is_over {
+        return check_combat_end(state);
+    }
+
     // Step 2: fire before_turn_end(PLAYER). Side is explicit here (not
     // the default) because `TurnSideCtx::default()` = Player matches
     // already, but we lock the intent: this is the player-side end of
     // turn, and Phase 7 enemy-side analogues will pass `Side::Enemy`.
     hooks::dispatch_before_turn_end(state, &TurnSideCtx { side: Side::Player });
     // Bead `sts2-rs-j87`: parallel relic-effects bus drain.
-    if relic_channel_live(state, PlannedChannel::BeforeTurnEnd) {
+    relic_side_dispatch(state, PlannedChannel::BeforeTurnEnd, |state| {
         let _ = crate::relic_effects::dispatch_before_turn_end(state, Side::Player);
-    }
+    });
 
     // Step 3: combat-end re-check after listener walk. C# `EndPlayerTurn`
     // runs `if (await CheckWinCondition()) return;` here — the FULL
@@ -2276,14 +2557,19 @@ fn finish_end_player_turn_phase_one(state: &mut CombatState) -> StepResult {
         .powers
         .present_kinds()
         .contains(crate::powers::PowerKind::ChainsOfBinding)
-        && state.player.powers.iter().any(|puid| {
-            state
-                .powers
-                .get_by_id(puid.0)
-                .is_some_and(|p| p.kind == crate::powers::PowerKind::ChainsOfBinding)
-        });
+        && state.player_power_amount(crate::powers::PowerKind::ChainsOfBinding) > 0;
     if player_has_chains {
-        for card in &mut state.cards {
+        // Co-op: the seated player's cards only (C# walks
+        // `Owner.Player.PlayerCombatState.AllCards`).
+        let own = crate::coop::has_seats(state)
+            .then(|| crate::monster_power_effects::all_player_card_uids(state));
+        for (i, card) in state.cards.iter_mut().enumerate() {
+            if own
+                .as_ref()
+                .is_some_and(|own| !own.iter().any(|u| u.0.get() as usize == i + 1))
+            {
+                continue;
+            }
             if matches!(
                 card.affliction,
                 Some(crate::card_afflictions::CardAffliction {
@@ -2332,6 +2618,16 @@ fn finish_end_player_turn_phase_one(state: &mut CombatState) -> StepResult {
     state.phase = CombatPhase::PlayerEndTurnPhaseOne;
 
     StepResult::Advanced
+}
+
+/// A teammate's [`crate::coop::SeatRun::TurnEnd`]: their `DoTurnEnd` (Chains,
+/// the orb passives) and the phase-two flush, up to `AfterTurnEnd`.
+pub(crate) fn run_turn_end_for_seat(state: &mut CombatState) -> StepResult {
+    let phase_one = finish_end_player_turn_phase_one(state);
+    if !matches!(phase_one, StepResult::Advanced) {
+        return phase_one;
+    }
+    end_player_turn_phase_two(state)
 }
 
 /// Resume the `end_turn_dispatch` chain suspended by
@@ -2386,7 +2682,8 @@ pub(crate) fn resume_end_turn_after_auto_post_play(
         }
     }
     let phase_one = end_player_turn_phase_one_after_auto_post_play_stampede(state);
-    if !matches!(phase_one, StepResult::Advanced) {
+    // A teammate's stage stops at its end (`crate::coop::SeatRun`).
+    if !matches!(phase_one, StepResult::Advanced) || state.coop.seat_run.is_some() {
         return phase_one;
     }
     run_rest_of_end_turn_chain(state)
@@ -3109,43 +3406,20 @@ fn end_player_turn_phase_two_flush_tail(state: &mut CombatState) -> StepResult {
     // (Parrying Shield) before these late powers; Rust runs powers-then-relics
     // in one pass, so Parrying Shield must read this pre-late snapshot, not the
     // already-decremented live value. (sweep seed 5003.)
-    state.combat_log.block_before_late_turn_end = state.player.block;
-    hooks::dispatch_after_turn_end(state, &TurnSideCtx { side: Side::Player });
-    // Bead `sts2-rs-j87`: parallel relic-effects bus drain.
-    let live = relic_guarded_channel_live(state, GuardedChannel::AfterTurnEnd);
-    let _ = dispatch_if_live(state, live, crate::EffectResult::NotImplemented, |state| {
-        crate::relic_effects::dispatch_after_turn_end(state, Side::Player)
-    });
-
-    // C# `SmoggyPower.AfterSideTurnEnd` (`SmoggyPower.cs:47-62`): the owner
-    // (always the player at this pin) participates in this side turn, so every
-    // `Smog` card-affliction laid down by this turn's Skill play is cleared —
-    // next turn's first Skill is playable again. Wired directly here rather
-    // than through the declarative `after_turn_end` Effect channel because
-    // clearing per-card afflictions is not expressible as an `Effect`
-    // (same rationale as the ConsumingShadow orb evoke below).
-    crate::monster_power_effects::smoggy_after_side_turn_end(state);
-
-    // `ConsumingShadowPower.AfterTurnEnd` (`ConsumingShadowPower.cs`): on the
-    // owner's (player's) side turn end, if the orb queue is non-empty, evoke
-    // the LAST orb once per power stack (`for i in 0..Amount: OrbCmd.EvokeLast`).
-    // Wired directly here (like the Plasma turn-start rider) rather than via
-    // the `after_turn_end` Effect channel, because an orb evoke is a multi-step state mutation (deal/heal/block/energy + slot
-    // removal) that the declarative `Effect` surface cannot express. Fires
-    // AFTER `passive_tick` (phase one) has already grown each Dark orb's stored
-    // evoke value, matching C#'s BeforeTurnEnd-passives-then-AfterTurnEnd-powers
-    // ordering. Bead `sts2-rs-defect-consuming-shadow`.
-    if !state.is_over {
-        let stacks = state.player_power_amount(crate::PowerKind::ConsumingShadow);
-        if stacks > 0 && state.player.orbs.slots.iter().any(|o| !o.is_empty()) {
-            for _ in 0..stacks {
-                if state.is_over || !state.player.orbs.slots.iter().any(|o| !o.is_empty()) {
-                    break;
-                }
-                crate::orbs::evoke_last(state);
-            }
-        }
+    //
+    // Co-op: every teammate's `DoTurnEnd` and flush come after ours, before
+    // the side's `AfterTurnEnd`; a teammate's stage ends with its snapshot.
+    crate::coop::run_seat_stage(state, crate::coop::SeatRun::TurnEnd);
+    if state.is_over {
+        return check_combat_end(state);
     }
+    state.combat_log.block_before_late_turn_end = state.player.block;
+    if state.coop.seat_run.is_some() {
+        return StepResult::Advanced;
+    }
+    hooks::dispatch_after_turn_end(state, &TurnSideCtx { side: Side::Player });
+    after_turn_end_seated(state);
+    crate::coop::each_teammate(state, after_turn_end_seated);
 
     // Step 8: combat-end re-check. This is the Rust analogue of C#'s single
     // `await CheckWinCondition();` (`CombatManager.cs:963`) — fired ONCE,
@@ -3221,6 +3495,47 @@ fn end_player_turn_phase_two_flush_tail(state: &mut CombatState) -> StepResult {
     StepResult::Advanced
 }
 
+/// The seated player's share of the side's `AfterTurnEnd` that is not on the
+/// power bus: their relics, Smoggy's Smog clear and ConsumingShadow's evokes.
+/// Run for us, then for each teammate seated.
+fn after_turn_end_seated(state: &mut CombatState) {
+    // Bead `sts2-rs-j87`: parallel relic-effects bus drain.
+    let live = relic_guarded_channel_live(state, GuardedChannel::AfterTurnEnd);
+    let _ = dispatch_if_live(state, live, crate::EffectResult::NotImplemented, |state| {
+        crate::relic_effects::dispatch_after_turn_end(state, Side::Player)
+    });
+
+    // C# `SmoggyPower.AfterSideTurnEnd` (`SmoggyPower.cs:47-62`): the owner
+    // (always the player at this pin) participates in this side turn, so every
+    // `Smog` card-affliction laid down by this turn's Skill play is cleared —
+    // next turn's first Skill is playable again. Wired directly here rather
+    // than through the declarative `after_turn_end` Effect channel because
+    // clearing per-card afflictions is not expressible as an `Effect`
+    // (same rationale as the ConsumingShadow orb evoke below).
+    crate::monster_power_effects::smoggy_after_side_turn_end(state);
+
+    // `ConsumingShadowPower.AfterTurnEnd` (`ConsumingShadowPower.cs`): on the
+    // owner's (player's) side turn end, if the orb queue is non-empty, evoke
+    // the LAST orb once per power stack (`for i in 0..Amount: OrbCmd.EvokeLast`).
+    // Wired directly here (like the Plasma turn-start rider) rather than via
+    // the `after_turn_end` Effect channel, because an orb evoke is a multi-step state mutation (deal/heal/block/energy + slot
+    // removal) that the declarative `Effect` surface cannot express. Fires
+    // AFTER `passive_tick` (phase one) has already grown each Dark orb's stored
+    // evoke value, matching C#'s BeforeTurnEnd-passives-then-AfterTurnEnd-powers
+    // ordering. Bead `sts2-rs-defect-consuming-shadow`.
+    if !state.is_over {
+        let stacks = state.player_power_amount(crate::PowerKind::ConsumingShadow);
+        if stacks > 0 && state.player.orbs.slots.iter().any(|o| !o.is_empty()) {
+            for _ in 0..stacks {
+                if state.is_over || !state.player.orbs.slots.iter().any(|o| !o.is_empty()) {
+                    break;
+                }
+                crate::orbs::evoke_last(state);
+            }
+        }
+    }
+}
+
 /// Resume the suspended end-of-turn flush after a Well-Laid Plans retain
 /// select resolves (bead `sts2-rs-wlp-retain-select`). Runs the flush tail
 /// (which the suspend in [`end_player_turn_phase_two`] parked) and then the
@@ -3236,7 +3551,8 @@ pub(crate) fn resume_wlp_retain_flush(state: &mut CombatState) -> StepResult {
     // phase advance). May return a non-Advanced result (combat ended, or an
     // extra-turn re-entry left the phase at PlayerTurnStart).
     let tail = end_player_turn_phase_two_flush_tail(state);
-    if !matches!(tail, StepResult::Advanced) {
+    // A teammate's stage stops at its end (`crate::coop::SeatRun`).
+    if !matches!(tail, StepResult::Advanced) || state.coop.seat_run.is_some() {
         return tail;
     }
     // Continue the rest of the chain. `end_player_turn_phase_two` already ran;
@@ -3521,9 +3837,9 @@ pub fn enemy_turn_start(state: &mut CombatState) -> StepResult {
     // `owner.side == ctx.side` check) firing for enemy-side powers.
     hooks::dispatch_before_side_turn_start(state, &TurnSideCtx { side: Side::Enemy });
     // Bead `sts2-rs-j87`: parallel relic-effects bus drain.
-    if relic_channel_live(state, PlannedChannel::BeforeSideTurnStart) {
+    relic_side_dispatch(state, PlannedChannel::BeforeSideTurnStart, |state| {
         let _ = crate::relic_effects::dispatch_before_side_turn_start(state, Side::Enemy);
-    }
+    });
 
     // Step 4: per alive enemy, clear block + fire after_block_cleared.
     // Python's `self.alive_enemies` filter is `current_hp > 0`. We
@@ -3585,9 +3901,9 @@ pub fn enemy_turn_start(state: &mut CombatState) -> StepResult {
     // [`start_player_turn`].)
     hooks::dispatch_after_side_turn_start(state, &TurnSideCtx { side: Side::Enemy });
     // Bead `sts2-rs-j87`: parallel relic-effects bus drain.
-    if relic_channel_live(state, PlannedChannel::AfterSideTurnStart) {
+    relic_side_dispatch(state, PlannedChannel::AfterSideTurnStart, |state| {
         let _ = crate::relic_effects::dispatch_after_side_turn_start(state, Side::Enemy);
-    }
+    });
 
     // Step 6: combat-end check after listener walk.
     if state.is_over {
@@ -4345,6 +4661,7 @@ fn perform_intent(
             if let Some(end) = result {
                 return end;
             }
+            hit_allies(state, dealer, damage, props);
             // C# `VigorPower.AfterAttack` fires when the attack command
             // completes (before the move body's next line); consume the
             // attacker's one-shot Vigor here, ahead of `effect_fn`.
@@ -4377,6 +4694,7 @@ fn perform_intent(
             if let Some(end) = result {
                 return end;
             }
+            hit_allies(state, dealer, damage, props);
             consume_attacker_vigor(state, enemy_uid);
             // `SuckPower.AfterAttack` is owner-generic in C# — it would fire
             // for a DeathBlow attacker too (the dealer dies AFTER the attack
@@ -4464,6 +4782,7 @@ fn perform_intent(
                 if let Some(end) = result {
                     return end;
                 }
+                hit_allies(state, dealer, damage, props);
                 if hp_before.is_some_and(|before| suck_hit_landed(state, before)) {
                     sucked_hits += 1;
                 }
@@ -5109,6 +5428,47 @@ pub fn effective_intent_of(state: &CombatState, creature: &crate::Creature) -> O
         None,
     );
     Some((per_hit, intent.hits()))
+}
+
+/// One monster hit landing on the co-op teammates as well as on us.
+///
+/// C# `AttackCommand.FromMonster` targets every living player
+/// (`TargetingAllOpponents`), so each hit of an enemy attack reaches the
+/// teammates too. The engine models them only as HP and block — their powers,
+/// relics and reactions are not on the wire — so the hit runs the damage
+/// pipeline against `CreatureRef::Ally(i)` (the dealer's Strength / Weak still
+/// apply) and comes off their block, then their HP, with no hooks fired.
+///
+/// Only when [`crate::coop::teammates_threatened`]: see there.
+/// And not while we hold `InterceptPower` — the teammate is Covered (C#
+/// `CoveredPower` zeroes the hit), and the hit is already charged to us twice
+/// by Intercept's own damage multiplier.
+fn hit_allies(state: &mut CombatState, dealer: CreatureRef, raw_damage: i32, props: ValueProps) {
+    if state.allies.is_empty()
+        || !crate::coop::teammates_threatened(state)
+        || state.player_power_amount(crate::powers::PowerKind::Intercept) > 0
+    {
+        return;
+    }
+    for i in 0..state.allies.len() {
+        if state.allies[i].current_hp <= 0 {
+            continue;
+        }
+        let ctx = DamageCtx {
+            dealer,
+            target: CreatureRef::Ally(u8::try_from(i).unwrap_or(u8::MAX)),
+            props,
+        };
+        let damage = hooks::modify_damage(state, raw_damage, &ctx).max(0);
+        let ally = &mut state.allies[i];
+        let absorbed = if props.contains(ValueProps::UNBLOCKABLE) {
+            0
+        } else {
+            damage.min(ally.block)
+        };
+        ally.block -= absorbed;
+        ally.current_hp = (ally.current_hp - (damage - absorbed)).max(0);
+    }
 }
 
 pub fn apply_damage_to_player(
@@ -6779,13 +7139,8 @@ pub fn play_card(state: &mut CombatState, hand_index: u8, target: Option<u8>) ->
     };
 
     // ── Commit play: spend energy, move Hand → Play ──────────────────────
-    // Bead `sts2-rs-zlx.5`: spend the modifier-resolved cost (not the
-    // raw `card.cost`) so a Corrupted Skill / Free* card actually
-    // deducts zero. `effective_cost` is i32 ≥ 0; clamp to i8 before
-    // subtraction because `state.player.energy` is i8.
-    let cost_i8: i8 = i8::try_from(effective_cost.clamp(0, i32::from(i8::MAX)))
-        .expect("clamp keeps value in i8 range");
-    state.player.energy = state.player.energy.saturating_sub(cost_i8);
+    // The energy itself is paid by `spend_card_energy` below (after the
+    // EchoForm capture, which reads no energy).
 
     // ── EchoForm capture (bead `sts2-rs-8ett`) ──────────────────────────
     // C# `EchoFormPower.ModifyCardPlayCount` (`EchoFormPower.cs:18-27`,
@@ -6814,65 +7169,7 @@ pub fn play_card(state: &mut CombatState, hand_index: u8, target: Option<u8>) ->
         .saturating_add(1);
     bump_echo_form_series_tally(state);
 
-    // Bead `sts2-rs-n4wd`: X-cost surface. For X-cost cards
-    // (`card.cost == -1` and not an UNPLAYABLE Curse/Status sentinel),
-    // record the *currently-available* energy on the played
-    // `CardInstance.energy_spent`, then drain `state.player.energy`
-    // to 0. Mirrors Python's `_execute_card_play` X-cost branch
-    // (sets `card.energy_spent` before dispatching the on-play
-    // effect — see `cards/regent.py:735` `heavenly_drill`,
-    // `cards/silent.py` `skewer`, `cards/defect.py` `tempest`,
-    // `cards/ironclad.py` `whirlwind`). Downstream X-cost handlers
-    // read this value off the played card (via the matching index in
-    // `state.cards`) instead of re-reading `state.player.energy`
-    // themselves. The cost deducted above is `max(0, -1) = 0`, so
-    // the order (deduct → drain) is correct and `state.player.energy`
-    // at this point is the pre-X-spend amount.
-    // Energy actually paid for this card (C# `CardModel.SpendEnergy`'s
-    // `amount`): the effective cost for a normal card, or all available
-    // energy for an X-cost card (which then drains to 0).
-    let energy_spent_for_hook: i32 = if card.is_x_cost() {
-        let raw_x = i32::from(state.player.energy).max(0);
-        // C# `SpendEnergy` sets `CapturedXValue = amount` — the RAW energy
-        // spent, which is also the play's `EnergyValue`. The relic
-        // `modify_x_value` fold (ChemicalX +2) is NOT stamped here: C# applies
-        // it at read time (`CardModel.ResolveEnergyXValue`), so X-cost handlers
-        // read `card_effects::resolving_card_x_value` while RightHandHand /
-        // IvoryTile see the raw energy (GH #741 follow-up).
-        state.cards[card_idx].energy_spent = raw_x;
-        state.player.energy = 0;
-        raw_x
-    } else {
-        // GH #741: C# `PlayCardAction.ExecuteAction` sets `EnergyValue =
-        // EnergySpent = item` (the energy `SpendResources` paid) for EVERY
-        // play, so a non-X card stamps its paid cost too. RightHandHand's late
-        // effect and IvoryTile's `after_card_played` read it off the card.
-        let paid = i32::from(cost_i8);
-        state.cards[card_idx].energy_spent = paid;
-        paid
-    };
-
-    // C# `CardModel.SpendEnergy` fires `Hook.AfterEnergySpent` immediately
-    // after the energy is deducted and BEFORE the card's `OnPlay`
-    // (CardModel.cs:1414-1424). The sole player-side listener at the pin is
-    // OrbitPower's per-4-energy-spent grant. Regent parity coverage (Orbit).
-    crate::hooks::dispatch_after_energy_spent(state, energy_spent_for_hook);
-    // Tally this card's energy into the per-turn total (C# writes an
-    // `EnergySpentEntry` here). HelixDrill's hit count reads this sum.
-    state.combat_log.energy_spent_this_turn = state
-        .combat_log
-        .energy_spent_this_turn
-        .saturating_add(energy_spent_for_hook);
-    // Event log (C# `EnergySpentEntry`), at the pin the comment above names.
-    // Zero-cost plays record nothing — C# only writes an entry for a spend.
-    if energy_spent_for_hook > 0 {
-        crate::event_log::record(
-            state,
-            crate::event_log::EventLogEntry::EnergySpent {
-                amount: energy_spent_for_hook,
-            },
-        );
-    }
+    let energy_spent_for_hook = spend_card_energy(state, card_idx, effective_cost);
 
     // UI play-log: record this MANUAL play BEFORE the card body dispatches, so
     // a trigger that auto-plays other cards (Cascade / Havoc / Catastrophe)
@@ -7427,6 +7724,90 @@ fn consume_rebound_stack(state: &mut CombatState) {
             delta: -1,
         }],
     );
+}
+
+/// Pay a card's ENERGY cost — C# `CardModel.SpendEnergy` as called from
+/// `CardModel.SpendResources` (CardModel.cs:1817-1844). Returns the energy
+/// actually paid: the modifier-resolved `effective_cost` for a normal card, or
+/// all available energy for an X-cost card (whose X is captured on the card's
+/// `energy_spent`). Fires `AfterEnergySpent`, tallies the per-turn spend and
+/// writes the event-log entry, in that order.
+///
+/// Shared by the manual [`play_card`] path and the Whispering Earring's turn-1
+/// auto-plays, which pay their cost through the same `SpendResources` before
+/// `CardCmd.AutoPlay(..., skipXCapture: true)`.
+pub(crate) fn spend_card_energy(
+    state: &mut CombatState,
+    card_idx: usize,
+    effective_cost: i32,
+) -> i32 {
+    // Bead `sts2-rs-zlx.5`: spend the modifier-resolved cost (not the
+    // raw `card.cost`) so a Corrupted Skill / Free* card actually
+    // deducts zero. `effective_cost` is i32 ≥ 0; clamp to i8 before
+    // subtraction because `state.player.energy` is i8.
+    let cost_i8: i8 = i8::try_from(effective_cost.clamp(0, i32::from(i8::MAX)))
+        .expect("clamp keeps value in i8 range");
+    state.player.energy = state.player.energy.saturating_sub(cost_i8);
+    // Bead `sts2-rs-n4wd`: X-cost surface. For X-cost cards
+    // (`card.cost == -1` and not an UNPLAYABLE Curse/Status sentinel),
+    // record the *currently-available* energy on the played
+    // `CardInstance.energy_spent`, then drain `state.player.energy`
+    // to 0. Mirrors Python's `_execute_card_play` X-cost branch
+    // (sets `card.energy_spent` before dispatching the on-play
+    // effect — see `cards/regent.py:735` `heavenly_drill`,
+    // `cards/silent.py` `skewer`, `cards/defect.py` `tempest`,
+    // `cards/ironclad.py` `whirlwind`). Downstream X-cost handlers
+    // read this value off the played card (via the matching index in
+    // `state.cards`) instead of re-reading `state.player.energy`
+    // themselves. The cost deducted above is `max(0, -1) = 0`, so
+    // the order (deduct → drain) is correct and `state.player.energy`
+    // at this point is the pre-X-spend amount.
+    // Energy actually paid for this card (C# `CardModel.SpendEnergy`'s
+    // `amount`): the effective cost for a normal card, or all available
+    // energy for an X-cost card (which then drains to 0).
+    let energy_spent_for_hook: i32 = if state.cards[card_idx].is_x_cost() {
+        let raw_x = i32::from(state.player.energy).max(0);
+        // C# `SpendEnergy` sets `CapturedXValue = amount` — the RAW energy
+        // spent, which is also the play's `EnergyValue`. The relic
+        // `modify_x_value` fold (ChemicalX +2) is NOT stamped here: C# applies
+        // it at read time (`CardModel.ResolveEnergyXValue`), so X-cost handlers
+        // read `card_effects::resolving_card_x_value` while RightHandHand /
+        // IvoryTile see the raw energy (GH #741 follow-up).
+        state.cards[card_idx].energy_spent = raw_x;
+        state.player.energy = 0;
+        raw_x
+    } else {
+        // GH #741: C# `PlayCardAction.ExecuteAction` sets `EnergyValue =
+        // EnergySpent = item` (the energy `SpendResources` paid) for EVERY
+        // play, so a non-X card stamps its paid cost too. RightHandHand's late
+        // effect and IvoryTile's `after_card_played` read it off the card.
+        let paid = i32::from(cost_i8);
+        state.cards[card_idx].energy_spent = paid;
+        paid
+    };
+
+    // C# `CardModel.SpendEnergy` fires `Hook.AfterEnergySpent` immediately
+    // after the energy is deducted and BEFORE the card's `OnPlay`
+    // (CardModel.cs:1414-1424). The sole player-side listener at the pin is
+    // OrbitPower's per-4-energy-spent grant. Regent parity coverage (Orbit).
+    crate::hooks::dispatch_after_energy_spent(state, energy_spent_for_hook);
+    // Tally this card's energy into the per-turn total (C# writes an
+    // `EnergySpentEntry` here). HelixDrill's hit count reads this sum.
+    state.combat_log.energy_spent_this_turn = state
+        .combat_log
+        .energy_spent_this_turn
+        .saturating_add(energy_spent_for_hook);
+    // Event log (C# `EnergySpentEntry`), at the pin the comment above names.
+    // Zero-cost plays record nothing — C# only writes an entry for a spend.
+    if energy_spent_for_hook > 0 {
+        crate::event_log::record(
+            state,
+            crate::event_log::EventLogEntry::EnergySpent {
+                amount: energy_spent_for_hook,
+            },
+        );
+    }
+    energy_spent_for_hook
 }
 
 /// C# `CombatManager.CheckForEmptyHand` (v0.107.1 CombatManager.cs:890-896):
@@ -8902,9 +9283,38 @@ pub fn player_should_play_blocked(state: &CombatState, card: &crate::cards::Card
     false
 }
 
+/// The next `ResolveChoice` selection C#'s `VakuuCardSelector` makes for
+/// `pc`: `GetSelectedCards(options, min, max) => options.Take(maxSelect)` —
+/// the first `max_select` options in order, never a skip, regardless of
+/// `min_select` (`VakuuCardSelector.cs`). A multi-pick is driven through the
+/// sequential-pick decomposition (lowest still-unpicked option, then the empty
+/// FINALIZE once `min(max_select, options)` are picked); a single pick is
+/// option 0; an empty or zero-pick choice resolves empty.
+fn vakuu_selection(pc: &crate::PendingChoice) -> smallvec::SmallVec<[u8; 4]> {
+    if pc.options.is_empty() || pc.max_select == 0 {
+        return smallvec::SmallVec::new();
+    }
+    if pc.max_select == 1 {
+        return smallvec::smallvec![0u8];
+    }
+    let target = usize::from(pc.max_select).min(pc.options.len());
+    if pc.picked.len() >= target {
+        return smallvec::SmallVec::new();
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    let next = (0..pc.options.len() as u8)
+        .find(|i| !pc.picked.contains(i))
+        .unwrap_or(0u8);
+    smallvec::smallvec![next]
+}
+
 fn resolve_inline_auto_play_choices(state: &mut CombatState) {
-    // Bound matches the harness's `_drain_rust_choices(max_iters=16)`.
-    for _ in 0..16 {
+    // Bound matches the harness's `_drain_rust_choices(max_iters=16)`. A
+    // Vakuu drain takes up to `max_select` sequential picks per choice (plus
+    // its FINALIZE), so it gets more headroom; it is still only a guard
+    // against a pathological self-reopening choice.
+    let bound = if state.vakuu_selector { 64 } else { 16 };
+    for _ in 0..bound {
         if state.pending_choice.is_none() {
             return;
         }
@@ -8945,7 +9355,9 @@ fn resolve_inline_auto_play_choices(state: &mut CombatState) {
                 .pending_choice
                 .as_ref()
                 .expect("checked is_some above");
-            if pc.max_select > 1 {
+            if state.vakuu_selector {
+                vakuu_selection(pc)
+            } else if pc.max_select > 1 {
                 let target = usize::from(pc.min_select).max(1);
                 if pc.picked.len() >= target {
                     // Target satisfied: FINALIZE (runs the kind-resolver over
@@ -9065,6 +9477,28 @@ pub(crate) fn resolve_auto_played_card_at_target(
     top_uid: crate::CardUid,
     target_override: Option<CreatureUid>,
     force_exhaust: bool,
+) {
+    resolve_auto_played_card_with(
+        state,
+        top_uid,
+        target_override,
+        force_exhaust,
+        /*skip_x_capture=*/ false,
+    );
+}
+
+/// As [`resolve_auto_played_card_at_target`], plus C# `CardCmd.AutoPlay`'s
+/// `skipXCapture` flag (CardCmd.cs:82-95). A caller that already paid the card
+/// through `CardModel.SpendResources` — the Whispering Earring — passes `true`:
+/// the X value `SpendEnergy` captured (the energy actually spent, stamped by
+/// [`spend_card_energy`]) is kept rather than re-captured from the now-drained
+/// energy, and a star-X card's `LastStarsSpent` is not re-captured either.
+pub(crate) fn resolve_auto_played_card_with(
+    state: &mut CombatState,
+    top_uid: crate::CardUid,
+    target_override: Option<CreatureUid>,
+    force_exhaust: bool,
+    skip_x_capture: bool,
 ) {
     crate::cards::emit_pile_trace(
         &state.player,
@@ -9286,7 +9720,10 @@ pub(crate) fn resolve_auto_played_card_at_target(
     // (seed 1376: a DistilledChaos-auto-played Volley → combat_targets cs=2
     // rs=1). Stamp it here (no energy drain, mirroring C#).
     if state.cards[top_idx].is_x_cost() {
-        state.cards[top_idx].energy_spent = i32::from(state.player.energy.max(0));
+        // `skipXCapture`: the caller's `SpendResources` already captured X.
+        if !skip_x_capture {
+            state.cards[top_idx].energy_spent = i32::from(state.player.energy.max(0));
+        }
     } else {
         // GH #741: a non-X auto-play is free (C# `EnergySpent = 0`) but its
         // `EnergyValue` is `EnergyCost.GetAmountToSpend()` — the card's
@@ -9528,7 +9965,11 @@ pub(crate) fn resolve_auto_played_card_at_target(
     // the hit count without calling `spend_stars` — an auto-played Stardust
     // (Mayhem) hits `Stars` times but leaves the stars intact. regent-legal-action
     // Fix B (seed 2010). Manual plays never set this var, so they still spend.
-    if top_card_id == cards::CardId::Stardust {
+    // Under `skipXCapture` (Whispering Earring) the stars were NOT captured
+    // here: the var stays unset and `play_stardust` spends the stars itself,
+    // exactly as on the manual path (C# `SpendResources` → `SpendStars` set
+    // `LastStarsSpent` and fired `AfterStarsSpent` before this auto-play).
+    if top_card_id == cards::CardId::Stardust && !skip_x_capture {
         let captured = i32::from(state.player.stars).max(0);
         state.cards[top_idx].set_combat_var(crate::cards::VarKey::AutoPlayStarX, captured + 1);
     }
@@ -9787,7 +10228,9 @@ pub struct AutoPlayParentFrame {
 /// `AutoResolveInline` mirror). A combat-ending play has no live decision to
 /// surface, so it drains too. Anything else SURFACES.
 fn auto_play_choice_should_surface(state: &CombatState) -> bool {
-    if state.autoplay_inline_resolve || state.is_over {
+    // A pushed `VakuuCardSelector` (Whispering Earring) answers every
+    // selection itself, so nothing surfaces while it is active.
+    if state.autoplay_inline_resolve || state.vakuu_selector || state.is_over {
         return false;
     }
     let Some(pc) = state.pending_choice.as_ref() else {
@@ -14755,6 +15198,90 @@ mod tests {
             state.enemy_uids.push(CreatureUid(id));
         }
         state
+    }
+
+    /// A co-op board: one teammate (40/60 HP, `block`) whom the enemy turn of
+    /// the current round hits, as the wire loader marks it.
+    fn coop_enemy_turn(intent: Intent, block: i32) -> CombatState {
+        let mut state = state_for_enemy_turn_exec(1, MonsterKind::ShrinkerBeetle, intent);
+        state.round = 3;
+        state.coop.threat_round = Some(3);
+        state.allies.push(crate::PlayerCombatState {
+            current_hp: 40,
+            max_hp: 60,
+            block,
+            ..crate::PlayerCombatState::default()
+        });
+        state
+    }
+
+    /// C# `AttackCommand.FromMonster` targets every living player, so each
+    /// hit of a monster attack also lands on the teammate: through their
+    /// block first, and with the dealer's Strength.
+    #[test]
+    fn a_monster_attack_hits_the_teammate_through_their_block() {
+        let enemy_uid = CreatureUid(NonZeroU32::new(1).expect("nz"));
+        let mut state = coop_enemy_turn(Intent::MultiAttack { damage: 5, hits: 3 }, 7);
+        let pid = NonZeroU32::new(7001).expect("nz");
+        state.powers.push(Power {
+            id: pid,
+            kind: PowerKind::Strength,
+            amount: 1,
+            counter: 0,
+            applier: None,
+            skip_next_tick: false,
+        });
+        state.creatures[0].powers.push(PowerUid(pid));
+
+        let intent = state.creatures[0].intent;
+        perform_intent(&mut state, enemy_uid, intent);
+        // 3 hits of 6: 7 block soaks the first and 1 of the second.
+        assert_eq!(state.allies[0].block, 0);
+        assert_eq!(state.allies[0].current_hp, 40 - (18 - 7));
+        assert_eq!(state.player.current_hp, 50 - 18);
+    }
+
+    /// Only the enemy turn the board was read on reaches the teammate (their
+    /// own turns are not simulated), a dead teammate is not hit, and neither
+    /// is a Covered one while we hold Intercept.
+    #[test]
+    fn the_teammate_is_hit_only_on_the_visible_enemy_turn() {
+        let enemy_uid = CreatureUid(NonZeroU32::new(1).expect("nz"));
+        let attack = Some(Intent::Attack { damage: 6 });
+
+        let mut later = coop_enemy_turn(Intent::Attack { damage: 6 }, 0);
+        later.round = 4;
+        perform_intent(&mut later, enemy_uid, attack);
+        assert_eq!(later.allies[0].current_hp, 40);
+
+        let mut dead = coop_enemy_turn(Intent::Attack { damage: 6 }, 0);
+        dead.allies[0].current_hp = 0;
+        perform_intent(&mut dead, enemy_uid, attack);
+        assert_eq!(dead.allies[0].current_hp, 0);
+
+        let mut covered = coop_enemy_turn(Intent::Attack { damage: 6 }, 0);
+        let pid = NonZeroU32::new(7002).expect("nz");
+        covered.powers.push(Power {
+            id: pid,
+            kind: PowerKind::Intercept,
+            amount: 1,
+            counter: 0,
+            applier: None,
+            skip_next_tick: false,
+        });
+        covered.player.powers.push(PowerUid(pid));
+        perform_intent(&mut covered, enemy_uid, attack);
+        assert_eq!(covered.allies[0].current_hp, 40);
+        assert_eq!(
+            covered.player.current_hp,
+            50 - 12,
+            "Intercept takes both hits"
+        );
+
+        let mut solo =
+            state_for_enemy_turn_exec(1, MonsterKind::ShrinkerBeetle, Intent::Attack { damage: 6 });
+        perform_intent(&mut solo, enemy_uid, attack);
+        assert_eq!(solo.player.current_hp, 44);
     }
 
     /// Bead `sts2-rs-lam0b`: an enemy's `Vigor(6)` adds its bonus to the

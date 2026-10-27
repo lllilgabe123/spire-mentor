@@ -1057,7 +1057,7 @@ fn playout_regret(pool_root: &Path, book: &Book, rows_path: &Path, opts: &Opts) 
             bits
         );
         let k = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if k % 20 == 0 || k == total {
+        if k.is_multiple_of(20) || k == total {
             eprintln!(
                 "[playout-regret] {k}/{total} tasks  {:.0}s",
                 t0.elapsed().as_secs_f64()
@@ -1085,7 +1085,7 @@ fn root_table(pool_root: &Path, book: &Book, motif: Option<&str>, opts: &Opts) {
     let entries: Vec<&BookEntry> = book
         .entries
         .iter()
-        .filter(|e| motif.map_or(true, |m| e.motifs.iter().any(|t| t == m)))
+        .filter(|e| motif.is_none_or(|m| e.motifs.iter().any(|t| t == m)))
         .collect();
     eprintln!(
         "[root-table] {} entries{}; sims {:?} x {} seeds; child {} sims x {} seeds",
@@ -1178,7 +1178,7 @@ fn root_table(pool_root: &Path, book: &Book, motif: Option<&str>, opts: &Opts) {
                 ));
             }
             let k = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            if k % 10 == 0 || k == entries.len() {
+            if k.is_multiple_of(10) || k == entries.len() {
                 eprintln!(
                     "[root-table] {k}/{} entries  {:.0}s",
                     entries.len(),

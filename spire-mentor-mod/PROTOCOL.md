@@ -240,6 +240,7 @@ Sent once per card-play decision (~4x/s during combat).
 | `available_actions` | string[] | `["PLAY","END_TURN"]` plus `"POTION"` iff any potion slot has `can_use=true`. |
 | `round` | int | `CombatState.RoundNumber`. |
 | `room_type` | string | The live `RunState.CurrentRoom.RoomType` (`Monster`\|`Elite`\|`Boss`\|`Event`\|...), same enum string the headless `RunContext` emits as `context.room_type`. The client maps `"Elite"` onto the engine's `is_elite` flag (an eval-net feature). Defaults to `"Combat"` when no room is known. |
+| `allies` | object[] | **New (co-op phase 3).** One entry per OTHER player in the run, as this peer simulates them; empty in single-player. Each: `character` (string id), `hp` / `max_hp` / `block` (int), `is_dead` (bool), `energy` / `max_energy` (int), `powers` (Power[]), `hand` (Card[], serialized without legality), `ended_turn` (bool, `CombatManager.IsPlayerReadyToEndTurn`). Every peer runs every player's draws, so the teammate's hand is real data even though the game's UI only shows its size. Monster attacks hit every player (`TargetingAllOpponents`), so `enemies[].intents` damage is already ours. **Absent** in every mod build before the field. |
 | `player.stars` | int | **Regent only** (same condition as headless `RunSimulator.CombatPlayState`: `pcs.Stars >= 0` and character `REGENT`). The star economy for star-cost cards; the client hoists it to the headless dialect's top-level `stars`. |
 
 ### `map_select`

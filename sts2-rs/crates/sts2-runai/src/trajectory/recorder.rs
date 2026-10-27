@@ -187,7 +187,7 @@ impl<P: RunPolicy> RecordingPolicy<P> {
         // Room visits: push on coord change.
         if let Some(room) = rs.current_room.as_ref() {
             let coord = room.map_coord.map(|c| (c.col, c.row));
-            let changed = self.rooms.last().map_or(true, |r| r.coord != coord);
+            let changed = self.rooms.last().is_none_or(|r| r.coord != coord);
             if changed {
                 self.rooms.push(RoomVisit {
                     act: rs.act_index,

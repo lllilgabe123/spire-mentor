@@ -2,20 +2,16 @@
 use super::prelude::*;
 
 /// Demonic Shield (Uncommon, 0 energy, `AnyAlly`). Lose 1 HP, grant
-/// block to a target ally. Python `demonic_shield` at
-/// `ironclad.py:804-810`. The Rust pin has no non-player ally arena —
-/// the canonical fallback target is the player itself, mirroring the
-/// "self is the only valid ally" branch. Bead `sts2-rs-hdy` plumbs the
-/// self-HP-loss; full ally-routing waits on the pet/ally surface bead.
+/// block to the target teammate (`state.allies`).
 ///
 /// C# DemonicShield.cs CanonicalVars: `CalculationBase(0) +
 /// CalculationExtra(1) *` `CalculatedBlock.WithMultiplier((card, _) =>
 /// card.Owner.Creature.Block)`. Block gained equals the OWNER's
-/// CURRENT block (effectively doubles it). Bead `sts2-rs-xldkg` fixed
+/// CURRENT block, given to the teammate. Bead `sts2-rs-xldkg` fixed
 /// the prior `current_block(state)` source (read the card POD's
 /// `base_block`, which is 0 → granted 0 block — silently broken).
 /// `CalculatedBlock`: `CalculationBase(0) + CalculationExtra(1) x <your Block>`
-/// — the card doubles the Block you already have. Shared with the card face,
+/// — the teammate gets the Block you already have. Shared with the card face,
 /// see `crate::cards::preview`.
 pub(crate) fn preview_demonic_shield(
     state: &CombatState,
@@ -29,15 +25,14 @@ pub(crate) fn play_demonic_shield(
     state: &mut CombatState,
     _t: Option<CreatureUid>,
 ) -> EffectResult {
-    // C# order, and it is observable: `OnPlay` runs `CreatureCmd.Damage(...)`
-    // and only THEN evaluates `CalculatedBlock.Calculate(...)`, which reads
-    // `card.Owner.Creature.Block` at that moment. The HP loss is Unblockable so
-    // it does not spend Block itself, but a hook that fires on it and touches
-    // Block would land in the number here — reading first quietly moved the
-    // snapshot a step earlier than the game takes it.
+    // C#: the player loses 1 HP (unblockable), then the TARGET teammate
+    // gains block equal to the player's block (`CalculatedBlock = 0 + 1 *
+    // Owner.Creature.Block`), with the player's Dexterity on it.
     self_hp_loss(state, 1);
     let gain = resolving_preview(state, preview_demonic_shield, None);
-    gain_block_player(state, gain);
+    if let Some(ally) = state.any_ally_card_target() {
+        let _ = sts2_core::card_effects::gain_block_ally(state, ally, gain);
+    }
     EffectResult::Resolved
 }
 

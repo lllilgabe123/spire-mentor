@@ -35,7 +35,7 @@ source the extractors and the mechanics work read plus real art
   oracle build with `STS2_GAME_VERSION`. Steam installs one branch at a
   time; to get both builds on one machine, use `--download` (below).
 - [`just`](https://just.systems), [`uv`](https://docs.astral.sh/uv/), Python 3.13.
-- Rust 1.96 (pinned by `sts2-rs/rust-toolchain.toml`; rustup installs it on
+- Rust 1.99 (pinned by `sts2-rs/rust-toolchain.toml`; rustup installs it on
   first use) and `cargo-nextest`. `sccache` is optional
   (`export RUSTC_WRAPPER=sccache`).
 - **oracle tier:** the [.NET 9 SDK](https://dotnet.microsoft.com/download).

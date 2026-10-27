@@ -8,8 +8,10 @@ use super::prelude::*;
 /// `sts2-rs-7up3`.
 // Port-pin: sts2-rl-agent@01c094d:sts2_env/cards/regent.py:L404
 pub(crate) fn play_largesse(_state: &mut CombatState, _t: Option<CreatureUid>) -> EffectResult {
-    // TODO(sts2-rs-vyh1, sts2-rs-7up3): generate +
-    // place colorless modifier in target hand.
+    // C#: a colorless card from the teammate's pool goes to the teammate's hand — all of it lands on the co-op teammate
+    // (`cardPlay.Target`), whose turn is not simulated, so playing it
+    // changes nothing here but the energy and the card's own pile move.
+    // Unplayable without a living teammate (`card_is_any_ally`).
     EffectResult::Resolved
 }
 

@@ -7,7 +7,7 @@ scaffolding from bead **sts2-rs-722dx** (GH #1).
 
 `cargo-fuzz` instruments targets with `libfuzzer-sys`, which requires
 nightly Rust (`-Z sanitizer=...`) and emits an `extern "C"` shim from
-the `fuzz_target!` macro. The main workspace pins **Rust 1.95 stable**
+the `fuzz_target!` macro. The main workspace pins **Rust 1.99.1 stable**
 and sets `unsafe_code = "deny"` workspace-wide, both of which would
 break the fuzz crate. So this `fuzz/` directory has its own empty
 `[workspace]` table and is excluded from the parent workspace —

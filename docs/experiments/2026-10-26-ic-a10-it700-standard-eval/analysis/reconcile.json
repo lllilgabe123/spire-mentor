@@ -1,0 +1,821 @@
+{
+ "reconciliation": {
+  "verdict": "AGREE. Every number the two analyses both report matches the raw rows (counts exactly, floats to full precision or to the analysis' own rounding). No number needed resolving.",
+  "differences_resolved": [
+   {
+    "item": "seconds per step",
+    "primary": "D 0.3191, P 0.3070, ratio 1.039",
+    "blind": "D 0.3006, P 0.2881, ratio 1.043",
+    "resolution": "Both are right; the definitions differ. Primary divides total wall_s by total steps (ratio of sums, weights long runs). Blind averages each run's wall_s/steps (mean of ratios). The raw rows reproduce both."
+   },
+   {
+    "item": "primary's reading: D-P '+2.75pp ... sits inside their range' (the two 1000/4000 gates)",
+    "resolution": "Wrong as worded, and the contrast differs. +2.75pp is below both gate point estimates (+3.45pp, +5.20pp). The gates compared the bundle (knobs + prior) with the plain control (neither), and the gate write-up says it had no knobs-only or prior-only arm. D-P here is the prior alone on top of the knobs, at 4000/16000. So the gates give no direct reference for D-P. Nothing numeric changes; final.txt drops the claim."
+   },
+   {
+    "item": "primary's note: '84 died to the first act-3 boss' (D; P 82)",
+    "resolution": "Slight over-statement. These are act-3 losses with reached_second_boss False. In D, 68 ended on act floor 15 (the first boss floor) and 16 earlier in act 3; in P, 70 and 12. Blind's label 'act3_before_boss2' is the exact one. No score uses this split."
+   },
+   {
+    "item": "primary's caveat: 'if search is not bit-deterministic it does not prove the prior was off'",
+    "resolution": "Resolved by outside evidence: the ship identity record (docs/experiments/2026-10-25-ic-bundle-ship-identity.md \u00a712) shows that on this same PGO .so (823fa393...) Ironclad full runs replay seed-for-seed (51 of 51 identity checks, 0 differences, including a PRIOR_NET=off arm that reproduces its prior-off reference). That was at 1000/4000 on seeds 96,509,000-043, not at 4000/16000. Given that, a no-op off switch would have made P replay D on all 400 seeds."
+   }
+  ],
+  "evidence_checks": {
+   "a_prior_on_in_D_off_in_P": {
+    "result": "PASS (indirect; no row or log records the prior state)",
+    "detail": "399 of 400 seeds differ between D and P in steps, final state or resolution counts (398 in steps, 379 in final state, 169 in final floor, 144 in final hp, 399 in resolution counts); 85 differ in A10 outcome, 100 in the A9 estimate. The one identical seed, 91000303, is an 84-step act-1 death on floor 8 (wall 7.04 s vs 7.02 s), the kind of run that can end before any elite or boss room, where the prior never acts. Runs are seed-deterministic on this .so (ship identity record), so if STS2_RUNAI_PRIOR_NET=off had not engaged, or the wheel had no built-in prior, P would equal D on every seed. The wheel does carry the prior: builtin_prior_net_json('Ironclad') returns 268,757 bytes, sha256 ca4692595c22...d4f2, and None for the other four characters (checked now; .so sha256 still 823fa393...). Which arm had the prior rests on run_eval.sh: D gets no extra env, P gets `env STS2_RUNAI_PRIOR_NET=off`. A labelling swap would leave the discordance unchanged, so it is not ruled out by the rows; the per-step cost (D 1.04x P) is in the direction the prior's extra work predicts, but that is weak.",
+    "logs": "logs/D.stdout and logs/P.stdout contain no line naming the prior or any STS2_* env; both stderr files are 0 bytes. driver.log's env line for P does not show STS2_RUNAI_PRIOR_NET because `env` applies it to the child after the line is logged. Both stdouts report 'G1b ownership audit: PASS'."
+   },
+   "b_act_per_seed": "PASS: act1 equal on all 400 seeds; both arms overgrowth 189 / underdocks 211.",
+   "c_error_rows": "PASS: 0 error and 0 timeout rows in either arm (no 'error' key, no non won/lost outcome); both .exit files 0; seeds exactly 91,000,000-91,000,399 in each arm, no duplicates. The filter was a no-op, so scored n = 400 per arm and paired n = 400.",
+   "d_D_plausible": "PASS (no implausibility): D 26.75% A10 / 52.25% A9 estimate sits above P (24.00% / 49.75%) and above the old pre-bundle no-prior row (23.0% / 49.8%, other host, older wheel without rule 5c, unpaired). P on this wheel lands within 1pp of that old row, which is the same knobs-only setting. D's D-P direction matches the gates' bundle-vs-control direction, but the contrasts differ (see differences_resolved)."
+  }
+ },
+ "rows": {
+  "D": {
+   "total": 400,
+   "error": 0,
+   "timeout": 0,
+   "dropped": 0,
+   "scored": 400,
+   "dup_seeds": 0,
+   "missing_seeds": 0,
+   "extra_seeds": 0,
+   "exit": "0",
+   "outcomes": {
+    "lost": 293,
+    "won": 107
+   },
+   "wheel_src_hash": [
+    "4e5bb730d28e2976"
+   ],
+   "wheel_pgo": [
+    true
+   ],
+   "so_path": [
+    "<venv>/lib/python3.13/site-packages/sts2_rs/sts2_rs.abi3.so"
+   ],
+   "py_src": [
+    "774d91045cdb5433"
+   ],
+   "policy": [
+    "net_greedy"
+   ],
+   "asc": [
+    10
+   ],
+   "character": [
+    "Ironclad"
+   ],
+   "decisions_nonempty": 0
+  },
+  "P": {
+   "total": 400,
+   "error": 0,
+   "timeout": 0,
+   "dropped": 0,
+   "scored": 400,
+   "dup_seeds": 0,
+   "missing_seeds": 0,
+   "extra_seeds": 0,
+   "exit": "0",
+   "outcomes": {
+    "lost": 304,
+    "won": 96
+   },
+   "wheel_src_hash": [
+    "4e5bb730d28e2976"
+   ],
+   "wheel_pgo": [
+    true
+   ],
+   "so_path": [
+    "<venv>/lib/python3.13/site-packages/sts2_rs/sts2_rs.abi3.so"
+   ],
+   "py_src": [
+    "774d91045cdb5433"
+   ],
+   "policy": [
+    "net_greedy"
+   ],
+   "asc": [
+    10
+   ],
+   "character": [
+    "Ironclad"
+   ],
+   "decisions_nonempty": 0
+  },
+  "paired_n": 400
+ },
+ "arms": {
+  "D": {
+   "A10": {
+    "wins": 107,
+    "n": 400,
+    "rate": 0.2675,
+    "wilson95": [
+     0.22648238411831478,
+     0.31294083274713314
+    ]
+   },
+   "A9est": {
+    "reached": 209,
+    "n": 400,
+    "rate": 0.5225,
+    "wilson95": [
+     0.4735694074890401,
+     0.5710025392659165
+    ]
+   },
+   "losses_by_where": {
+    "act1": 30,
+    "act2": 77,
+    "act3_before_boss2": 84,
+    "act3_reached_boss2": 102,
+    "won": 107
+   },
+   "by_act1": {
+    "overgrowth": {
+     "n": 189,
+     "A10_wins": 53,
+     "A9est": 105
+    },
+    "underdocks": {
+     "n": 211,
+     "A10_wins": 54,
+     "A9est": 104
+    }
+   },
+   "rsb_by_act_won": {
+    "(1, None, False)": 30,
+    "(2, None, False)": 77,
+    "(3, False, False)": 84,
+    "(3, True, False)": 102,
+    "(3, True, True)": 107
+   },
+   "act3_before_boss2_at_act_floor_15": 68,
+   "act3_before_boss2_earlier": 16
+  },
+  "P": {
+   "A10": {
+    "wins": 96,
+    "n": 400,
+    "rate": 0.24,
+    "wilson95": [
+     0.20074599691279923,
+     0.284200396141035
+    ]
+   },
+   "A9est": {
+    "reached": 199,
+    "n": 400,
+    "rate": 0.4975,
+    "wilson95": [
+     0.44875888867958347,
+     0.5462886727920879
+    ]
+   },
+   "losses_by_where": {
+    "act2": 82,
+    "act1": 37,
+    "act3_before_boss2": 82,
+    "act3_reached_boss2": 103,
+    "won": 96
+   },
+   "by_act1": {
+    "overgrowth": {
+     "n": 189,
+     "A10_wins": 54,
+     "A9est": 107
+    },
+    "underdocks": {
+     "n": 211,
+     "A10_wins": 42,
+     "A9est": 92
+    }
+   },
+   "rsb_by_act_won": {
+    "(1, None, False)": 37,
+    "(2, None, False)": 82,
+    "(3, False, False)": 82,
+    "(3, True, False)": 103,
+    "(3, True, True)": 96
+   },
+   "act3_before_boss2_at_act_floor_15": 70,
+   "act3_before_boss2_earlier": 12
+  }
+ },
+ "paired": {
+  "A10": {
+   "n": 400,
+   "both": 59,
+   "b_D_only": 48,
+   "c_P_only": 37,
+   "neither": 256,
+   "diff_pp": 2.75,
+   "mcnemar_exact_p_two_sided": 0.27799928908055166,
+   "ci95_pp_newcombe10": [
+    -1.764893583693853,
+    7.259809423882885
+   ],
+   "phi": 0.4406227094810954,
+   "ci95_pp_wald": [
+    -1.759448126335283,
+    7.259448126335283
+   ],
+   "se_pp_wald": 2.300781117359928,
+   "scipy_binomtest_p": 0.2779992890805517
+  },
+  "A9est": {
+   "n": 400,
+   "both": 154,
+   "b_D_only": 55,
+   "c_P_only": 45,
+   "neither": 146,
+   "diff_pp": 2.5,
+   "mcnemar_exact_p_two_sided": 0.36820161732669626,
+   "ci95_pp_newcombe10": [
+    -2.382369088286203,
+    7.358634395021535
+   ],
+   "phi": 0.5007385075964947,
+   "ci95_pp_wald": [
+    -2.393781241051232,
+    7.393781241051232
+   ],
+   "se_pp_wald": 2.4968730444297726,
+   "scipy_binomtest_p": 0.36820161732669615
+  }
+ },
+ "checks": {
+  "act1_mismatch_seeds": [],
+  "act1_split": {
+   "D": {
+    "underdocks": 211,
+    "overgrowth": 189
+   },
+   "P": {
+    "underdocks": 211,
+    "overgrowth": 189
+   }
+  },
+  "same_A10_outcome": 315,
+  "diff_A10_outcome": 85,
+  "same_A9est": 300,
+  "identical_trajectory_seeds": [
+   91000303
+  ],
+  "n_identical": 1,
+  "diff_any_of_steps_final_rescounts": 399,
+  "diff_steps": 398,
+  "diff_final": 379,
+  "diff_total_floor": 169,
+  "diff_final_hp": 144,
+  "diff_resolution_counts": 399,
+  "early_act1_deaths_floor_le_10": [
+   {
+    "seed": 91000303,
+    "D_floor": 8,
+    "P_floor": 8,
+    "D_steps": 84,
+    "P_steps": 84,
+    "D_wall": 7.04,
+    "P_wall": 7.02,
+    "identical": true
+   }
+  ]
+ },
+ "cost": {
+  "D": {
+   "run_wall_s_mean": 160.522775,
+   "run_wall_s_median": 150.16,
+   "run_wall_s_max": 623.74,
+   "run_wall_s_sum": 64209.11,
+   "s_per_step_ratio_of_sums": 0.31910063165009267,
+   "s_per_step_mean_of_ratios": 0.3006416112514467,
+   "s_per_combat_decision_ratio_of_sums": 0.3907755367836798
+  },
+  "P": {
+   "run_wall_s_mean": 152.402875,
+   "run_wall_s_median": 144.65,
+   "run_wall_s_max": 523.84,
+   "run_wall_s_sum": 60961.15,
+   "s_per_step_ratio_of_sums": 0.30701162855113995,
+   "s_per_step_mean_of_ratios": 0.28813633433456415,
+   "s_per_combat_decision_ratio_of_sums": 0.37565411634212476
+  },
+  "ratio_D_over_P": {
+   "run_wall_mean": 1.053279178624419,
+   "run_wall_median": 1.0380919460767368,
+   "run_wall_sum": 1.0532791786244189,
+   "s_per_step_ratio_of_sums": 1.0393763687584199,
+   "s_per_step_mean_of_ratios": 1.0434005553161592,
+   "s_per_combat_decision": 1.0402535731241218,
+   "paired_per_seed_median": 1.0376357361184443,
+   "paired_per_seed_geomean": 1.0677895876965233,
+   "paired_same_final_floor_n": 231,
+   "paired_same_final_floor_geomean": 1.0367506396546073
+  }
+ },
+ "comparison": [
+  {
+   "what": "D rows total",
+   "raw_recompute": 400,
+   "primary": 400,
+   "blind": 400,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D error rows",
+   "raw_recompute": 0,
+   "primary": 0,
+   "blind": 0,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D timeout rows",
+   "raw_recompute": 0,
+   "primary": 0,
+   "blind": 0,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D scored",
+   "raw_recompute": 400,
+   "primary": 400,
+   "blind": 400,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P rows total",
+   "raw_recompute": 400,
+   "primary": 400,
+   "blind": 400,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P error rows",
+   "raw_recompute": 0,
+   "primary": 0,
+   "blind": 0,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P timeout rows",
+   "raw_recompute": 0,
+   "primary": 0,
+   "blind": 0,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P scored",
+   "raw_recompute": 400,
+   "primary": 400,
+   "blind": 400,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired n",
+   "raw_recompute": 400,
+   "primary": 400,
+   "blind": 400,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D A10 wins",
+   "raw_recompute": 107,
+   "primary": 107,
+   "blind": 107,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D A10 rate",
+   "raw_recompute": 0.2675,
+   "primary": 0.2675,
+   "blind": 0.2675,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D A10 Wilson lo",
+   "raw_recompute": 0.22648238411831478,
+   "primary": 0.22648238411831478,
+   "blind": 0.22648238411831478,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D A10 Wilson hi",
+   "raw_recompute": 0.31294083274713314,
+   "primary": 0.31294083274713314,
+   "blind": 0.31294083274713314,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D A9est reached",
+   "raw_recompute": 209,
+   "primary": 209,
+   "blind": 209,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D A9est rate",
+   "raw_recompute": 0.5225,
+   "primary": 0.5225,
+   "blind": 0.5225,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D A9est Wilson lo",
+   "raw_recompute": 0.4735694074890401,
+   "primary": 0.4735694074890401,
+   "blind": 0.4735694074890401,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D A9est Wilson hi",
+   "raw_recompute": 0.5710025392659165,
+   "primary": 0.5710025392659165,
+   "blind": 0.5710025392659165,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P A10 wins",
+   "raw_recompute": 96,
+   "primary": 96,
+   "blind": 96,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P A10 rate",
+   "raw_recompute": 0.24,
+   "primary": 0.24,
+   "blind": 0.24,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P A10 Wilson lo",
+   "raw_recompute": 0.20074599691279923,
+   "primary": 0.20074599691279923,
+   "blind": 0.20074599691279923,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P A10 Wilson hi",
+   "raw_recompute": 0.284200396141035,
+   "primary": 0.284200396141035,
+   "blind": 0.284200396141035,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P A9est reached",
+   "raw_recompute": 199,
+   "primary": 199,
+   "blind": 199,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P A9est rate",
+   "raw_recompute": 0.4975,
+   "primary": 0.4975,
+   "blind": 0.4975,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P A9est Wilson lo",
+   "raw_recompute": 0.44875888867958347,
+   "primary": 0.44875888867958347,
+   "blind": 0.44875888867958347,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P A9est Wilson hi",
+   "raw_recompute": 0.5462886727920879,
+   "primary": 0.5462886727920879,
+   "blind": 0.5462886727920879,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A10 both",
+   "raw_recompute": 59,
+   "primary": 59,
+   "blind": 59,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A10 b (D only)",
+   "raw_recompute": 48,
+   "primary": 48,
+   "blind": 48,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A10 c (P only)",
+   "raw_recompute": 37,
+   "primary": 37,
+   "blind": 37,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A10 neither",
+   "raw_recompute": 256,
+   "primary": 256,
+   "blind": 256,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A10 diff pp",
+   "raw_recompute": 2.75,
+   "primary": 2.75,
+   "blind": 2.75,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A10 McNemar p",
+   "raw_recompute": 0.27799928908055166,
+   "primary": 0.27799928908055166,
+   "blind": 0.27799928908055166,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A10 Newcombe10 lo",
+   "raw_recompute": -1.764893583693853,
+   "primary": -1.764893583693853,
+   "blind": -1.764893583693853,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A10 Newcombe10 hi",
+   "raw_recompute": 7.259809423882885,
+   "primary": 7.259809423882885,
+   "blind": 7.259809423882885,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A10 Wald lo",
+   "raw_recompute": -1.759448126335283,
+   "primary": -1.7594481263352824,
+   "blind": -1.7594481263352824,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A10 Wald hi",
+   "raw_recompute": 7.259448126335283,
+   "primary": 7.259448126335283,
+   "blind": 7.259448126335283,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A9est both",
+   "raw_recompute": 154,
+   "primary": 154,
+   "blind": 154,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A9est b (D only)",
+   "raw_recompute": 55,
+   "primary": 55,
+   "blind": 55,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A9est c (P only)",
+   "raw_recompute": 45,
+   "primary": 45,
+   "blind": 45,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A9est neither",
+   "raw_recompute": 146,
+   "primary": 146,
+   "blind": 146,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A9est diff pp",
+   "raw_recompute": 2.5,
+   "primary": 2.5,
+   "blind": 2.5,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A9est McNemar p",
+   "raw_recompute": 0.36820161732669626,
+   "primary": 0.36820161732669626,
+   "blind": 0.36820161732669626,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A9est Newcombe10 lo",
+   "raw_recompute": -2.382369088286203,
+   "primary": -2.382369088286203,
+   "blind": -2.382369088286203,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A9est Newcombe10 hi",
+   "raw_recompute": 7.358634395021535,
+   "primary": 7.358634395021535,
+   "blind": 7.358634395021535,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A9est Wald lo",
+   "raw_recompute": -2.393781241051232,
+   "primary": -2.3937812410512316,
+   "blind": -2.3937812410512316,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "paired A9est Wald hi",
+   "raw_recompute": 7.393781241051232,
+   "primary": 7.393781241051231,
+   "blind": 7.393781241051231,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D run wall_s mean",
+   "raw_recompute": 160.522775,
+   "primary": 160.522775,
+   "blind": 160.52,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D run wall_s median",
+   "raw_recompute": 150.16,
+   "primary": 150.16,
+   "blind": 150.16,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D run wall_s max",
+   "raw_recompute": 623.74,
+   "primary": 623.74,
+   "blind": 623.74,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "D run wall_s sum",
+   "raw_recompute": 64209.11,
+   "primary": 64209.11,
+   "blind": 64209.1,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P run wall_s mean",
+   "raw_recompute": 152.402875,
+   "primary": 152.402875,
+   "blind": 152.4,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P run wall_s median",
+   "raw_recompute": 144.65,
+   "primary": 144.65,
+   "blind": 144.65,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P run wall_s max",
+   "raw_recompute": 523.84,
+   "primary": 523.84,
+   "blind": 523.84,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "P run wall_s sum",
+   "raw_recompute": 60961.15,
+   "primary": 60961.15,
+   "blind": 60961.2,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "ratio run wall mean D/P",
+   "raw_recompute": 1.053279178624419,
+   "primary": 1.053279178624419,
+   "blind": 1.053280839895013,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "ratio run wall median D/P",
+   "raw_recompute": 1.0380919460767368,
+   "primary": 1.0380919460767368,
+   "blind": 1.0380919460767368,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "ratio paired per-seed median",
+   "raw_recompute": 1.0376357361184443,
+   "primary": 1.0376357361184443,
+   "blind": 1.0376357361184443,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "ratio paired per-seed geomean",
+   "raw_recompute": 1.0677895876965233,
+   "primary": 1.0677895876965233,
+   "blind": 1.0677895876965233,
+   "primary_match": true,
+   "blind_match": true
+  },
+  {
+   "what": "ratio same-final-floor geomean",
+   "raw_recompute": 1.0367506396546073,
+   "primary": null,
+   "blind": 1.0367506396546073,
+   "primary_match": null,
+   "blind_match": true
+  },
+  {
+   "what": "D s/step (primary: ratio of sums)",
+   "raw_recompute": 0.31910063165009267,
+   "primary": 0.31910063165009267,
+   "blind": null,
+   "primary_match": true,
+   "blind_match": null
+  },
+  {
+   "what": "P s/step (primary: ratio of sums)",
+   "raw_recompute": 0.30701162855113995,
+   "primary": 0.30701162855113995,
+   "blind": null,
+   "primary_match": true,
+   "blind_match": null
+  },
+  {
+   "what": "D s/step (blind: mean of per-run ratios)",
+   "raw_recompute": 0.3006416112514467,
+   "primary": null,
+   "blind": 0.3006416112514467,
+   "primary_match": null,
+   "blind_match": true
+  },
+  {
+   "what": "P s/step (blind: mean of per-run ratios)",
+   "raw_recompute": 0.28813633433456415,
+   "primary": null,
+   "blind": 0.28813633433456415,
+   "primary_match": null,
+   "blind_match": true
+  }
+ ],
+ "comparison_mismatches": []
+}

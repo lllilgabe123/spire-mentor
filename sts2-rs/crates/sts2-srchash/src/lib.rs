@@ -106,9 +106,12 @@ pub const RUNAI_DATA_INPUTS: [(&str, &str); 1] =
     [("data/runai/heuristic_v.toml", "data/runai/heuristic_v.toml")];
 
 /// Extra out-of-`src` engine inputs for sts2-mcts: the built-in playout nets
-/// `src/rollout_net.rs` bakes in with `include_str!`, one per character. A
-/// missing input is skipped, as everywhere.
-pub const MCTS_DATA_INPUTS: [(&str, &str); 5] = [
+/// `src/rollout_net.rs` bakes in with `include_str!`, one per character, and
+/// the built-in Ironclad move prior (`data/prior_nets`, GH #830) it bakes in
+/// the same way. A missing input is skipped, as everywhere. An entry here is
+/// also what makes `build.rs` rerun, so editing or adding a file flips its
+/// `cfg` and moves `src_hash` without a `cargo clean`.
+pub const MCTS_DATA_INPUTS: [(&str, &str); 6] = [
     (
         "data/rollout_nets/ironclad.json",
         "data/rollout_nets/ironclad.json",
@@ -128,6 +131,10 @@ pub const MCTS_DATA_INPUTS: [(&str, &str); 5] = [
     (
         "data/rollout_nets/necrobinder.json",
         "data/rollout_nets/necrobinder.json",
+    ),
+    (
+        "data/prior_nets/ironclad.json",
+        "data/prior_nets/ironclad.json",
     ),
 ];
 
@@ -300,7 +307,8 @@ mod tests {
     }
 
     /// A fake sts2-rs checkout root: every engine crate dir, the runai weights,
-    /// the workspace `Cargo.toml`, `Cargo.lock`, and `rust-toolchain.toml`.
+    /// the Ironclad move prior, the workspace `Cargo.toml`, `Cargo.lock`, and
+    /// `rust-toolchain.toml`.
     fn tmp_rs_root() -> PathBuf {
         let n = CTR.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("sts2rsroot_{}_{n}", std::process::id()));
@@ -313,6 +321,8 @@ mod tests {
         }
         fs::create_dir_all(root.join("data/runai")).unwrap();
         fs::write(root.join("data/runai/heuristic_v.toml"), b"w = 1").unwrap();
+        fs::create_dir_all(root.join("data/prior_nets")).unwrap();
+        fs::write(root.join("data/prior_nets/ironclad.json"), b"{}").unwrap();
         fs::write(root.join("Cargo.toml"), b"[workspace]\n").unwrap();
         fs::write(root.join("Cargo.lock"), b"lock-v1").unwrap();
         fs::write(
@@ -338,7 +348,10 @@ mod tests {
     }
 
     /// Every crate compiled into the wheel moves the aggregate, not just the
-    /// engine core: the PPO trainer's combat agent lives in sts2-runai.
+    /// engine core: the PPO trainer's combat agent lives in sts2-runai. So do
+    /// the compiled-in data files: runai's HeuristicV weights and the
+    /// Ironclad move prior (GH #830), whose edit must move `src_hash` and
+    /// rebuild without a `cargo clean`.
     #[test]
     fn recompute_engine_hash_tracks_every_linked_crate_and_its_data() {
         let root = tmp_rs_root();
@@ -348,6 +361,8 @@ mod tests {
             seen.push(recompute_engine_hash(&root));
         }
         fs::write(root.join("data/runai/heuristic_v.toml"), b"w = 2").unwrap();
+        seen.push(recompute_engine_hash(&root));
+        fs::write(root.join("data/prior_nets/ironclad.json"), b"{\"meta\":{}}").unwrap();
         seen.push(recompute_engine_hash(&root));
         let distinct: std::collections::HashSet<_> = seen.iter().collect();
         assert_eq!(

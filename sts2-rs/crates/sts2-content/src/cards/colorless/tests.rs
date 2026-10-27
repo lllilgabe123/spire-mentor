@@ -1507,20 +1507,74 @@ pin_registered!(pin_beat_down, BeatDown);
 pin_registered!(pin_anointed, Anointed);
 pin_registered!(pin_intercept_card, InterceptCard);
 
-/// `sts2-rs-0c5po`: Intercept applies Covered(1) to the (collapsed-to-self)
-/// target ally in addition to the block.
+/// A co-op teammate for the `AnyAlly` cards: `state.allies[0]`.
+fn push_teammate(state: &mut CombatState, block: i32) {
+    state.allies.push(sts2_core::PlayerCombatState {
+        current_hp: 70,
+        max_hp: 70,
+        block,
+        ..sts2_core::PlayerCombatState::default()
+    });
+}
+
+/// Intercept: the block is the player's, the Covered the teammate's -- and
+/// what that costs the player is `InterceptPower`, which doubles the powered
+/// attack damage they take until the enemy turn ends (C# `Intercept.cs`,
+/// `CoveredPower.AfterApplied`, `InterceptPower.ModifyDamageMultiplicative`).
+/// The old self-collapse put Covered on the player, zeroing their hits.
 #[test]
-fn intercept_card_applies_covered_to_self() {
+fn intercept_card_covers_the_teammate_and_doubles_the_players_hits() {
+    use sts2_core::hooks::{modify_damage, CreatureRef, DamageCtx, ValueProps};
     install_pool();
-    let (mut state, _e) = fresh_state(CardId::InterceptCard, 0, 9);
+    let (mut state, enemy) = fresh_state(CardId::InterceptCard, 0, 9);
     let player = push_player(&mut state);
+    push_teammate(&mut state, 0);
     let f = lookup(CardId::InterceptCard).expect("registered");
     f(&mut state, None);
-    assert_eq!(
-        creature_power(&state, player, PowerKind::Covered),
-        1,
-        "Covered(1) applied to player (ally collapse)"
+    f(&mut state, None); // a second play stays one x2, not x3
+    assert_eq!(creature_power(&state, player, PowerKind::Covered), 0);
+    assert_eq!(creature_power(&state, player, PowerKind::Intercept), 1);
+    assert!(
+        state.allies[0].powers.is_empty(),
+        "teammate powers are not simulated"
     );
+    let hit = |props| DamageCtx {
+        dealer: CreatureRef::Enemy(enemy),
+        target: CreatureRef::Player,
+        props,
+    };
+    assert_eq!(modify_damage(&state, 6, &hit(ValueProps::MOVE)), 12);
+    assert_eq!(modify_damage(&state, 6, &hit(ValueProps::UNPOWERED)), 6);
+}
+
+/// Lift gives the block to the teammate, with the player's Dexterity on it
+/// (C# `DexterityPower.ModifyBlockAdditive` gates on the card's owner) but
+/// not the player's Frail (gated on the target).
+#[test]
+fn lift_blocks_the_teammate_with_the_players_dexterity() {
+    use sts2_core::card_effects::apply_power_to_creature;
+    install_pool();
+    let (mut state, _e) = fresh_state(CardId::Lift, 0, 11);
+    let player = push_player(&mut state);
+    apply_power_to_creature(&mut state, player, PowerKind::Dexterity, 2);
+    apply_power_to_creature(&mut state, player, PowerKind::Frail, 1);
+    push_teammate(&mut state, 3);
+    lookup(CardId::Lift).expect("registered")(&mut state, None);
+    assert_eq!(state.allies[0].block, 3 + 11 + 2);
+    assert_eq!(state.player.block, 0, "Lift gives the player nothing");
+    assert!(state.creatures.iter().all(|c| c.block == 0));
+}
+
+/// Mimic: the player gains block equal to the teammate's (C# `Mimic.cs`
+/// `CalculatedBlock = 0 + 1 * target.Block`).
+#[test]
+fn mimic_copies_the_teammates_block() {
+    install_pool();
+    let (mut state, _e) = fresh_state(CardId::Mimic, 0, 0);
+    push_teammate(&mut state, 7);
+    lookup(CardId::Mimic).expect("registered")(&mut state, None);
+    assert_eq!(state.player.block, 7);
+    assert_eq!(state.allies[0].block, 7, "the teammate keeps theirs");
 }
 pin_registered!(pin_seeker_strike, SeekerStrike);
 pin_registered!(pin_rally, Rally);
@@ -1814,24 +1868,31 @@ fn play_mad_science_energized_gains_two_energy() {
     assert_eq!(state.player.energy, 2, "Energized gains 2 energy");
 }
 
-/// BelieveInYou gains 2 energy base / 3 upgraded (C# `BelieveInYou.cs`
-/// `EnergyVar(2)`, upgrade +1). Bead `sts2-rs-c9exw` — the prior port
-/// hardcoded 3 (the upgraded value) for the base card.
+/// BelieveInYou and Coordinate act on the teammate only (C#
+/// `PlayerCmd.GainEnergy(.., cardPlay.Target.Player)`,
+/// `PowerCmd.Apply<CoordinatePower>(cardPlay.Target, ..)`): the player gets
+/// no energy and no Strength. The old self-collapse gave them both.
 #[test]
-fn play_believe_in_you_energy_scales_with_upgrade() {
+fn teammate_only_cards_leave_the_player_alone() {
     install_pool();
-    // Unupgraded → 2.
-    let (mut state, _e) = fresh_state(CardId::BelieveInYou, 0, 0);
-    state.player.energy = 0;
-    let f = lookup(CardId::BelieveInYou).expect("registered");
-    f(&mut state, None);
-    assert_eq!(state.player.energy, 2, "unupgraded BelieveInYou gains 2");
-    // Upgraded → 3.
-    let (mut state, _e) = fresh_state(CardId::BelieveInYou, 0, 0);
-    state.cards[0].upgraded = true;
-    state.player.energy = 0;
-    f(&mut state, None);
-    assert_eq!(state.player.energy, 3, "upgraded BelieveInYou gains 3");
+    for card in [CardId::BelieveInYou, CardId::CoordinateCard] {
+        let (mut state, _e) = fresh_state(card, 0, 0);
+        let player = push_player(&mut state);
+        push_teammate(&mut state, 0);
+        state.player.energy = 0;
+        lookup(card).expect("registered")(&mut state, None);
+        assert_eq!(state.player.energy, 0, "{card:?}");
+        assert_eq!(
+            creature_power(&state, player, PowerKind::Strength),
+            0,
+            "{card:?}"
+        );
+        assert_eq!(
+            creature_power(&state, player, PowerKind::Coordinate),
+            0,
+            "{card:?}"
+        );
+    }
 }
 
 /// Six colorless self-power cards scale their power amount on upgrade
@@ -1881,7 +1942,6 @@ fn colorless_self_power_amounts_scale_with_upgrade() {
         (CardId::Fasten, PowerKind::Fasten, 4, 6),
         (CardId::PanacheCard, PowerKind::Panache, 10, 14),
         (CardId::PrepTime, PowerKind::PrepTime, 4, 6),
-        (CardId::CoordinateCard, PowerKind::Coordinate, 5, 8),
     ] {
         assert_eq!(amount(card, kind, false), base, "{kind:?} base");
         assert_eq!(amount(card, kind, true), up, "{kind:?} upgraded");
@@ -1897,14 +1957,6 @@ fn colorless_self_power_amounts_scale_with_upgrade() {
         amount(CardId::FeedingFrenzyCard, PowerKind::Strength, true),
         7
     );
-    // sts2-rs-5cry8: CoordinatePower : TemporaryStrengthPower
-    // (IsPositive=true) folds +amount Strength on self (single-
-    // player collapse) alongside the Coordinate marker.
-    assert_eq!(
-        amount(CardId::CoordinateCard, PowerKind::Strength, false),
-        5
-    );
-    assert_eq!(amount(CardId::CoordinateCard, PowerKind::Strength, true), 8);
 }
 
 /// Wisdom rider (Skill mode) → draw 3 cards from the draw pile.

@@ -18,8 +18,13 @@ process: `STS2_ROLLOUT_NET` / `STS2_ROLLOUT_TEMP` sit behind a `OnceLock`, and
 `apply_env` runs in the Pool initializer, before the worker imports `sts2_rs`.
 It also scrubs every engine seam the parent shell happened to export: an
 inherited `STS2_RUNAI_HONEST=0` would otherwise turn a run clairvoyant
-without anything in the header saying so. The spec's `env` is therefore the
-whole of the engine configuration.
+without anything in the header saying so. The spec's `env` together with the
+wheel (the header's `src_hash`) is therefore the whole of the engine
+configuration. The wheel matters on its own: since GH #830 (2026-10-25) the
+run agent compiles in an Ironclad layer (the forms + combo knobs, and the BC
+move prior in elite and boss fights), so an empty `env` plays a different
+Ironclad search on wheels before and after it. SCHEMA.md says how to
+reproduce the pre-ship B0.
 """
 
 from __future__ import annotations
@@ -41,7 +46,8 @@ ENV_OVERRIDES = "STS2_RUNAI_MCTS_OVERRIDES"
 ENV_ROLLOUT_NET = "STS2_ROLLOUT_NET"
 ENV_ROLLOUT_TEMP = "STS2_ROLLOUT_TEMP"
 ENV_HONEST = "STS2_RUNAI_HONEST"
-# `sts2-runai` override knob: the deployed dialect under any hidden-info mode.
+# `sts2-runai` override knob: the deployed dialect under any hidden-info mode,
+# including the run agent's Ironclad layer (GH #830), which follows the dialect.
 BELIEF_DIALECT_KNOB = "belief_dialect=1"
 # `sts2_runai::policy::resolve_hidden_info`: unset or "belief" is the deployed
 # BeliefDraw, "0" clairvoyant, "root" / "full" the older honest modes.

@@ -125,20 +125,26 @@ public class SimCombatHandler : IRoomHandler, IHandler
 
     /// <summary>
     /// The teammate an ally-target card or potion goes to (co-op only; such
-    /// cards are unplayable alone). The advisor sees no teammates, so it
-    /// cannot name one: the living teammate lowest on HP, which is what a heal
-    /// or block wants and harmless for a buff.
+    /// cards are unplayable alone): the first living one in run order, the
+    /// order <see cref="SerializeAllies"/> sends them in. The engine aims its
+    /// simulated AnyAlly plays at that same teammate
+    /// (<c>CombatState::any_ally_card_target</c>), so the play autoplay makes
+    /// is the play the advisor valued.
     /// </summary>
     internal static Creature? TeammateTarget(Player player)
     {
-        Creature? me = player.Creature;
-        ICombatState? combat = me?.CombatState;
-        if (combat == null)
+        IRunState? runState = player.RunState;
+        if (runState == null)
             return null;
-        return combat.PlayerCreatures
-            .Where(c => c != me && c.IsAlive)
-            .OrderBy(c => c.MaxHp > 0 ? (double)c.CurrentHp / c.MaxHp : 1.0)
-            .FirstOrDefault();
+        foreach (Player other in runState.Players)
+        {
+            if (ReferenceEquals(other, player))
+                continue;
+            Creature? c = other.Creature;
+            if (c != null && c.IsAlive)
+                return c;
+        }
+        return null;
     }
 
     private static bool IsPlayerInPlayPhase(Player player) =>
@@ -789,6 +795,7 @@ public class SimCombatHandler : IRoomHandler, IHandler
                 ["exhaust_pile_count"] = pcs?.ExhaustPile?.Cards.Count ?? 0,
                 ["round"] = combatState?.RoundNumber ?? 0,
                 ["room_type"] = runState?.CurrentRoom?.RoomType.ToString() ?? "Combat",
+                ["allies"] = SerializeAllies(player, runState),
             };
 
             SimStateExtractor.ApplyEnvelope(state, runState, player);
@@ -798,6 +805,66 @@ public class SimCombatHandler : IRoomHandler, IHandler
         {
             Logger.Log($"[SimCombat] Could not build combat state: {ex}");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Co-op (PROTOCOL.md "allies"): every other player in the run, as this
+    /// peer simulates them. Every peer runs every player's draws and plays,
+    /// so a teammate's hand is known here even though the game's own UI only
+    /// shows its size. Empty in single-player. One unreadable teammate is
+    /// logged and left out rather than failing the board.
+    /// </summary>
+    private static List<Dictionary<string, object?>> SerializeAllies(Player me, RunState? runState)
+    {
+        var allies = new List<Dictionary<string, object?>>();
+        if (runState == null)
+            return allies;
+        foreach (Player other in runState.Players)
+        {
+            if (ReferenceEquals(other, me))
+                continue;
+            try
+            {
+                Creature? c = other.Creature;
+                PlayerCombatState? pcs = other.PlayerCombatState;
+                allies.Add(new Dictionary<string, object?>
+                {
+                    ["character"] = other.Character?.Id.Entry ?? "",
+                    ["hp"] = c?.CurrentHp ?? 0,
+                    ["max_hp"] = c?.MaxHp ?? 0,
+                    ["block"] = c?.Block ?? 0,
+                    ["is_dead"] = c?.IsDead ?? true,
+                    ["energy"] = pcs?.Energy ?? 0,
+                    ["max_energy"] = pcs?.MaxEnergy ?? 0,
+                    ["powers"] = c?.Powers.Select(SimStateExtractor.SerializePower).ToList()
+                                 ?? new List<Dictionary<string, object?>>(),
+                    ["hand"] = pcs != null
+                        ? PileType.Hand.GetPile(other).Cards
+                            .Select(card => SimStateExtractor.SerializeCard(card))
+                            .ToList()
+                        : new List<Dictionary<string, object?>>(),
+                    ["ended_turn"] = SafeEndedTurn(other),
+                });
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"[SimCombat] Could not serialize a teammate: {ex.Message}");
+            }
+        }
+        return allies;
+    }
+
+    private static bool SafeEndedTurn(Player player)
+    {
+        try
+        {
+            return CombatManager.Instance.IsInProgress
+                && CombatManager.Instance.IsPlayerReadyToEndTurn(player);
+        }
+        catch (Exception)
+        {
+            return false;
         }
     }
 

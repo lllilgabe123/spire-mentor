@@ -1998,6 +1998,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "sha2",
  "smallvec",
  "sts2-content",
  "sts2-core",

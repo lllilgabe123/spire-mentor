@@ -699,7 +699,7 @@ fn pick_block_subset(options: &[(usize, i64, i64)], incoming: i64, energy: i64) 
                 }
             } else {
                 let o = (block - incoming, cost);
-                if !over_score.is_some_and(|best| o >= best) {
+                if over_score.is_none_or(|best| o < best) {
                     over_score = Some(o);
                     over_best = combo.to_vec();
                 }

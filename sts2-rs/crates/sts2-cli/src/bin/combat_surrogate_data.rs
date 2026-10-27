@@ -758,7 +758,7 @@ fn harvest_realistic_range(
         let gained = harvest.rows.len();
         rows.extend(harvest.rows);
         seeds_driven += 1;
-        if seeds_driven % 20 == 0 || rows.len() >= max_rows {
+        if seeds_driven.is_multiple_of(20) || rows.len() >= max_rows {
             eprintln!(
                 "  realistic: {seeds_driven} seeds driven, seed {seed} +{gained} rows \
                  ({}/{max_rows} total)",
@@ -1007,7 +1007,7 @@ fn main() {
                     &args.ascensions,
                 );
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                if n % 200 == 0 || n == total {
+                if n.is_multiple_of(200) || n == total {
                     let elapsed = started.elapsed().as_secs_f64();
                     eprintln!(
                         "  {n}/{total} labeled ({:.1}/s, {:.0}s elapsed)",

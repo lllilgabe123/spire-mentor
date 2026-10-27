@@ -172,7 +172,7 @@ fn make_seeded_fixture(py: Python<'_>, seed: u64, ascension: u8) -> PyResult<Bou
 
     // Powers vary: even seeds get Strength, odd seeds get no power.
     let powers = PyList::empty(py);
-    if seed % 2 == 0 {
+    if seed.is_multiple_of(2) {
         let p = PyDict::new(py);
         p.set_item("name", "STRENGTH")?;
         let amt = i32::try_from((seed / 2) % 5).unwrap_or(0) + 1;
@@ -204,7 +204,7 @@ fn make_seeded_fixture(py: Python<'_>, seed: u64, ascension: u8) -> PyResult<Bou
     d.set_item("phase", "PlayerPlayPhase")?;
     d.set_item("round", 1)?;
     d.set_item("side", "Player")?;
-    d.set_item("is_elite", seed % 7 == 0)?;
+    d.set_item("is_elite", seed.is_multiple_of(7))?;
     d.set_item("turn", 1)?;
     d.set_item("combat_id", 0_i64)?;
     d.set_item("player", player)?;

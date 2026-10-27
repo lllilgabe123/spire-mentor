@@ -56,6 +56,7 @@ pub use value::ValuePolicy;
 use std::sync::{Arc, OnceLock};
 
 use sts2_core::full_run::{RandomPolicy, RunPolicy};
+use sts2_core::potions::CharacterId;
 use sts2_core::run_manager::{Phase, RunAction, RunManager};
 use sts2_core::runstate::RoomType;
 use sts2_core::{Action, CombatState};
@@ -151,49 +152,60 @@ pub(crate) fn combat_prior_net_from_env() -> Option<Arc<LearnedValueNet>> {
     combat_net_from_env()
 }
 
-/// `STS2_RUNAI_PRIOR_NET=<playout net json>` ⇒ that net drives PUCT priors
-/// ([`sts2_mcts::rollout_net::RolloutNetPrior`]), blended with uniform at
-/// `STS2_RUNAI_PRIOR_MIX` (default 0.5), softmax temperature
-/// `STS2_RUNAI_PRIOR_TEMP` (default 1). Experimental (behaviour cloning from
-/// human replays); off when unset.
-///
-/// # Panics
-/// When the file can't be read or parsed, or a knob is not a number — a
-/// silent fallback would measure the uniform search instead.
-pub(crate) fn rollout_prior_from_env() -> Option<sts2_mcts::SharedPolicy> {
-    static PRIOR: OnceLock<Option<sts2_mcts::SharedPolicy>> = OnceLock::new();
-    PRIOR
-        .get_or_init(|| {
-            let path = std::env::var("STS2_RUNAI_PRIOR_NET").ok()?;
-            let text = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("STS2_RUNAI_PRIOR_NET={path}: {e}"));
-            let net = sts2_mcts::rollout_net::RolloutNet::from_json(&text)
-                .unwrap_or_else(|e| panic!("STS2_RUNAI_PRIOR_NET={path}: {e}"));
-            let knob = |name: &str, default: f32| {
-                std::env::var(name).map_or(default, |v| {
-                    v.parse::<f32>()
-                        .unwrap_or_else(|_| panic!("{name}={v:?} is not a number"))
-                })
-            };
-            Some(sts2_mcts::SharedPolicy::new(
-                sts2_mcts::rollout_net::RolloutNetPrior::new(
-                    net,
-                    knob("STS2_RUNAI_PRIOR_MIX", 0.5),
-                    knob("STS2_RUNAI_PRIOR_TEMP", 1.0),
-                ),
-            ))
-        })
-        .clone()
+/// What `STS2_RUNAI_PRIOR_NET` asks for (GH #830).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PriorNetEnv {
+    /// Unset: the built-in move prior of the fight's character
+    /// ([`sts2_mcts::rollout_net::builtin_prior_json`]; only Ironclad has
+    /// one), in [`BUILTIN_PRIOR_ROOMS`] unless `STS2_RUNAI_PRIOR_ROOMS` is set,
+    /// and only in the run agent's Ironclad layer
+    /// ([`MctsCombatPolicy::ironclad_layer_on`]).
+    Default,
+    /// Exactly `off`: no move prior.
+    Off,
+    /// Any other value: the playout-net JSON file at that path, for every
+    /// character and in every fight unless `STS2_RUNAI_PRIOR_ROOMS` narrows it
+    /// (the variable's meaning before the built-in prior existed).
+    File(String),
 }
 
+/// `STS2_RUNAI_PRIOR_NET`'s value → [`PriorNetEnv`].
+///
+/// # Panics
+/// On an empty value: it would otherwise have to mean one of the three, and
+/// a script that meant another would measure the wrong search silently.
+fn parse_prior_net_env(value: Option<&str>) -> PriorNetEnv {
+    match value {
+        None => PriorNetEnv::Default,
+        Some("") => panic!(
+            "STS2_RUNAI_PRIOR_NET is empty: unset it for the built-in move prior, set it to \
+             `off` for none, or name a net file"
+        ),
+        Some("off") => PriorNetEnv::Off,
+        Some(path) => PriorNetEnv::File(path.to_owned()),
+    }
+}
+
+/// [`parse_prior_net_env`] of the environment, read once per process.
+fn prior_net_env() -> &'static PriorNetEnv {
+    static ENV: OnceLock<PriorNetEnv> = OnceLock::new();
+    ENV.get_or_init(|| parse_prior_net_env(std::env::var("STS2_RUNAI_PRIOR_NET").ok().as_deref()))
+}
+
+/// The combat tiers the built-in move prior applies in when
+/// `STS2_RUNAI_PRIOR_ROOMS` is unset: the GH #830 bundle gate ran it in elite
+/// and boss fights only (on the pro set it helped those and cost a little in
+/// hallway fights).
+const BUILTIN_PRIOR_ROOMS: [BudgetTier; 2] = [BudgetTier::Elite, BudgetTier::Boss];
+
 /// `STS2_RUNAI_PRIOR_ROOMS=<comma list of common|elite|boss>`: the combat
-/// tiers [`rollout_prior_from_env`]'s prior applies in (default all). On the
-/// GH #830 pro set the behaviour-cloned prior helped boss and elite fights
-/// and cost a little in hallway fights.
+/// tiers a move prior applies in, read once; `None` when unset (the file
+/// prior then applies everywhere, the built-in one in
+/// [`BUILTIN_PRIOR_ROOMS`]).
 ///
 /// # Panics
 /// On an unknown tier name.
-pub(crate) fn rollout_prior_applies(tier: BudgetTier) -> bool {
+fn prior_rooms() -> Option<&'static [BudgetTier]> {
     static ROOMS: OnceLock<Option<Vec<BudgetTier>>> = OnceLock::new();
     ROOMS
         .get_or_init(|| {
@@ -203,8 +215,177 @@ pub(crate) fn rollout_prior_applies(tier: BudgetTier) -> bool {
                     .unwrap_or_else(|t| panic!("STS2_RUNAI_PRIOR_ROOMS: unknown tier {t:?}")),
             )
         })
-        .as_ref()
-        .map_or(true, |rooms| rooms.contains(&tier))
+        .as_deref()
+}
+
+/// The move prior's blend weight `STS2_RUNAI_PRIOR_MIX` (default 0.5) and
+/// softmax temperature `STS2_RUNAI_PRIOR_TEMP` (default 1), read once. Both
+/// the built-in and the file prior use them.
+///
+/// # Panics
+/// On a value that is not a number, a mix outside `[0, 1]`, or a
+/// temperature that is not a positive finite number: the prior's
+/// constructor would clamp it silently.
+fn prior_knobs() -> (f32, f32) {
+    static KNOBS: OnceLock<(f32, f32)> = OnceLock::new();
+    *KNOBS.get_or_init(|| {
+        let knob = |name: &str, default: f32| {
+            std::env::var(name).map_or(default, |v| {
+                v.parse::<f32>()
+                    .unwrap_or_else(|_| panic!("{name}={v:?} is not a number"))
+            })
+        };
+        let mix = knob("STS2_RUNAI_PRIOR_MIX", 0.5);
+        assert!(
+            (0.0..=1.0).contains(&mix),
+            "STS2_RUNAI_PRIOR_MIX={mix} is outside [0, 1]"
+        );
+        let temperature = knob("STS2_RUNAI_PRIOR_TEMP", 1.0);
+        assert!(
+            temperature.is_finite() && temperature > 0.0,
+            "STS2_RUNAI_PRIOR_TEMP={temperature} is not a positive number"
+        );
+        (mix, temperature)
+    })
+}
+
+/// A PUCT move prior over a playout-net JSON text at [`prior_knobs`].
+///
+/// # Panics
+/// When the text does not parse; `what` names its source in the message.
+fn move_prior_from_json(text: &str, what: &str) -> sts2_mcts::SharedPolicy {
+    let (mix, temperature) = prior_knobs();
+    let net = sts2_mcts::rollout_net::RolloutNet::from_json(text)
+        .unwrap_or_else(|e| panic!("{what}: {e}"));
+    sts2_mcts::SharedPolicy::new(sts2_mcts::rollout_net::RolloutNetPrior::new(
+        net,
+        mix,
+        temperature,
+    ))
+}
+
+/// The built-in move prior of `character` (GH #830), built once; `None` for
+/// a character without one, or a checkout without the net file (the test
+/// `the_ironclad_prior_net_is_compiled_in` fails there).
+fn builtin_move_prior(character: CharacterId) -> Option<sts2_mcts::SharedPolicy> {
+    static IRONCLAD: OnceLock<Option<sts2_mcts::SharedPolicy>> = OnceLock::new();
+    match character {
+        CharacterId::Ironclad => IRONCLAD
+            .get_or_init(|| {
+                sts2_mcts::rollout_net::builtin_prior_json(CharacterId::Ironclad)
+                    .map(|text| move_prior_from_json(text, "the built-in Ironclad move prior"))
+            })
+            .clone(),
+        _ => None,
+    }
+}
+
+/// The move prior from the `STS2_RUNAI_PRIOR_NET` file, built once; `None`
+/// unless the variable names a file.
+///
+/// # Panics
+/// When the file can't be read or parsed, or a knob is bad — a silent
+/// fallback would measure the uniform search instead.
+fn file_move_prior() -> Option<sts2_mcts::SharedPolicy> {
+    static PRIOR: OnceLock<Option<sts2_mcts::SharedPolicy>> = OnceLock::new();
+    PRIOR
+        .get_or_init(|| {
+            let PriorNetEnv::File(path) = prior_net_env() else {
+                return None;
+            };
+            let _ = prior_knobs();
+            let text = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("STS2_RUNAI_PRIOR_NET={path}: {e}"));
+            Some(move_prior_from_json(
+                &text,
+                &format!("STS2_RUNAI_PRIOR_NET={path}"),
+            ))
+        })
+        .clone()
+}
+
+/// Which move prior one search gets ([`prior_choice`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PriorChoice {
+    /// No move prior (the uniform PUCT prior, `use_puct_prior = false`).
+    None,
+    /// [`builtin_move_prior`] of this character.
+    BuiltIn(CharacterId),
+    /// [`file_move_prior`].
+    File,
+}
+
+/// The move prior for a search of a `character` fight in `tier` (GH #830),
+/// as a pure function of the env's three answers: `env`
+/// (`STS2_RUNAI_PRIOR_NET`), `rooms` (`STS2_RUNAI_PRIOR_ROOMS`, `None` when
+/// unset) and `layer_on` ([`MctsCombatPolicy::ironclad_layer_on`]).
+///
+/// The built-in prior is Ironclad's only: the full-run gate measured it on
+/// Ironclad alone, so no other character switches one on, whatever nets
+/// exist. A file prior keeps its meaning from before the built-in one:
+/// every character, every tier unless `rooms` narrows it, whatever the
+/// dialect.
+fn prior_choice(
+    env: &PriorNetEnv,
+    character: Option<CharacterId>,
+    tier: BudgetTier,
+    rooms: Option<&[BudgetTier]>,
+    layer_on: bool,
+) -> PriorChoice {
+    match env {
+        PriorNetEnv::Off => PriorChoice::None,
+        PriorNetEnv::File(_) => {
+            if rooms.is_none_or(|r| r.contains(&tier)) {
+                PriorChoice::File
+            } else {
+                PriorChoice::None
+            }
+        }
+        PriorNetEnv::Default => match character {
+            Some(c @ CharacterId::Ironclad)
+                if layer_on
+                    && rooms
+                        .unwrap_or(BUILTIN_PRIOR_ROOMS.as_slice())
+                        .contains(&tier) =>
+            {
+                PriorChoice::BuiltIn(c)
+            }
+            _ => PriorChoice::None,
+        },
+    }
+}
+
+/// The move prior [`prior_choice`] picks, built (once per process) from its
+/// source; `None` for no prior.
+fn move_prior(
+    env: &PriorNetEnv,
+    character: Option<CharacterId>,
+    tier: BudgetTier,
+    layer_on: bool,
+) -> Option<sts2_mcts::SharedPolicy> {
+    match prior_choice(env, character, tier, prior_rooms(), layer_on) {
+        PriorChoice::None => None,
+        PriorChoice::BuiltIn(c) => builtin_move_prior(c),
+        PriorChoice::File => file_move_prior(),
+    }
+}
+
+/// `STS2_RUNAI_PRIOR_CACHE=0` turns the search's per-node PUCT prior cache
+/// off ([`Mcts::with_prior_cache`]); unset or `1` keeps it on. The searches
+/// are identical either way: the switch exists to check that (GH #830) and
+/// to measure what the cache saves. Read once.
+///
+/// # Panics
+/// On any other value.
+fn prior_cache_from_env() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(
+        || match std::env::var("STS2_RUNAI_PRIOR_CACHE").ok().as_deref() {
+            None | Some("1") => true,
+            Some("0") => false,
+            Some(v) => panic!("STS2_RUNAI_PRIOR_CACHE={v:?}: expected 0 (off) or 1 (on)"),
+        },
+    )
 }
 
 /// `"elite,boss"` → those tiers; `Err(name)` on an unknown one.
@@ -503,8 +684,9 @@ pub struct MctsCombatPolicy<M> {
     /// Resolved from `STS2_RUNAI_MCTS_OVERRIDES` ONCE at construction
     /// (see [`parse_mcts_overrides`]), same "read once, not per pick"
     /// rationale as `tie_eps` / `loss_gradient` / `root_guards`. Applied
-    /// in `mcts_pick` AFTER those three single-knob seams, so an
-    /// explicit entry here wins if both are set for the same knob.
+    /// in [`Self::search_config`] AFTER those three single-knob seams, so an
+    /// explicit entry here wins if both are set for the same knob, and over
+    /// the run agent's character layer ([`IRONCLAD_SEARCH_KNOBS`]).
     overrides: MctsKnobOverrides,
     /// Root-level potion opportunity-cost table
     /// ([`sts2_mcts::MctsConfig::potion_charge_q`], GH #447 follow-up).
@@ -940,6 +1122,7 @@ struct MctsKnobOverrides {
     loss_turns_half_life: Option<f32>,
     loss_span: Option<f32>,
     loot_weight: Option<f32>,
+    persistent_weight: Option<f32>,
     loss_gradient: Option<bool>,
     root_guards: Option<bool>,
     chance_closed_stops_widening: Option<bool>,
@@ -966,7 +1149,7 @@ struct MctsKnobOverrides {
 const MCTS_OVERRIDE_KNOB_NAMES: &str = "chance_widening_c, chance_widening_alpha, \
     draw_widening_c, draw_widening_alpha, endturn_widening_c, endturn_widening_alpha, \
     tie_eps, c_puct, loss_w_removed, loss_w_hp, loss_w_turns, \
-    loss_turns_half_life, loss_span, loot_weight, loss_gradient, root_guards, \
+    loss_turns_half_life, loss_span, loot_weight, persistent_weight, loss_gradient, root_guards, \
     chance_closed_stops_widening, rollout_policy (heuristic | uniform | net; net, the \
     honest-mode default, plays the built-in Ironclad playout net, or the STS2_ROLLOUT_NET \
     weights when set), belief_dialect (true: apply the BeliefDraw dialect even under \
@@ -988,9 +1171,10 @@ impl MctsKnobOverrides {
     /// Apply every set slot to `config`, leaving unset slots untouched.
     /// Called AFTER the single-knob seams (`tie_eps` / `loss_gradient` /
     /// `root_guards`) and the `mcts_config_for` F2 retune have already
-    /// written `config` — see the call site in `mcts_pick` for the
-    /// interaction-order rationale (an explicit override in the bundle
-    /// wins over the older single-knob env vars when both are set).
+    /// written `config` — see the call site in
+    /// [`MctsCombatPolicy::search_config`] for the interaction-order
+    /// rationale (an explicit override in the bundle wins over the older
+    /// single-knob env vars when both are set).
     fn apply(self, config: &mut MctsConfig) {
         // First, so any explicit knob in the same bundle overrides the
         // dialect value it would otherwise get.
@@ -1039,6 +1223,9 @@ impl MctsKnobOverrides {
         if let Some(v) = self.loot_weight {
             config.loot_weight = v;
         }
+        if let Some(v) = self.persistent_weight {
+            config.persistent_weight = v;
+        }
         if let Some(v) = self.loss_gradient {
             config.loss_gradient = v;
         }
@@ -1075,6 +1262,121 @@ impl MctsKnobOverrides {
         if let Some(v) = self.win_potion_carry {
             config.win_potion_carry = Some(v);
         }
+    }
+
+    /// Each slot of `self`, or `fallback`'s where `self` leaves it unset:
+    /// the env bundle over a character preset ([`character_search_preset`]),
+    /// so an explicit env knob always wins. Destructures both sides
+    /// exhaustively, so a knob added without a line here fails to compile.
+    fn or(self, fallback: Self) -> Self {
+        let Self {
+            chance_widening_c,
+            chance_widening_alpha,
+            draw_widening_c,
+            draw_widening_alpha,
+            endturn_widening_c,
+            endturn_widening_alpha,
+            tie_eps,
+            c_puct,
+            loss_w_removed,
+            loss_w_hp,
+            loss_w_turns,
+            loss_turns_half_life,
+            loss_span,
+            loot_weight,
+            persistent_weight,
+            loss_gradient,
+            root_guards,
+            chance_closed_stops_widening,
+            rollout_policy,
+            belief_dialect,
+            leaf_playouts,
+            tree_reuse,
+            tt_hash_v2,
+            net_expand_order,
+            fpu_reduction,
+            effective_incoming,
+            removed_counts_forms,
+            win_hp_carry,
+            win_potion_carry,
+        } = self;
+        Self {
+            chance_widening_c: chance_widening_c.or(fallback.chance_widening_c),
+            chance_widening_alpha: chance_widening_alpha.or(fallback.chance_widening_alpha),
+            draw_widening_c: draw_widening_c.or(fallback.draw_widening_c),
+            draw_widening_alpha: draw_widening_alpha.or(fallback.draw_widening_alpha),
+            endturn_widening_c: endturn_widening_c.or(fallback.endturn_widening_c),
+            endturn_widening_alpha: endturn_widening_alpha.or(fallback.endturn_widening_alpha),
+            tie_eps: tie_eps.or(fallback.tie_eps),
+            c_puct: c_puct.or(fallback.c_puct),
+            loss_w_removed: loss_w_removed.or(fallback.loss_w_removed),
+            loss_w_hp: loss_w_hp.or(fallback.loss_w_hp),
+            loss_w_turns: loss_w_turns.or(fallback.loss_w_turns),
+            loss_turns_half_life: loss_turns_half_life.or(fallback.loss_turns_half_life),
+            loss_span: loss_span.or(fallback.loss_span),
+            loot_weight: loot_weight.or(fallback.loot_weight),
+            persistent_weight: persistent_weight.or(fallback.persistent_weight),
+            loss_gradient: loss_gradient.or(fallback.loss_gradient),
+            root_guards: root_guards.or(fallback.root_guards),
+            chance_closed_stops_widening: chance_closed_stops_widening
+                .or(fallback.chance_closed_stops_widening),
+            rollout_policy: rollout_policy.or(fallback.rollout_policy),
+            belief_dialect: belief_dialect.or(fallback.belief_dialect),
+            leaf_playouts: leaf_playouts.or(fallback.leaf_playouts),
+            tree_reuse: tree_reuse.or(fallback.tree_reuse),
+            tt_hash_v2: tt_hash_v2.or(fallback.tt_hash_v2),
+            net_expand_order: net_expand_order.or(fallback.net_expand_order),
+            fpu_reduction: fpu_reduction.or(fallback.fpu_reduction),
+            effective_incoming: effective_incoming.or(fallback.effective_incoming),
+            removed_counts_forms: removed_counts_forms.or(fallback.removed_counts_forms),
+            win_hp_carry: win_hp_carry.or(fallback.win_hp_carry),
+            win_potion_carry: win_potion_carry.or(fallback.win_potion_carry),
+        }
+    }
+}
+
+/// The Ironclad run agent's search knobs (GH #830), in the
+/// `STS2_RUNAI_MCTS_OVERRIDES` vocabulary: the string the bundle arm of both
+/// A10 gates set (PR #938; `exp/ironclad-combat-bundle` `10fa73b17`), so the
+/// shipped default is literally the gated one. Their control arms set no
+/// `STS2_*` variable.
+///
+/// The full-run gate (PR #938) measured these knobs together with the
+/// built-in BC move prior in elite and boss fights
+/// ([`sts2_mcts::rollout_net::builtin_prior_json`]) as one bundle: Ironclad
+/// A10, champion a10_it700 `net_greedy`, 1000/4000 sims, 1,500 paired seeds,
+/// +5.20 ± 1.18pp (19.5% → 24.7%), repeated 97.06% CI [+2.62, +7.78]. It had
+/// no knobs-only or prior-only arm. Run agent only: the advisor and every
+/// other `RecommendParams` surface keep the base dialect.
+///
+/// Applied by [`MctsCombatPolicy::search_config`] in the BeliefDraw dialect
+/// ([`MctsCombatPolicy::ironclad_layer_on`]) under any explicit
+/// `STS2_RUNAI_MCTS_OVERRIDES` knob. [`IRONCLAD_SEARCH_KNOBS_OFF`] switches
+/// them off.
+pub const IRONCLAD_SEARCH_KNOBS: &str =
+    "removed_counts_forms=1,endturn_widening_c=23.148,draw_widening_c=4.0";
+
+/// The off switch for [`IRONCLAD_SEARCH_KNOBS`]:
+/// `STS2_RUNAI_MCTS_OVERRIDES=<this>` gives the Ironclad run agent the base
+/// BeliefDraw dialect's values ([`sts2_mcts::BELIEF_DRAW_ENDTURN_WIDENING`],
+/// [`sts2_mcts::BELIEF_DRAW_DRAW_WIDENING_C`], forms off) and is a no-op for
+/// every other character. Together with `STS2_RUNAI_PRIOR_NET=off` it is the
+/// gate's control arm. Honest mode only: under `STS2_RUNAI_HONEST=0` it would
+/// overwrite the clairvoyant base. A test fails when the base dialect is
+/// retuned and this string is not.
+pub const IRONCLAD_SEARCH_KNOBS_OFF: &str =
+    "removed_counts_forms=0,endturn_widening_c=5.787,draw_widening_c=2.0";
+
+/// The run agent's per-character knob layer: [`IRONCLAD_SEARCH_KNOBS`] for an
+/// Ironclad fight, nothing for any other character or a fight without one.
+/// Parsed once.
+fn character_search_preset(character: Option<CharacterId>) -> MctsKnobOverrides {
+    static IRONCLAD: OnceLock<MctsKnobOverrides> = OnceLock::new();
+    match character {
+        Some(CharacterId::Ironclad) => {
+            *IRONCLAD.get_or_init(|| parse_mcts_overrides(Some(IRONCLAD_SEARCH_KNOBS)))
+        }
+        _ => MctsKnobOverrides::default(),
     }
 }
 
@@ -1169,6 +1471,7 @@ fn parse_mcts_overrides(env_value: Option<&str>) -> MctsKnobOverrides {
             "loss_turns_half_life" => out.loss_turns_half_life = Some(f32_of(key, val)),
             "loss_span" => out.loss_span = Some(f32_of(key, val)),
             "loot_weight" => out.loot_weight = Some(f32_of(key, val)),
+            "persistent_weight" => out.persistent_weight = Some(f32_of(key, val)),
             "win_hp_carry" => out.win_hp_carry = Some(carry_of(key, val)),
             "win_potion_carry" => out.win_potion_carry = Some(carry_of(key, val)),
             "loss_gradient" => out.loss_gradient = Some(bool_of(key, val)),
@@ -1747,10 +2050,13 @@ impl<M: RunPolicy> MctsCombatPolicy<M> {
             // `tree_reuse`: carry a kept tree across the move it did not
             // search, rooted where this decision would have searched it.
             if retained.is_some() {
-                let (config, _, _) = self.pick_search_setup(rm, combat, is_boss, sims, seed);
-                if let Some((mcts, _)) = self.reuse_retained(retained, rm, combat, config, true) {
+                let (config, _, prior) = self.pick_search_setup(rm, combat, is_boss, sims, seed);
+                if let Some((mut mcts, _)) = self.reuse_retained(retained, rm, combat, config, true)
+                {
+                    // This decision's prior, as on a searched kept tree.
+                    mcts.set_policy(prior);
                     self.retained = Some(RetainedSearch {
-                        mcts,
+                        mcts: mcts.with_prior_cache(prior_cache_from_env()),
                         action: only.clone(),
                         floor: rm.run_state.total_floor,
                     });
@@ -1806,10 +2112,13 @@ impl<M: RunPolicy> MctsCombatPolicy<M> {
             Some((mut kept, retained_visits)) => {
                 self.tree_reuse.retained_visits += u64::from(retained_visits);
                 self.last_retained_visits = Some(retained_visits);
-                kept.policy = prior;
-                kept.with_leaf_eval(leaf_eval)
+                kept.set_policy(prior);
+                kept.with_prior_cache(prior_cache_from_env())
+                    .with_leaf_eval(leaf_eval)
             }
-            None => Mcts::with_policy(combat.clone(), config, prior).with_leaf_eval(leaf_eval),
+            None => Mcts::with_policy(combat.clone(), config, prior)
+                .with_prior_cache(prior_cache_from_env())
+                .with_leaf_eval(leaf_eval),
         };
         if let Some((f, _)) = filter.as_ref().filter(|(f, _)| f.fallback.is_none()) {
             let allowed: Vec<Action> = f.allowed.iter().map(|(a, _)| a.clone()).collect();
@@ -1909,16 +2218,20 @@ impl<M: RunPolicy> MctsCombatPolicy<M> {
             BudgetTier::from_room(rm.run_state.current_room.as_ref().map(|r| r.room_type))
                 == BudgetTier::Boss;
         let (config, leaf_eval, prior) = self.pick_search_setup(rm, combat, is_boss, sims, seed);
-        Mcts::with_policy(combat.clone(), config, prior).with_leaf_eval(leaf_eval)
+        Mcts::with_policy(combat.clone(), config, prior)
+            .with_prior_cache(prior_cache_from_env())
+            .with_leaf_eval(leaf_eval)
     }
 
     /// The search `mcts_pick` runs for one decision: [`Self::search_config`]'s
-    /// config and leaf evaluator, plus the root-only seams it adds on top —
-    /// the PUCT prior net (`use_puct_prior` and the returned prior), the
-    /// potion opportunity charge (`potion_charge_q`) and the drink masks
-    /// (`root_drink_mask`). Those three config fields are the whole
-    /// difference from `search_config`, and none of them is read by a
-    /// playout; a test pins that, so the playouts [`deployed_value_config`]
+    /// config and leaf evaluator for the fight's character
+    /// (`combat.player.character`), plus the root-only seams it adds on top —
+    /// the PUCT move prior (`use_puct_prior` and the returned prior: the
+    /// built-in Ironclad prior in elite and boss fights by default, see
+    /// [`prior_choice`]), the potion opportunity charge (`potion_charge_q`)
+    /// and the drink masks (`root_drink_mask`). Those three config fields are
+    /// the whole difference from `search_config`, and none of them is read by
+    /// a playout; a test pins that, so the playouts [`deployed_value_config`]
     /// scores (`sts2_rs.values_many`, GH #830) stay the pilot's own.
     fn pick_search_setup(
         &mut self,
@@ -1928,7 +2241,8 @@ impl<M: RunPolicy> MctsCombatPolicy<M> {
         sims: u32,
         seed: u64,
     ) -> (MctsConfig, LeafEval, sts2_mcts::SharedPolicy) {
-        let (mut config, leaf_eval) = self.search_config(sims, seed);
+        let character = combat.player.character;
+        let (mut config, leaf_eval) = self.search_config(sims, seed, character);
         // Boss win value by what the fight carries forward (GH #771). An
         // explicit carry in the override bundle wins.
         if self.boss_carry != BossCarry::Off
@@ -1955,9 +2269,11 @@ impl<M: RunPolicy> MctsCombatPolicy<M> {
         // production path is unchanged by routing through `with_policy`.
         // (`use_puct_prior` is not an override knob, so setting it after the
         // override bundle in `search_config` is the same as before it.)
+        // The combat net's prior (`STS2_RUNAI_COMBAT_PRIOR=1`) replaces the
+        // move prior, as before the built-in one existed.
         let tier = BudgetTier::from_room(rm.run_state.current_room.as_ref().map(|r| r.room_type));
-        let rollout_prior = rollout_prior_from_env().filter(|_| rollout_prior_applies(tier));
-        let prior = match (combat_prior_net_from_env(), rollout_prior) {
+        let move_prior = move_prior(prior_net_env(), character, tier, self.ironclad_layer_on());
+        let prior = match (combat_prior_net_from_env(), move_prior) {
             (Some(net), _) => {
                 config.use_puct_prior = true;
                 sts2_mcts::SharedPolicy::new(sts2_mcts::LearnedPolicyPrior::new(net))
@@ -1996,19 +2312,30 @@ impl<M: RunPolicy> MctsCombatPolicy<M> {
     }
 
     /// The search configuration and leaf evaluator one combat search of
-    /// `sims` simulations with search seed `seed` runs under: the deployed
-    /// dialect ([`mcts_config_for`]) plus every env seam this policy reads
-    /// (`STS2_RUNAI_ROLLOUT_DEPTH` / `_TERMINAL_MODE` / `_LEAF` / `_HONEST`
-    /// per call, the tie-band / loss-gradient / root-guard / override bundle
-    /// resolved in [`Self::new`]). It leaves out only the root-only seams
-    /// (the PUCT prior net, the potion charge and drink masks).
+    /// `sims` simulations with search seed `seed` in a `character` fight runs
+    /// under: the base dialect ([`mcts_config_for`]), every env seam this
+    /// policy reads (`STS2_RUNAI_ROLLOUT_DEPTH` / `_TERMINAL_MODE` / `_LEAF` /
+    /// `_HONEST` per call, the tie-band / loss-gradient / root-guard /
+    /// override bundle resolved in [`Self::new`]) and, in the BeliefDraw
+    /// dialect ([`Self::ironclad_layer_on`]), the run agent's character
+    /// layer: [`IRONCLAD_SEARCH_KNOBS`] for an Ironclad fight (GH #830),
+    /// under any knob the override bundle sets. Every other character, and
+    /// `None`, get exactly the config they got before that layer existed. It
+    /// leaves out only the root-only seams (the PUCT prior, the potion charge
+    /// and drink masks).
     ///
-    /// Public so a caller that scores playouts outside the search
-    /// (`sts2_rs.LearnedPlayout.play_many`'s `search_value`) reads exactly
-    /// the terminal values ([`sts2_mcts::playout_return`]) this policy's
-    /// searches back up.
+    /// `character` is the fight's `combat.player.character`, the key the
+    /// playout net uses too. Public so a caller that scores playouts outside
+    /// the search (`sts2_rs.LearnedPlayout.play_many`'s `search_value`) reads
+    /// exactly the terminal values ([`sts2_mcts::playout_return`]) this
+    /// policy's searches back up.
     #[must_use]
-    pub fn search_config(&self, sims: u32, seed: u64) -> (MctsConfig, LeafEval) {
+    pub fn search_config(
+        &self,
+        sims: u32,
+        seed: u64,
+        character: Option<CharacterId>,
+    ) -> (MctsConfig, LeafEval) {
         // Combat-search value-study ablation knobs. Absent env ⇒ deployed
         // defaults (depth 200, RichBoth terminals, budget's TexelWide leaf), so
         // production behavior is byte-identical unless a knob is explicitly set.
@@ -2068,10 +2395,34 @@ impl<M: RunPolicy> MctsCombatPolicy<M> {
         // wins over `STS2_RUNAI_TIE_EPS` / `_LOSS_GRADIENT` / `_ROOT_GUARDS`
         // when both are set, so a sweep can hand a whole knob vector to
         // one env var without worrying about interaction with the older
-        // single-knob vars. Unset/empty ⇒ every slot `None` ⇒ this is a
-        // no-op ⇒ byte-identical to today.
-        self.overrides.apply(&mut config);
+        // single-knob vars.
+        //
+        // In the BeliefDraw dialect the character layer fills the slots the
+        // bundle leaves unset (GH #830), so an env knob still wins, and one
+        // `apply` lands it after a `belief_dialect` reset. Outside it (plain
+        // `STS2_RUNAI_HONEST=0`, which never took the base retunes either)
+        // the bundle applies alone. Unset/empty bundle on a character
+        // without a layer ⇒ every slot `None` ⇒ a no-op.
+        if self.ironclad_layer_on() {
+            self.overrides
+                .or(character_search_preset(character))
+                .apply(&mut config);
+        } else {
+            self.overrides.apply(&mut config);
+        }
         (config, leaf_eval)
+    }
+
+    /// Whether this policy's searches get the run agent's character layer
+    /// (GH #830: [`IRONCLAD_SEARCH_KNOBS`] and the built-in move prior): in
+    /// the BeliefDraw dialect, the deployed one (`STS2_RUNAI_HONEST` unset),
+    /// or under `belief_dialect=1`, which gives a clairvoyant arm the same
+    /// dialect so it differs in information alone. The gate measured the
+    /// layer only there.
+    #[must_use]
+    pub fn ironclad_layer_on(&self) -> bool {
+        deployed_hidden_info() == sts2_mcts::HiddenInfoMode::BeliefDraw
+            || self.overrides.belief_dialect == Some(true)
     }
 
     /// The root's only legal action, when `mcts_pick` may answer without
@@ -2321,7 +2672,7 @@ fn pick_best_survivor(
         }
         // `map_or(true, …)` not `is_none_or`: the latter is stable only
         // since 1.82 and this workspace's MSRV is 1.78.
-        if best.map_or(true, |(b, _)| delta > b) {
+        if best.is_none_or(|(b, _)| delta > b) {
             best = Some((delta, ai));
         }
     }
@@ -2489,17 +2840,23 @@ impl<P: RunPolicy + VScoreSource> RunPolicy for AuditingPolicy<P> {
     }
 }
 
-/// The playout config of the deployed pilot, for scoring playouts outside a
-/// search (`sts2_rs.values_many` / `search_playout_value`, GH #830): the
-/// [`MctsCombatPolicy::search_config`] of an [`CombatBudget::eval_cheap`]
-/// policy, env seams included. Its sims and search seed are placeholders a
+/// The playout config of the deployed pilot in a `character` fight, for
+/// scoring playouts outside a search (`sts2_rs.values_many` /
+/// `search_playout_value`, GH #830): the [`MctsCombatPolicy::search_config`]
+/// of an [`CombatBudget::eval_cheap`] policy for that character, env seams
+/// and the character layer included (an Ironclad state scores with
+/// `removed_counts_forms` on). Its sims and search seed are placeholders a
 /// playout never reads; `mcts_pick` adds only root-only fields on top
 /// (`MctsCombatPolicy::pick_search_setup`). A test pins both, so a playout
 /// under this config is bit-identical to the pilot's own.
 #[must_use]
-pub fn deployed_value_config() -> (MctsConfig, LeafEval) {
+pub fn deployed_value_config(character: Option<CharacterId>) -> (MctsConfig, LeafEval) {
     let budget = CombatBudget::eval_cheap();
-    MctsCombatPolicy::new(HeuristicPolicy::new(), budget, 0).search_config(budget.sims, 0)
+    MctsCombatPolicy::new(HeuristicPolicy::new(), budget, 0).search_config(
+        budget.sims,
+        0,
+        character,
+    )
 }
 
 // The sts2-mcts integration-test fixtures (`build_vertical_slice`), shared
@@ -2752,7 +3109,7 @@ mod tests {
             table.charge_slots(&combat.player.potions, rm.run_state.act_index, false);
         println!("critic charges: {charges:?}\ntable charges:  {table_charges:?}");
         for q in &table_charges[belt_len..] {
-            assert!(*q == 0.0);
+            assert_eq!(*q, 0.0);
         }
     }
 
@@ -3647,36 +4004,100 @@ mod tests {
         assert_eq!(config.leaf_playouts, 1, "unmentioned knob stays default");
     }
 
+    /// The five characters.
+    const CHARACTERS: [CharacterId; 5] = [
+        CharacterId::Ironclad,
+        CharacterId::Silent,
+        CharacterId::Defect,
+        CharacterId::Regent,
+        CharacterId::Necrobinder,
+    ];
+
+    /// A fresh `character` run (seed `seed`, A0) at its first combat, reached
+    /// by first-option picks.
+    fn first_combat(seed: i32, character: CharacterId) -> RunManager {
+        crate::rollout::ensure_content_installed();
+        let mut rm = sts2_content::run_callbacks::new_run_manager_for_character_with_ascension(
+            seed, character, 0,
+        )
+        .with_neow_start();
+        sts2_content::run_callbacks::initialize_run_setup(&mut rm);
+        for _ in 0..64 {
+            if rm.phase() == Phase::Combat {
+                return rm;
+            }
+            let acts = rm.get_available_actions();
+            let _ = rm.take_action(acts[0]);
+        }
+        panic!("{character:?}: no combat within 64 run actions");
+    }
+
+    /// A Test Subject boss fight of `rm`'s run that the player lost after
+    /// killing the first of its three forms: the loss band, where
+    /// `removed_counts_forms` changes the value (form 1's death scores as
+    /// all enemy HP removed with it off, as a third of the forms with it on).
+    fn test_subject_lost_after_its_first_form(rm: &RunManager) -> CombatState {
+        use sts2_core::hooks::{CreatureRef, ValueProps};
+        let mut s = sts2_content::run_bridge::enter_combat_from_roster(
+            &rm.run_state,
+            &[(
+                sts2_core::MonsterKind::TestSubject,
+                sts2_content::monster_dispatch::MonsterSpawnArgs::None,
+                111,
+            )],
+            RoomType::Boss,
+        );
+        let ts = s.enemy_uids[0];
+        let _ = sts2_core::damage::apply_damage(
+            &mut s,
+            CreatureRef::Player,
+            ts,
+            9_999,
+            ValueProps::UNPOWERED,
+            None,
+        );
+        assert!(!s.is_over, "Adaptable keeps the fight open");
+        // The player dies (both HP fields: the mirror creature and the
+        // legacy one the death check reads), and the combat ends.
+        let me = s.player.creature_uid.expect("player creature");
+        for c in &mut s.creatures {
+            if c.id == me.0 {
+                c.current_hp = 0;
+            }
+        }
+        s.player.current_hp = 0;
+        let _ = sts2_core::combat_loop::check_combat_end(&mut s);
+        assert!(
+            sts2_core::is_terminal(&s) && !s.player_won,
+            "the player lost"
+        );
+        s
+    }
+
     /// GH #830: the playouts `sts2_rs.values_many` scores
-    /// ([`deployed_value_config`]) are the pilot's own. `mcts_pick` searches
-    /// with `search_config` plus three root-only fields, pinned field for
-    /// field here, so a playout-relevant edit added in `pick_search_setup`
-    /// fails this test. And a playout under the pick's config, at a real
-    /// budget tier, search seed and boss flag, is bit-identical to one under
+    /// ([`deployed_value_config`] of the state's character) are the pilot's
+    /// own, for every character. `mcts_pick` searches with `search_config`
+    /// plus three root-only fields, pinned field for field here, so a
+    /// playout-relevant edit added in `pick_search_setup` fails this test.
+    /// And a playout under the pick's config, at a real budget tier, search
+    /// seed and boss flag, is bit-identical to one under
     /// `deployed_value_config`'s placeholder sims and seed.
+    ///
+    /// The opening fights cannot tell the Ironclad layer from the base
+    /// dialect in a playout: `removed_counts_forms` (the one layer knob a
+    /// playout reads) only matters for a multi-form enemy in the loss band.
+    /// So the Ironclad states include a lost Test Subject fight, on which the
+    /// Ironclad value config and the character-less one differ: the check
+    /// fails if `deployed_value_config` drops the character.
     #[test]
     fn deployed_value_config_plays_the_pilots_playouts() {
         use sts2_mcts::values::{playout_value, PlayoutMode};
-        crate::rollout::ensure_content_installed();
         let budget = CombatBudget::eval_cheap();
-        let (value_cfg, value_leaf) = deployed_value_config();
         let mut fights = Vec::new();
-        for seed in [3_i32, 8] {
-            let mut rm = sts2_content::run_callbacks::new_run_manager_for_character_with_ascension(
-                seed,
-                CharacterId::Ironclad,
-                0,
-            )
-            .with_neow_start();
-            sts2_content::run_callbacks::initialize_run_setup(&mut rm);
-            for _ in 0..64 {
-                if rm.phase() == Phase::Combat {
-                    break;
-                }
-                let acts = rm.get_available_actions();
-                let _ = rm.take_action(acts[0]);
-            }
+        for (k, character) in CHARACTERS.into_iter().enumerate() {
+            let rm = first_combat(3 + 5 * i32::try_from(k).expect("small"), character);
             let opening = rm.combat.clone().expect("in combat");
+            assert_eq!(opening.player.character, Some(character));
             let mut later = opening.clone();
             for k in 0..3_usize {
                 let acts = sts2_core::legal_actions(&later);
@@ -3685,25 +4106,44 @@ mod tests {
                 }
                 let _ = sts2_core::apply(&mut later, acts[(k * 7 + 1) % acts.len()].clone());
             }
-            fights.push((rm, vec![opening, later]));
+            let mut states = vec![opening, later];
+            if character == CharacterId::Ironclad {
+                let lost = test_subject_lost_after_its_first_form(&rm);
+                let (ic, ic_leaf) = deployed_value_config(Some(CharacterId::Ironclad));
+                let (none, none_leaf) = deployed_value_config(None);
+                assert_ne!(
+                    sts2_mcts::playout_return(&lost, &ic, &ic_leaf).to_bits(),
+                    sts2_mcts::playout_return(&lost, &none, &none_leaf).to_bits(),
+                    "the lost Test Subject fight must score differently with forms on"
+                );
+                states.push(lost);
+            }
+            fights.push((character, rm, states));
         }
+        assert_ne!(
+            format!("{:?}", deployed_value_config(Some(CharacterId::Ironclad)).0),
+            format!("{:?}", deployed_value_config(Some(CharacterId::Silent)).0),
+            "the Ironclad layer must reach the value config"
+        );
         let mut policy = MctsCombatPolicy::new(HeuristicPolicy::new(), budget, 3);
         let mut compared = 0;
-        for (f, (rm, states)) in fights.iter().enumerate() {
+        for (character, rm, states) in &fights {
+            let (value_cfg, value_leaf) = deployed_value_config(Some(*character));
             for (i, s) in states.iter().enumerate() {
                 for (is_boss, sims, seed) in [
                     (false, budget.sims, 0x5EED + i as u64),
                     (true, budget.boss_sims, 0xB055),
                 ] {
                     let (pick, leaf, _prior) = policy.pick_search_setup(rm, s, is_boss, sims, seed);
-                    let (mut base, _) = policy.search_config(sims, seed);
+                    let (mut base, _) = policy.search_config(sims, seed, Some(*character));
                     base.use_puct_prior = pick.use_puct_prior;
                     base.potion_charge_q = pick.potion_charge_q;
                     base.root_drink_mask = pick.root_drink_mask;
                     assert_eq!(
                         format!("{pick:?}"),
                         format!("{base:?}"),
-                        "mcts_pick changed a config field other than the three root-only ones"
+                        "{character:?}: mcts_pick changed a config field other than the three \
+                         root-only ones"
                     );
                     for ps in 0..3_u64 {
                         let a = playout_value(s, ps, PlayoutMode::Raw, &pick, &leaf).expect("raw");
@@ -3712,14 +4152,14 @@ mod tests {
                         assert_eq!(
                             (a.value.to_bits(), a.won, a.hp, a.terminal),
                             (b.value.to_bits(), b.won, b.hp, b.terminal),
-                            "fight {f} state {i}, boss {is_boss}, playout seed {ps}"
+                            "{character:?} state {i}, boss {is_boss}, playout seed {ps}"
                         );
                         compared += 1;
                     }
                 }
             }
         }
-        assert_eq!(compared, 2 * 2 * 2 * 3);
+        assert_eq!(compared, (5 * 2 + 1) * 2 * 3);
     }
 
     /// Zero playouts would silently score leaves with nothing; it fails.
@@ -3779,8 +4219,9 @@ mod tests {
 
     /// GH #830 rung 4: `net_expand_order` and its companion `fpu_reduction`
     /// parse into their slots, and `apply` writes exactly those two fields
-    /// and nothing else. Unmentioned, both stay at the deployed default
-    /// (ladder-ordered expansion, `+inf` first-play urgency).
+    /// and nothing else. Unmentioned, both stay at the base dialect's value
+    /// (`mcts_config_for`: ladder-ordered expansion, `+inf` first-play
+    /// urgency).
     #[test]
     #[allow(clippy::float_cmp)] // exact literal pins, no arithmetic
     fn mcts_knob_overrides_apply_net_expand_order_and_fpu_reduction() {
@@ -3800,8 +4241,8 @@ mod tests {
             COMBAT_ROLLOUT_DEPTH,
             MctsConfig::default().terminal_eval_mode,
         );
-        assert!(!deployed.net_expand_order, "deployed default is off");
-        assert_eq!(deployed.fpu_reduction, None, "deployed default is +inf FPU");
+        assert!(!deployed.net_expand_order, "base dialect is off");
+        assert_eq!(deployed.fpu_reduction, None, "base dialect is +inf FPU");
 
         let mut config = deployed;
         parsed.apply(&mut config);
@@ -3825,8 +4266,10 @@ mod tests {
 
     /// GH #830 boss audit: `effective_incoming` and `removed_counts_forms`
     /// parse into their slots, and `apply` writes exactly those two fields
-    /// and nothing else. Unmentioned, both stay at the deployed default
-    /// (base intent numbers, current-form enemy HP).
+    /// and nothing else. Unmentioned, both stay at the base dialect's value
+    /// (`mcts_config_for`: base intent numbers, current-form enemy HP). The
+    /// Ironclad run agent turns `removed_counts_forms` on in its own layer
+    /// ([`IRONCLAD_SEARCH_KNOBS`]), which this base config does not carry.
     #[test]
     fn mcts_knob_overrides_apply_effective_incoming_and_removed_counts_forms() {
         let parsed = parse_mcts_overrides(Some("effective_incoming=1,removed_counts_forms=true"));
@@ -3845,8 +4288,8 @@ mod tests {
             COMBAT_ROLLOUT_DEPTH,
             MctsConfig::default().terminal_eval_mode,
         );
-        assert!(!deployed.effective_incoming, "deployed default is off");
-        assert!(!deployed.removed_counts_forms, "deployed default is off");
+        assert!(!deployed.effective_incoming, "base dialect is off");
+        assert!(!deployed.removed_counts_forms, "base dialect is off");
 
         let mut config = deployed;
         parsed.apply(&mut config);
@@ -4750,5 +5193,736 @@ mod tests {
         mcts.try_search_n(sims).expect("searched");
         let built = mcts.root_outcomes();
         assert_eq!(format!("{built:?}"), format!("{picked:?}"));
+    }
+
+    // ── the per-node PUCT prior cache (GH #830) ──────────────────────────
+
+    /// The built-in Ironclad playout net's file, which `STS2_RUNAI_PRIOR_NET`
+    /// can name as a prior; `None` (and a skip note) in a checkout without it.
+    fn ironclad_playout_net_file() -> Option<&'static str> {
+        const PATH: &str = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../data/rollout_nets/ironclad.json"
+        );
+        if std::path::Path::new(PATH).is_file() {
+            Some(PATH)
+        } else {
+            eprintln!("no built-in Ironclad playout net (public snapshot): skipped");
+            None
+        }
+    }
+
+    /// A fresh Ironclad run (seed `seed`) at its first combat, reached by
+    /// first-option picks.
+    fn ironclad_first_combat(seed: i32) -> RunManager {
+        crate::rollout::ensure_content_installed();
+        let mut rm = sts2_content::run_callbacks::new_run_manager_for_character_with_ascension(
+            seed,
+            CharacterId::Ironclad,
+            0,
+        )
+        .with_neow_start();
+        sts2_content::run_callbacks::initialize_run_setup(&mut rm);
+        for _ in 0..64 {
+            if rm.phase() == Phase::Combat {
+                return rm;
+            }
+            let acts = rm.get_available_actions();
+            let _ = rm.take_action(acts[0]);
+        }
+        panic!("no combat within 64 run actions");
+    }
+
+    /// `rm`'s combat searched by the pilot's own route (`build_search`) for
+    /// `sims` simulations: whether the search ran a PUCT prior, and the
+    /// prior reads and evaluations it added to the process-wide counters.
+    fn searched_with_the_env(rm: &RunManager, sims: u32) -> (bool, u64, u64) {
+        let budget = CombatBudget::eval_cheap();
+        let mut policy = MctsCombatPolicy::new(HeuristicPolicy::new(), budget, 3);
+        let combat = rm.combat.clone().expect("in combat");
+        let before = sts2_mcts::prior_counts::snapshot();
+        let mut mcts = policy.build_search(rm, &combat, sims, 1);
+        mcts.try_search_n(sims).expect("searchable");
+        let after = sts2_mcts::prior_counts::snapshot();
+        (
+            mcts.config.use_puct_prior,
+            after.lookups - before.lookups,
+            after.evals - before.evals,
+        )
+    }
+
+    /// Unset, the pilot's search caches the prior: fewer evaluations than
+    /// reads. The twin of the off switch below, so that one can fail.
+    #[test]
+    fn the_pilots_search_caches_the_prior_by_default() {
+        let Some(net) = ironclad_playout_net_file() else {
+            return;
+        };
+        std::env::set_var("STS2_RUNAI_PRIOR_NET", net);
+        std::env::remove_var("STS2_RUNAI_PRIOR_CACHE");
+        let rm = ironclad_first_combat(3);
+        let (prior, lookups, evals) = searched_with_the_env(&rm, 64);
+        assert!(prior, "no PUCT prior");
+        assert!(evals > 0 && evals < lookups, "{evals} / {lookups}");
+    }
+
+    /// `STS2_RUNAI_PRIOR_CACHE=0` reaches the pilot's tree: one evaluation
+    /// per read.
+    #[test]
+    fn the_prior_cache_variable_turns_the_cache_off() {
+        let Some(net) = ironclad_playout_net_file() else {
+            return;
+        };
+        std::env::set_var("STS2_RUNAI_PRIOR_NET", net);
+        std::env::set_var("STS2_RUNAI_PRIOR_CACHE", "0");
+        let rm = ironclad_first_combat(3);
+        let (prior, lookups, evals) = searched_with_the_env(&rm, 64);
+        assert!(prior, "no PUCT prior");
+        assert!(evals > 0 && evals == lookups, "{evals} / {lookups}");
+    }
+
+    /// Only `0` and `1` are values of `STS2_RUNAI_PRIOR_CACHE`: anything
+    /// else stops the run instead of silently picking one.
+    #[test]
+    fn a_bad_prior_cache_value_panics() {
+        std::env::set_var("STS2_RUNAI_PRIOR_CACHE", "2");
+        let err = std::panic::catch_unwind(prior_cache_from_env).expect_err("expected a panic");
+        let msg = err
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| err.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+            .expect("panic payload is a string");
+        assert!(
+            msg.contains("STS2_RUNAI_PRIOR_CACHE=\"2\"")
+                && msg.contains("expected 0 (off) or 1 (on)"),
+            "{msg}"
+        );
+    }
+
+    // ── the Ironclad run-agent layer (GH #830) ───────────────────────────
+
+    /// A policy with a tiny budget, constructed now (the override bundle is
+    /// read here).
+    fn layer_policy() -> MctsCombatPolicy<FirstOptionPolicy> {
+        let budget = CombatBudget {
+            sims: 8,
+            boss_sims: 8,
+            elite_sims: None,
+            motif_sims: None,
+            leaf: LeafKind::TexelWide,
+        };
+        MctsCombatPolicy::new(FirstOptionPolicy, budget, 1)
+    }
+
+    /// `search_config`'s config; the layer tests compare its Debug string
+    /// (every field, floats exact).
+    fn config_of<M: RunPolicy>(
+        policy: &MctsCombatPolicy<M>,
+        sims: u32,
+        seed: u64,
+        character: Option<CharacterId>,
+    ) -> MctsConfig {
+        policy.search_config(sims, seed, character).0
+    }
+
+    /// `config` with the Ironclad knobs written in by hand, the literal
+    /// values of the gated string.
+    fn with_the_ironclad_knobs(mut config: MctsConfig) -> MctsConfig {
+        config.removed_counts_forms = true;
+        config.endturn_widening_c = 23.148;
+        config.draw_widening_c = 4.0;
+        config
+    }
+
+    /// The config `search_config` assembled before the character layer
+    /// existed: `mcts_config_for`, the three single-knob seams, then the
+    /// override bundle (with every other env seam unset).
+    fn pre_layer_assembly<M: RunPolicy>(
+        policy: &MctsCombatPolicy<M>,
+        sims: u32,
+        seed: u64,
+    ) -> MctsConfig {
+        let mut config = mcts_config_for(
+            deployed_hidden_info(),
+            sims,
+            seed,
+            COMBAT_ROLLOUT_DEPTH,
+            MctsConfig::default().terminal_eval_mode,
+        );
+        config.tie_eps = policy.tie_eps;
+        config.loss_gradient = policy.loss_gradient;
+        config.root_guards = policy.root_guards;
+        policy.overrides.apply(&mut config);
+        config
+    }
+
+    /// T1: the Ironclad run agent searches with exactly the gated knobs at
+    /// every budget it runs (training 250, the gated 1000 / 4000, and a
+    /// tiny one), and nothing else moves. The literal is the same f32 the
+    /// gate's env string parsed to.
+    #[test]
+    fn ironclad_search_config_carries_the_gated_knobs_at_every_budget() {
+        std::env::remove_var("STS2_RUNAI_MCTS_OVERRIDES");
+        assert_eq!(
+            23.148_f32.to_bits(),
+            "23.148".parse::<f32>().expect("f32").to_bits()
+        );
+        let policy = layer_policy();
+        for sims in [8, 250, 1000, 4000] {
+            let base = config_of(&policy, sims, 7, None);
+            let ironclad = config_of(&policy, sims, 7, Some(CharacterId::Ironclad));
+            assert_eq!(
+                format!("{ironclad:?}"),
+                format!("{:?}", with_the_ironclad_knobs(base)),
+                "sims {sims}"
+            );
+            assert_ne!(format!("{ironclad:?}"), format!("{base:?}"), "sims {sims}");
+        }
+    }
+
+    /// T2 (config level): every other character, and a fight without one,
+    /// searches with exactly the config the pre-layer assembly gives, at
+    /// every budget.
+    #[test]
+    fn other_characters_get_the_pre_layer_config() {
+        std::env::remove_var("STS2_RUNAI_MCTS_OVERRIDES");
+        let policy = layer_policy();
+        for sims in [8, 16, 250, 1000, 4000] {
+            let want = format!("{:?}", pre_layer_assembly(&policy, sims, 11));
+            for character in [
+                Some(CharacterId::Silent),
+                Some(CharacterId::Defect),
+                Some(CharacterId::Regent),
+                Some(CharacterId::Necrobinder),
+                None,
+            ] {
+                assert_eq!(
+                    format!("{:?}", config_of(&policy, sims, 11, character)),
+                    want,
+                    "{character:?} at {sims} sims"
+                );
+            }
+            assert_ne!(
+                format!(
+                    "{:?}",
+                    config_of(&policy, sims, 11, Some(CharacterId::Ironclad))
+                ),
+                want,
+                "Ironclad must differ (non-vacuity) at {sims} sims"
+            );
+        }
+    }
+
+    /// T3: the off switch gives Ironclad the base config, bit for bit, and
+    /// is a no-op for a fight without a character.
+    #[test]
+    fn the_off_switch_gives_ironclad_the_base_config() {
+        std::env::set_var("STS2_RUNAI_MCTS_OVERRIDES", IRONCLAD_SEARCH_KNOBS_OFF);
+        let off = layer_policy();
+        std::env::remove_var("STS2_RUNAI_MCTS_OVERRIDES");
+        let plain = layer_policy();
+        for sims in [8, 250, 1000, 4000] {
+            let base = format!("{:?}", config_of(&plain, sims, 3, None));
+            assert_eq!(
+                format!(
+                    "{:?}",
+                    config_of(&off, sims, 3, Some(CharacterId::Ironclad))
+                ),
+                base,
+                "sims {sims}"
+            );
+            assert_eq!(format!("{:?}", config_of(&off, sims, 3, None)), base);
+        }
+    }
+
+    /// T3: an env knob beats the preset's value for that knob and leaves
+    /// the preset's other knobs in place.
+    #[test]
+    fn an_env_knob_beats_the_ironclad_preset() {
+        std::env::set_var("STS2_RUNAI_MCTS_OVERRIDES", "draw_widening_c=3.0");
+        let policy = layer_policy();
+        for sims in [250, 1000] {
+            let mut want = with_the_ironclad_knobs(pre_layer_assembly(&policy, sims, 5));
+            want.draw_widening_c = 3.0;
+            assert_eq!(
+                format!(
+                    "{:?}",
+                    config_of(&policy, sims, 5, Some(CharacterId::Ironclad))
+                ),
+                format!("{want:?}")
+            );
+        }
+    }
+
+    /// T3: on another character an env knob is the whole change, as before
+    /// the layer existed: no Ironclad knob comes with it.
+    #[test]
+    fn an_env_knob_reaches_another_character_alone() {
+        std::env::remove_var("STS2_RUNAI_MCTS_OVERRIDES");
+        let plain = layer_policy();
+        std::env::set_var("STS2_RUNAI_MCTS_OVERRIDES", "removed_counts_forms=1");
+        let policy = layer_policy();
+        let mut want = config_of(&plain, 1000, 5, Some(CharacterId::Silent));
+        want.removed_counts_forms = true;
+        assert_eq!(
+            format!(
+                "{:?}",
+                config_of(&policy, 1000, 5, Some(CharacterId::Silent))
+            ),
+            format!("{want:?}")
+        );
+    }
+
+    /// `rm`'s first combat searched by `build_search` with its room set to
+    /// `room`: whether the search runs a PUCT prior.
+    fn prior_on_in(rm: &mut RunManager, room: RoomType) -> bool {
+        rm.run_state
+            .current_room
+            .as_mut()
+            .expect("in a room")
+            .room_type = room;
+        let combat = rm.combat.clone().expect("in combat");
+        let mut policy =
+            MctsCombatPolicy::new(HeuristicPolicy::new(), CombatBudget::eval_cheap(), 3);
+        policy.build_search(rm, &combat, 8, 1).config.use_puct_prior
+    }
+
+    /// T4: plain clairvoyant mode (`STS2_RUNAI_HONEST=0`) keeps the legacy
+    /// config for Ironclad (no knobs) and no built-in prior: the gate
+    /// measured the layer only in the BeliefDraw dialect.
+    #[test]
+    fn clairvoyant_ironclad_keeps_the_legacy_search() {
+        std::env::set_var("STS2_RUNAI_HONEST", "0");
+        std::env::remove_var("STS2_RUNAI_MCTS_OVERRIDES");
+        std::env::remove_var("STS2_RUNAI_PRIOR_NET");
+        let policy = layer_policy();
+        assert!(!policy.ironclad_layer_on());
+        for sims in [250, 1000] {
+            assert_eq!(
+                format!(
+                    "{:?}",
+                    config_of(&policy, sims, 2, Some(CharacterId::Ironclad))
+                ),
+                format!("{:?}", config_of(&policy, sims, 2, None))
+            );
+        }
+        let mut rm = first_combat(3, CharacterId::Ironclad);
+        assert!(!prior_on_in(&mut rm, RoomType::Elite));
+        assert!(!prior_on_in(&mut rm, RoomType::Boss));
+    }
+
+    /// T4: `belief_dialect=1` gives a clairvoyant arm the layer too (knobs
+    /// and the built-in prior), so it still differs from the honest arm in
+    /// information alone.
+    #[test]
+    fn belief_dialect_gives_clairvoyant_ironclad_the_layer() {
+        std::env::set_var("STS2_RUNAI_HONEST", "0");
+        std::env::set_var("STS2_RUNAI_MCTS_OVERRIDES", "belief_dialect=1");
+        std::env::remove_var("STS2_RUNAI_PRIOR_NET");
+        let policy = layer_policy();
+        assert!(policy.ironclad_layer_on());
+        for sims in [250, 1000] {
+            let base = config_of(&policy, sims, 2, None);
+            assert_eq!(
+                format!(
+                    "{:?}",
+                    config_of(&policy, sims, 2, Some(CharacterId::Ironclad))
+                ),
+                format!("{:?}", with_the_ironclad_knobs(base))
+            );
+        }
+        let mut rm = first_combat(3, CharacterId::Ironclad);
+        assert!(prior_on_in(&mut rm, RoomType::Elite));
+    }
+
+    /// T4: in honest mode `belief_dialect=1` re-applies the base dialect
+    /// first; the Ironclad knobs land after it, not under it.
+    #[test]
+    fn the_ironclad_knobs_survive_a_belief_dialect_reset() {
+        std::env::remove_var("STS2_RUNAI_HONEST");
+        std::env::set_var("STS2_RUNAI_MCTS_OVERRIDES", "belief_dialect=1");
+        let policy = layer_policy();
+        for sims in [250, 1000, 4000] {
+            let base = config_of(&policy, sims, 2, None);
+            let ironclad = config_of(&policy, sims, 2, Some(CharacterId::Ironclad));
+            assert_eq!(
+                format!("{ironclad:?}"),
+                format!("{:?}", with_the_ironclad_knobs(base))
+            );
+        }
+    }
+
+    /// T6: [`IRONCLAD_SEARCH_KNOBS_OFF`] is the base BeliefDraw dialect for
+    /// the three knobs: applied to the Ironclad config it gives the
+    /// character-less config bit for bit. A base retune fails this until the
+    /// string follows it.
+    #[test]
+    fn the_rollback_const_is_the_base_belief_draw_dialect() {
+        std::env::remove_var("STS2_RUNAI_MCTS_OVERRIDES");
+        let policy = layer_policy();
+        let off = parse_mcts_overrides(Some(IRONCLAD_SEARCH_KNOBS_OFF));
+        for sims in [8, 250, 499, 500, 1000, 4000] {
+            let mut ironclad = config_of(&policy, sims, 9, Some(CharacterId::Ironclad));
+            off.apply(&mut ironclad);
+            assert_eq!(
+                format!("{ironclad:?}"),
+                format!("{:?}", config_of(&policy, sims, 9, None)),
+                "sims {sims}"
+            );
+        }
+        // The other direction: the gated string is exactly the preset.
+        assert_eq!(
+            character_search_preset(Some(CharacterId::Ironclad)),
+            parse_mcts_overrides(Some(IRONCLAD_SEARCH_KNOBS))
+        );
+        for c in [None, Some(CharacterId::Silent), Some(CharacterId::Regent)] {
+            assert_eq!(character_search_preset(c), MctsKnobOverrides::default());
+        }
+    }
+
+    /// `or` keeps every set slot of the bundle and fills only the unset
+    /// ones from the fallback.
+    #[test]
+    #[allow(clippy::float_cmp)] // exact literal pins
+    fn knob_override_or_prefers_the_bundle() {
+        let bundle = parse_mcts_overrides(Some("draw_widening_c=3.0,tie_eps=0.1"));
+        let preset = parse_mcts_overrides(Some(IRONCLAD_SEARCH_KNOBS));
+        let merged = bundle.or(preset);
+        assert_eq!(merged.draw_widening_c, Some(3.0));
+        assert_eq!(merged.tie_eps, Some(0.1));
+        assert_eq!(merged.endturn_widening_c, Some(23.148));
+        assert_eq!(merged.removed_counts_forms, Some(true));
+        assert_eq!(merged.c_puct, None);
+        assert_eq!(MctsKnobOverrides::default().or(preset), preset);
+        assert_eq!(bundle.or(MctsKnobOverrides::default()), bundle);
+    }
+
+    /// Which move prior a search gets, as a pure function of the env's
+    /// answers: the built-in prior is Ironclad's, in elite and boss fights,
+    /// in the layer; `off` is none anywhere; a file keeps its old meaning.
+    #[test]
+    fn prior_choice_scopes_the_built_in_prior_to_ironclad_elite_and_boss() {
+        use BudgetTier::{Boss, Common, Elite};
+        let ic = Some(CharacterId::Ironclad);
+        let tiers = [Common, Elite, Boss];
+        let d = PriorNetEnv::Default;
+        assert_eq!(
+            prior_choice(&d, ic, Elite, None, true),
+            PriorChoice::BuiltIn(CharacterId::Ironclad)
+        );
+        assert_eq!(
+            prior_choice(&d, ic, Boss, None, true),
+            PriorChoice::BuiltIn(CharacterId::Ironclad)
+        );
+        assert_eq!(prior_choice(&d, ic, Common, None, true), PriorChoice::None);
+        for c in [
+            Some(CharacterId::Silent),
+            Some(CharacterId::Defect),
+            Some(CharacterId::Regent),
+            Some(CharacterId::Necrobinder),
+            None,
+        ] {
+            for tier in tiers {
+                for layer in [true, false] {
+                    assert_eq!(
+                        prior_choice(&d, c, tier, None, layer),
+                        PriorChoice::None,
+                        "{c:?} {tier:?}"
+                    );
+                    assert_eq!(
+                        prior_choice(&d, c, tier, Some(&[Common, Elite, Boss]), layer),
+                        PriorChoice::None,
+                        "{c:?} {tier:?} with rooms"
+                    );
+                }
+            }
+        }
+        let file = PriorNetEnv::File("/some/net.json".to_owned());
+        for c in [ic, Some(CharacterId::Silent), None] {
+            for tier in tiers {
+                assert_eq!(
+                    prior_choice(&PriorNetEnv::Off, c, tier, None, true),
+                    PriorChoice::None
+                );
+                for layer in [true, false] {
+                    assert_eq!(
+                        prior_choice(&file, c, tier, None, layer),
+                        PriorChoice::File,
+                        "{c:?} {tier:?}"
+                    );
+                }
+            }
+        }
+        // `STS2_RUNAI_PRIOR_ROOMS` replaces the built-in tiers and narrows a
+        // file prior.
+        assert_eq!(
+            prior_choice(&d, ic, Elite, Some(&[Boss]), true),
+            PriorChoice::None
+        );
+        assert_eq!(
+            prior_choice(&d, ic, Boss, Some(&[Boss]), true),
+            PriorChoice::BuiltIn(CharacterId::Ironclad)
+        );
+        assert_eq!(
+            prior_choice(&d, ic, Common, Some(&[Common]), true),
+            PriorChoice::BuiltIn(CharacterId::Ironclad)
+        );
+        assert_eq!(
+            prior_choice(&file, ic, Common, Some(&[Boss]), true),
+            PriorChoice::None
+        );
+        assert_eq!(
+            prior_choice(&file, ic, Boss, Some(&[Boss]), true),
+            PriorChoice::File
+        );
+        // Outside the layer the built-in prior is off; a file is not.
+        for tier in tiers {
+            assert_eq!(prior_choice(&d, ic, tier, None, false), PriorChoice::None);
+        }
+    }
+
+    /// The value parse: unset = built-in, `off` = none, anything else a path.
+    #[test]
+    fn prior_net_values_parse() {
+        assert_eq!(parse_prior_net_env(None), PriorNetEnv::Default);
+        assert_eq!(parse_prior_net_env(Some("off")), PriorNetEnv::Off);
+        assert_eq!(
+            parse_prior_net_env(Some("/x/net.json")),
+            PriorNetEnv::File("/x/net.json".to_owned())
+        );
+        // No aliases: these are paths.
+        for v in ["OFF", "0", "none", "builtin"] {
+            assert_eq!(
+                parse_prior_net_env(Some(v)),
+                PriorNetEnv::File(v.to_owned())
+            );
+        }
+    }
+
+    /// The panic message of `f`.
+    fn panic_message(f: impl FnOnce() + std::panic::UnwindSafe) -> String {
+        let err = std::panic::catch_unwind(f).expect_err("expected a panic");
+        err.downcast_ref::<String>()
+            .cloned()
+            .or_else(|| err.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+            .expect("panic payload is a string")
+    }
+
+    /// An empty `STS2_RUNAI_PRIOR_NET` stops the run.
+    #[test]
+    fn an_empty_prior_net_value_panics() {
+        std::env::set_var("STS2_RUNAI_PRIOR_NET", "");
+        let msg = panic_message(|| {
+            let _ = prior_net_env();
+        });
+        assert!(msg.contains("STS2_RUNAI_PRIOR_NET is empty"), "{msg}");
+    }
+
+    /// `off` from the environment.
+    #[test]
+    fn prior_net_off_is_read_from_the_env() {
+        std::env::set_var("STS2_RUNAI_PRIOR_NET", "off");
+        assert_eq!(prior_net_env(), &PriorNetEnv::Off);
+    }
+
+    /// A path from the environment.
+    #[test]
+    fn a_prior_net_path_is_read_from_the_env() {
+        std::env::set_var("STS2_RUNAI_PRIOR_NET", "/nonexistent/net.json");
+        assert_eq!(
+            prior_net_env(),
+            &PriorNetEnv::File("/nonexistent/net.json".to_owned())
+        );
+    }
+
+    /// A blend weight outside `[0, 1]` stops the run (the prior would clamp
+    /// it silently).
+    #[test]
+    fn a_prior_mix_outside_the_unit_interval_panics() {
+        std::env::set_var("STS2_RUNAI_PRIOR_MIX", "1.5");
+        let msg = panic_message(|| {
+            let _ = prior_knobs();
+        });
+        assert!(
+            msg.contains("STS2_RUNAI_PRIOR_MIX=1.5 is outside [0, 1]"),
+            "{msg}"
+        );
+    }
+
+    /// A temperature that is not positive stops the run.
+    #[test]
+    fn a_zero_prior_temperature_panics() {
+        std::env::set_var("STS2_RUNAI_PRIOR_TEMP", "0");
+        let msg = panic_message(|| {
+            let _ = prior_knobs();
+        });
+        assert!(
+            msg.contains("STS2_RUNAI_PRIOR_TEMP=0 is not a positive number"),
+            "{msg}"
+        );
+    }
+
+    /// The built-in route and the file route are one prior: the built-in
+    /// text written to a file and named by `STS2_RUNAI_PRIOR_NET` gives
+    /// bit-equal priors on real Ironclad fight states (what makes the
+    /// gate's env-route arm and the shipped default the same search).
+    #[test]
+    fn the_built_in_prior_is_the_file_prior_of_its_text() {
+        use sts2_mcts::Policy;
+        let text = sts2_mcts::rollout_net::builtin_prior_json(CharacterId::Ironclad)
+            .expect("the built-in Ironclad prior is compiled in");
+        let path = std::env::temp_dir().join(format!(
+            "sts2_runai_builtin_prior_{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, text).expect("write the prior file");
+        std::env::set_var("STS2_RUNAI_PRIOR_NET", &path);
+        std::env::remove_var("STS2_RUNAI_PRIOR_MIX");
+        std::env::remove_var("STS2_RUNAI_PRIOR_TEMP");
+        let file = file_move_prior().expect("file prior");
+        let _ = std::fs::remove_file(&path);
+        let built_in = builtin_move_prior(CharacterId::Ironclad).expect("built-in prior");
+        let mut compared = 0;
+        for seed in [3, 7, 11] {
+            let rm = first_combat(seed, CharacterId::Ironclad);
+            let mut s = rm.combat.clone().expect("in combat");
+            for _ in 0..4 {
+                if sts2_core::is_terminal(&s) {
+                    break;
+                }
+                let acts = sts2_core::legal_actions(&s);
+                let a: Vec<u32> = file.prior(&s, &acts).iter().map(|p| p.to_bits()).collect();
+                let b: Vec<u32> = built_in
+                    .prior(&s, &acts)
+                    .iter()
+                    .map(|p| p.to_bits())
+                    .collect();
+                assert_eq!(a, b, "seed {seed}");
+                assert!(a.len() == acts.len() && !a.is_empty());
+                compared += 1;
+                let _ = sts2_core::apply(&mut s, acts[acts.len() / 2].clone());
+            }
+        }
+        assert!(compared >= 9, "{compared}");
+    }
+
+    /// The pilot's search runs the built-in prior in an Ironclad elite or
+    /// boss fight, and it IS the built-in prior; a hallway fight has none.
+    #[test]
+    fn the_pilot_runs_the_built_in_prior_in_ironclad_elite_and_boss_fights() {
+        use sts2_mcts::Policy;
+        std::env::remove_var("STS2_RUNAI_PRIOR_NET");
+        std::env::remove_var("STS2_RUNAI_PRIOR_ROOMS");
+        std::env::remove_var("STS2_RUNAI_HONEST");
+        let mut rm = first_combat(3, CharacterId::Ironclad);
+        assert!(!prior_on_in(&mut rm, RoomType::Monster), "hallway");
+        let built_in = builtin_move_prior(CharacterId::Ironclad).expect("built-in prior");
+        for room in [RoomType::Elite, RoomType::Boss] {
+            assert!(prior_on_in(&mut rm, room), "{room:?}");
+            let combat = rm.combat.clone().expect("in combat");
+            let mut policy =
+                MctsCombatPolicy::new(HeuristicPolicy::new(), CombatBudget::eval_cheap(), 3);
+            let mcts = policy.build_search(&rm, &combat, 8, 1);
+            let acts = sts2_core::legal_actions(&combat);
+            assert_eq!(
+                mcts.policy.prior(&combat, &acts),
+                built_in.prior(&combat, &acts),
+                "{room:?}"
+            );
+        }
+        // Another character's elite fight has none.
+        let mut silent = first_combat(3, CharacterId::Silent);
+        assert!(!prior_on_in(&mut silent, RoomType::Elite));
+        assert!(!prior_on_in(&mut silent, RoomType::Boss));
+    }
+
+    /// The pilot's built-in prior runs at the gated blend and temperature,
+    /// written here as literals: the gate statement's "the BC prior net
+    /// 95f3e909 at mix 0.5, T 1 in elite and boss rooms" (GH #830, PR #938).
+    /// The two tests above compare the pilot's prior with
+    /// [`builtin_move_prior`] and with the file route, and both of those read
+    /// [`prior_knobs`], so a changed default would pass them. With
+    /// `STS2_RUNAI_PRIOR_MIX` / `_TEMP` unset, the pilot's elite and boss
+    /// prior must be bit-equal to `RolloutNetPrior::new(<the built-in net>,
+    /// 0.5, 1.0)`. A prior at mix 0.6 or at T 2 must differ on the same
+    /// states, so the comparison can see either knob move.
+    #[test]
+    fn the_built_in_prior_runs_at_the_gated_mix_and_temperature() {
+        use sts2_mcts::rollout_net::{builtin_prior_json, RolloutNet, RolloutNetPrior};
+        use sts2_mcts::Policy;
+        fn prior_bits<P: Policy + ?Sized>(p: &P, s: &CombatState, acts: &[Action]) -> Vec<u32> {
+            p.prior(s, acts).iter().map(|x| x.to_bits()).collect()
+        }
+        for v in [
+            "STS2_RUNAI_PRIOR_NET",
+            "STS2_RUNAI_PRIOR_ROOMS",
+            "STS2_RUNAI_PRIOR_MIX",
+            "STS2_RUNAI_PRIOR_TEMP",
+            "STS2_RUNAI_COMBAT_PRIOR",
+            "STS2_RUNAI_HONEST",
+            "STS2_RUNAI_MCTS_OVERRIDES",
+        ] {
+            std::env::remove_var(v);
+        }
+        let (mix, temperature) = prior_knobs();
+        assert_eq!(
+            (mix.to_bits(), temperature.to_bits()),
+            (0.5_f32.to_bits(), 1.0_f32.to_bits()),
+            "the built-in prior's defaults are not the gated mix 0.5, T 1"
+        );
+        let text = builtin_prior_json(CharacterId::Ironclad)
+            .expect("the built-in Ironclad prior is compiled in");
+        let at = |mix: f32, temperature: f32| {
+            RolloutNetPrior::new(
+                RolloutNet::from_json(text).expect("the built-in prior parses"),
+                mix,
+                temperature,
+            )
+        };
+        let gated = at(0.5, 1.0);
+        let (other_mix, other_temperature) = (at(0.6, 1.0), at(0.5, 2.0));
+        let (mut compared, mut mix_seen, mut temperature_seen) = (0, false, false);
+        for seed in [3, 7, 11] {
+            let mut rm = first_combat(seed, CharacterId::Ironclad);
+            for room in [RoomType::Elite, RoomType::Boss] {
+                assert!(prior_on_in(&mut rm, room), "seed {seed} {room:?}");
+                let combat = rm.combat.clone().expect("in combat");
+                let mut policy =
+                    MctsCombatPolicy::new(HeuristicPolicy::new(), CombatBudget::eval_cheap(), 3);
+                let mcts = policy.build_search(&rm, &combat, 8, 1);
+                let mut s = combat;
+                for _ in 0..4 {
+                    if sts2_core::is_terminal(&s) {
+                        break;
+                    }
+                    let acts = sts2_core::legal_actions(&s);
+                    let shipped = prior_bits(&mcts.policy, &s, &acts);
+                    assert_eq!(
+                        shipped,
+                        prior_bits(&gated, &s, &acts),
+                        "seed {seed} {room:?}: the pilot's prior is not the gated mix 0.5, T 1"
+                    );
+                    assert!(shipped.len() == acts.len() && !shipped.is_empty());
+                    mix_seen |= shipped != prior_bits(&other_mix, &s, &acts);
+                    temperature_seen |= shipped != prior_bits(&other_temperature, &s, &acts);
+                    compared += 1;
+                    let _ = sts2_core::apply(&mut s, acts[acts.len() / 2].clone());
+                }
+            }
+        }
+        assert!(compared >= 18, "{compared}");
+        assert!(
+            mix_seen && temperature_seen,
+            "these states cannot tell the knobs apart (mix {mix_seen}, T {temperature_seen})"
+        );
+    }
+
+    /// `STS2_RUNAI_PRIOR_NET=off` turns the built-in prior off.
+    #[test]
+    fn prior_net_off_turns_the_built_in_prior_off() {
+        std::env::set_var("STS2_RUNAI_PRIOR_NET", "off");
+        let mut rm = first_combat(3, CharacterId::Ironclad);
+        assert!(!prior_on_in(&mut rm, RoomType::Elite));
+        assert!(!prior_on_in(&mut rm, RoomType::Boss));
     }
 }

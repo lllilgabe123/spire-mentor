@@ -12,6 +12,11 @@ contested by luck look less contested next time, which biases every arm the
 same way but shrinks the deltas. Selection runs at rep ids 40..47; screens use
 0..N with N < 40.
 
+`ironclad_dev_v1` was selected by the pilot from before GH #830 (2026-10-25),
+which changed the deployed Ironclad search. It stays the frozen panel: do not
+re-run this selection against the new default, or the panel moves under every
+delta already measured on it.
+
     python -m ppo.combat_bench.devpanel --pool data/combat_bench/ironclad_devpool_v1.jsonl \
         --played sel.jsonl --out data/combat_bench/ironclad_dev_v1.jsonl \
         --manifest data/combat_bench/MANIFEST.json

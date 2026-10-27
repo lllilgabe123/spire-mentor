@@ -1,0 +1,1739 @@
+{
+  "qualifier_new": "Ironclad, champion a10_it700 (ppo_fullrun_ironclad_a10_it700.pt, sha 91c83c1a), ppo.probe --policy net_greedy --act1 roll, 8000 sims per decision with boss fights included (one tree), shipped Ironclad search default (knobs removed_counts_forms=1, endturn_widening_c=23.148, draw_widening_c=4.0 in every fight + built-in BC move prior mix 0.5, T 1 in elite and boss fights; rl2 playout net), engine 0181fa552, PGO wheel src_hash 4e5bb730d28e2976, seeds 81,000,000+ (200 at A0-A8, 500 at A9-A10), 30 procs",
+  "qualifier_old": "Ironclad, champion plr_it550, ppo.probe --policy net_greedy --act1 roll, 8000 sims per decision with boss fights included (one tree), the search as it was at engine 0cab615a3 (no GH #830 knobs, no BC move prior, no rl2 playout net), seeds 81,000,000+ (200 at A0-A8, 500 at A9-A10), 32 procs (2026-10-11 release sweep)",
+  "integrity": {
+    "new_per_level": {
+      "0": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "wrong_field_counts": {
+          "character": 0,
+          "ascension": 0,
+          "final_ascension": 0,
+          "policy": 0,
+          "wheel_src_hash": 0,
+          "wheel_pgo": 0,
+          "wheel_pgo_instrumented": 0,
+          "won_vs_outcome": 0
+        },
+        "outcomes": {
+          "lost": 8,
+          "won": 192
+        },
+        "error_rows": 0,
+        "timeout_rows": 0,
+        "log_summary": {
+          "wins": 192,
+          "n": 200,
+          "outcomes": {
+            "won": 192,
+            "lost": 8
+          }
+        },
+        "log_agrees_with_rows": true,
+        "log_g1b_pass": true,
+        "progress_done_agrees": true,
+        "jsonl_sha256": "5a7de88329cc9e6e2891706191b6482b34384dc3557ab2a24e9b995af37c478e",
+        "ok": true
+      },
+      "1": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "wrong_field_counts": {
+          "character": 0,
+          "ascension": 0,
+          "final_ascension": 0,
+          "policy": 0,
+          "wheel_src_hash": 0,
+          "wheel_pgo": 0,
+          "wheel_pgo_instrumented": 0,
+          "won_vs_outcome": 0
+        },
+        "outcomes": {
+          "won": 198,
+          "lost": 2
+        },
+        "error_rows": 0,
+        "timeout_rows": 0,
+        "log_summary": {
+          "wins": 198,
+          "n": 200,
+          "outcomes": {
+            "won": 198,
+            "lost": 2
+          }
+        },
+        "log_agrees_with_rows": true,
+        "log_g1b_pass": true,
+        "progress_done_agrees": true,
+        "jsonl_sha256": "ecbf7f29e4f02ad0b41da75dafb9e4928ca1b919479da4ed252fce453b6182dc",
+        "ok": true
+      },
+      "2": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "wrong_field_counts": {
+          "character": 0,
+          "ascension": 0,
+          "final_ascension": 0,
+          "policy": 0,
+          "wheel_src_hash": 0,
+          "wheel_pgo": 0,
+          "wheel_pgo_instrumented": 0,
+          "won_vs_outcome": 0
+        },
+        "outcomes": {
+          "lost": 13,
+          "won": 187
+        },
+        "error_rows": 0,
+        "timeout_rows": 0,
+        "log_summary": {
+          "wins": 187,
+          "n": 200,
+          "outcomes": {
+            "won": 187,
+            "lost": 13
+          }
+        },
+        "log_agrees_with_rows": true,
+        "log_g1b_pass": true,
+        "progress_done_agrees": true,
+        "jsonl_sha256": "1a2cc7d0d05902d1244ff19ff338c3fb83c494d63b83782b90a68f576dca753a",
+        "ok": true
+      },
+      "3": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "wrong_field_counts": {
+          "character": 0,
+          "ascension": 0,
+          "final_ascension": 0,
+          "policy": 0,
+          "wheel_src_hash": 0,
+          "wheel_pgo": 0,
+          "wheel_pgo_instrumented": 0,
+          "won_vs_outcome": 0
+        },
+        "outcomes": {
+          "lost": 12,
+          "won": 188
+        },
+        "error_rows": 0,
+        "timeout_rows": 0,
+        "log_summary": {
+          "wins": 188,
+          "n": 200,
+          "outcomes": {
+            "won": 188,
+            "lost": 12
+          }
+        },
+        "log_agrees_with_rows": true,
+        "log_g1b_pass": true,
+        "progress_done_agrees": true,
+        "jsonl_sha256": "dafc433fc1477a1a721b78d4825e4e0f720423ee67baf29689897ab14c75be66",
+        "ok": true
+      },
+      "4": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "wrong_field_counts": {
+          "character": 0,
+          "ascension": 0,
+          "final_ascension": 0,
+          "policy": 0,
+          "wheel_src_hash": 0,
+          "wheel_pgo": 0,
+          "wheel_pgo_instrumented": 0,
+          "won_vs_outcome": 0
+        },
+        "outcomes": {
+          "won": 190,
+          "lost": 10
+        },
+        "error_rows": 0,
+        "timeout_rows": 0,
+        "log_summary": {
+          "wins": 190,
+          "n": 200,
+          "outcomes": {
+            "lost": 10,
+            "won": 190
+          }
+        },
+        "log_agrees_with_rows": true,
+        "log_g1b_pass": true,
+        "progress_done_agrees": true,
+        "jsonl_sha256": "c5e4db0c91e1749aa5960e1eb2747dec90dca4a79c41e5598d33aa978f4a8eb1",
+        "ok": true
+      },
+      "5": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "wrong_field_counts": {
+          "character": 0,
+          "ascension": 0,
+          "final_ascension": 0,
+          "policy": 0,
+          "wheel_src_hash": 0,
+          "wheel_pgo": 0,
+          "wheel_pgo_instrumented": 0,
+          "won_vs_outcome": 0
+        },
+        "outcomes": {
+          "lost": 17,
+          "won": 183
+        },
+        "error_rows": 0,
+        "timeout_rows": 0,
+        "log_summary": {
+          "wins": 183,
+          "n": 200,
+          "outcomes": {
+            "won": 183,
+            "lost": 17
+          }
+        },
+        "log_agrees_with_rows": true,
+        "log_g1b_pass": true,
+        "progress_done_agrees": true,
+        "jsonl_sha256": "c2eb2a605f3b182b73784e07b5a73bf98daea65bfd58a820696114459fb8138c",
+        "ok": true
+      },
+      "6": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "wrong_field_counts": {
+          "character": 0,
+          "ascension": 0,
+          "final_ascension": 0,
+          "policy": 0,
+          "wheel_src_hash": 0,
+          "wheel_pgo": 0,
+          "wheel_pgo_instrumented": 0,
+          "won_vs_outcome": 0
+        },
+        "outcomes": {
+          "lost": 13,
+          "won": 187
+        },
+        "error_rows": 0,
+        "timeout_rows": 0,
+        "log_summary": {
+          "wins": 187,
+          "n": 200,
+          "outcomes": {
+            "won": 187,
+            "lost": 13
+          }
+        },
+        "log_agrees_with_rows": true,
+        "log_g1b_pass": true,
+        "progress_done_agrees": true,
+        "jsonl_sha256": "af6c03878881f5058a846aeaa1cafb4cfa920ba34ea8169e64742e782763aa5d",
+        "ok": true
+      },
+      "7": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "wrong_field_counts": {
+          "character": 0,
+          "ascension": 0,
+          "final_ascension": 0,
+          "policy": 0,
+          "wheel_src_hash": 0,
+          "wheel_pgo": 0,
+          "wheel_pgo_instrumented": 0,
+          "won_vs_outcome": 0
+        },
+        "outcomes": {
+          "lost": 23,
+          "won": 177
+        },
+        "error_rows": 0,
+        "timeout_rows": 0,
+        "log_summary": {
+          "wins": 177,
+          "n": 200,
+          "outcomes": {
+            "won": 177,
+            "lost": 23
+          }
+        },
+        "log_agrees_with_rows": true,
+        "log_g1b_pass": true,
+        "progress_done_agrees": true,
+        "jsonl_sha256": "09f5d05fdcecf9f09fecef7cadd8b67f2c12c5e2ed240b620af81fd2ad028328",
+        "ok": true
+      },
+      "8": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "wrong_field_counts": {
+          "character": 0,
+          "ascension": 0,
+          "final_ascension": 0,
+          "policy": 0,
+          "wheel_src_hash": 0,
+          "wheel_pgo": 0,
+          "wheel_pgo_instrumented": 0,
+          "won_vs_outcome": 0
+        },
+        "outcomes": {
+          "lost": 31,
+          "won": 169
+        },
+        "error_rows": 0,
+        "timeout_rows": 0,
+        "log_summary": {
+          "wins": 169,
+          "n": 200,
+          "outcomes": {
+            "won": 169,
+            "lost": 31
+          }
+        },
+        "log_agrees_with_rows": true,
+        "log_g1b_pass": true,
+        "progress_done_agrees": true,
+        "jsonl_sha256": "fe96009b41ddf6565593702e9953ecda6e281ad42fdf4c412922dafd055eac33",
+        "ok": true
+      },
+      "9": {
+        "seeds": {
+          "rows": 500,
+          "expected_rows": 500,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "wrong_field_counts": {
+          "character": 0,
+          "ascension": 0,
+          "final_ascension": 0,
+          "policy": 0,
+          "wheel_src_hash": 0,
+          "wheel_pgo": 0,
+          "wheel_pgo_instrumented": 0,
+          "won_vs_outcome": 0
+        },
+        "outcomes": {
+          "lost": 218,
+          "won": 282
+        },
+        "error_rows": 0,
+        "timeout_rows": 0,
+        "log_summary": {
+          "wins": 282,
+          "n": 500,
+          "outcomes": {
+            "won": 282,
+            "lost": 218
+          }
+        },
+        "log_agrees_with_rows": true,
+        "log_g1b_pass": true,
+        "progress_done_agrees": true,
+        "jsonl_sha256": "2f8a8e9e593703e4d93d67ec5d0bf719fc4e7709c146b3e299d874c83c65a32b",
+        "ok": true
+      },
+      "10": {
+        "seeds": {
+          "rows": 500,
+          "expected_rows": 500,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "wrong_field_counts": {
+          "character": 0,
+          "ascension": 0,
+          "final_ascension": 0,
+          "policy": 0,
+          "wheel_src_hash": 0,
+          "wheel_pgo": 0,
+          "wheel_pgo_instrumented": 0,
+          "won_vs_outcome": 0
+        },
+        "outcomes": {
+          "lost": 364,
+          "won": 136
+        },
+        "error_rows": 0,
+        "timeout_rows": 0,
+        "log_summary": {
+          "wins": 136,
+          "n": 500,
+          "outcomes": {
+            "lost": 364,
+            "won": 136
+          }
+        },
+        "log_agrees_with_rows": true,
+        "log_g1b_pass": true,
+        "progress_done_agrees": true,
+        "jsonl_sha256": "0cacffcc0dc1c9ef5fb1e209d3bb771a6a4575f769fcbdcbfaafe50d7146da6c",
+        "ok": true
+      }
+    },
+    "new_all_cells_ok": true,
+    "new_total_rows": 2800,
+    "new_error_rows": 0,
+    "new_timeout_rows": 0,
+    "new_distinct_so_path": [
+      "<venv>/lib/python3.13/site-packages/sts2_rs/sts2_rs.abi3.so"
+    ],
+    "new_distinct_py_src": [
+      "774d91045cdb5433"
+    ],
+    "new_distinct_profdata_sha256": [
+      "3d75d16a4b66730b43f4abd4479559fda1b737aec535f406e9ddb295e450cf1c"
+    ],
+    "driver_start_line": {
+      "ts": "2026-10-26T09:26:26+01:00",
+      "head": "0181fa552a78053f260f0796e1cb086d770c7cef",
+      "so": "823fa393eab74db57d0cffd6f71c4a5c873a74d345a354adfca8458bf1333ba2",
+      "ckpt": "data/ppo/ppo_fullrun_ironclad_a10_it700.pt"
+    },
+    "driver_pins_ok": true,
+    "driver_pins_note": "run.sh aborts unless HEAD, the .so sha and the champion ckpt sha match (0181fa552, 823fa393, 91c83c1a); the start line records head, so and ckpt path (the ckpt sha check passed or the driver would have aborted)",
+    "cell_order_run": [
+      10,
+      9,
+      0,
+      6,
+      3,
+      8,
+      1,
+      5,
+      2,
+      4,
+      7
+    ],
+    "cell_order_ok": true,
+    "progress_all_done": true,
+    "old_per_level": {
+      "0": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "outcomes": {
+          "won": 179,
+          "lost": 21
+        },
+        "error_rows": 0,
+        "timeout_rows": 0
+      },
+      "1": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "outcomes": {
+          "lost": 10,
+          "won": 190
+        },
+        "error_rows": 0,
+        "timeout_rows": 0
+      },
+      "2": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "outcomes": {
+          "lost": 15,
+          "won": 185
+        },
+        "error_rows": 0,
+        "timeout_rows": 0
+      },
+      "3": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "outcomes": {
+          "won": 180,
+          "lost": 20
+        },
+        "error_rows": 0,
+        "timeout_rows": 0
+      },
+      "4": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "outcomes": {
+          "won": 173,
+          "lost": 27
+        },
+        "error_rows": 0,
+        "timeout_rows": 0
+      },
+      "5": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "outcomes": {
+          "won": 170,
+          "lost": 30
+        },
+        "error_rows": 0,
+        "timeout_rows": 0
+      },
+      "6": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "outcomes": {
+          "won": 172,
+          "lost": 28
+        },
+        "error_rows": 0,
+        "timeout_rows": 0
+      },
+      "7": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "outcomes": {
+          "lost": 42,
+          "won": 158
+        },
+        "error_rows": 0,
+        "timeout_rows": 0
+      },
+      "8": {
+        "seeds": {
+          "rows": 200,
+          "expected_rows": 200,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "outcomes": {
+          "lost": 60,
+          "won": 140
+        },
+        "error_rows": 0,
+        "timeout_rows": 0
+      },
+      "9": {
+        "seeds": {
+          "rows": 500,
+          "expected_rows": 500,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "outcomes": {
+          "lost": 305,
+          "won": 195
+        },
+        "error_rows": 0,
+        "timeout_rows": 0
+      },
+      "10": {
+        "seeds": {
+          "rows": 500,
+          "expected_rows": 500,
+          "duplicates": 0,
+          "missing": [],
+          "extra": [],
+          "ok": true
+        },
+        "outcomes": {
+          "lost": 445,
+          "won": 55
+        },
+        "error_rows": 0,
+        "timeout_rows": 0
+      }
+    },
+    "old_total_rows": 2800,
+    "old_error_rows": 0,
+    "old_timeout_rows": 0,
+    "old_seeds_ok": true
+  },
+  "new": {
+    "per_level": {
+      "0": {
+        "wins": 192,
+        "n": 200,
+        "rate": 0.96,
+        "wilson95": [
+          0.923067931799067,
+          0.9795943679338476
+        ],
+        "wilson95_summarize_py": [
+          0.9230670617058012,
+          0.9795946128493436
+        ]
+      },
+      "1": {
+        "wins": 198,
+        "n": 200,
+        "rate": 0.99,
+        "wilson95": [
+          0.9642782382838231,
+          0.9972533418664555
+        ],
+        "wilson95_summarize_py": [
+          0.9642775148038205,
+          0.9972533993962251
+        ]
+      },
+      "2": {
+        "wins": 187,
+        "n": 200,
+        "rate": 0.935,
+        "wilson95": [
+          0.8919809207009312,
+          0.961623645350847
+        ],
+        "wilson95_summarize_py": [
+          0.8919799625008207,
+          0.9616240123502404
+        ]
+      },
+      "3": {
+        "wins": 188,
+        "n": 200,
+        "rate": 0.94,
+        "wilson95": [
+          0.8980683070423372,
+          0.9653478057456681
+        ],
+        "wilson95_summarize_py": [
+          0.8980673646931491,
+          0.9653481500987285
+        ]
+      },
+      "4": {
+        "wins": 190,
+        "n": 200,
+        "rate": 0.95,
+        "wilson95": [
+          0.9104218518612239,
+          0.972617354399236
+        ],
+        "wilson95_summarize_py": [
+          0.9104209437021562,
+          0.9726176509713551
+        ]
+      },
+      "5": {
+        "wins": 183,
+        "n": 200,
+        "rate": 0.915,
+        "wilson95": [
+          0.8681041292843443,
+          0.9462542498225244
+        ],
+        "wilson95_summarize_py": [
+          0.8681031145576462,
+          0.9462547005301477
+        ]
+      },
+      "6": {
+        "wins": 187,
+        "n": 200,
+        "rate": 0.935,
+        "wilson95": [
+          0.8919809207009312,
+          0.961623645350847
+        ],
+        "wilson95_summarize_py": [
+          0.8919799625008207,
+          0.9616240123502404
+        ]
+      },
+      "7": {
+        "wins": 177,
+        "n": 200,
+        "rate": 0.885,
+        "wilson95": [
+          0.8333528310151243,
+          0.9221362676743804
+        ],
+        "wilson95_summarize_py": [
+          0.8333517476611362,
+          0.9221368277817569
+        ]
+      },
+      "8": {
+        "wins": 169,
+        "n": 200,
+        "rate": 0.845,
+        "wilson95": [
+          0.7883930940765792,
+          0.8886036307231068
+        ],
+        "wilson95_summarize_py": [
+          0.7883919410627441,
+          0.8886043148536146
+        ]
+      },
+      "9": {
+        "wins": 282,
+        "n": 500,
+        "rate": 0.564,
+        "wilson95": [
+          0.5202096875439772,
+          0.6068143968769439
+        ],
+        "wilson95_summarize_py": [
+          0.5202088800086124,
+          0.6068151688194319
+        ]
+      },
+      "10": {
+        "wins": 136,
+        "n": 500,
+        "rate": 0.272,
+        "wilson95": [
+          0.2348440922052204,
+          0.31263260704524753
+        ],
+        "wilson95_summarize_py": [
+          0.2348434449332605,
+          0.3126333811168315
+        ]
+      }
+    },
+    "mean_A0_A10": 0.8355454545454546,
+    "act1_split": {
+      "overgrowth": {
+        "wins": 957,
+        "n": 1297,
+        "rate": 0.7378565921356978,
+        "wilson95": [
+          0.7132442286808286,
+          0.7610641474985059
+        ]
+      },
+      "underdocks": {
+        "wins": 1132,
+        "n": 1503,
+        "rate": 0.7531603459747173,
+        "wilson95": [
+          0.73073503413391,
+          0.7742948716636016
+        ]
+      }
+    }
+  },
+  "old": {
+    "per_level": {
+      "0": {
+        "wins": 179,
+        "n": 200,
+        "rate": 0.895,
+        "wilson95": [
+          0.8448196800887696,
+          0.9302925120731899
+        ],
+        "wilson95_summarize_py": [
+          0.8448186177864638,
+          0.9302930375380627
+        ]
+      },
+      "1": {
+        "wins": 190,
+        "n": 200,
+        "rate": 0.95,
+        "wilson95": [
+          0.9104218518612239,
+          0.972617354399236
+        ],
+        "wilson95_summarize_py": [
+          0.9104209437021562,
+          0.9726176509713551
+        ]
+      },
+      "2": {
+        "wins": 185,
+        "n": 200,
+        "rate": 0.925,
+        "wilson95": [
+          0.8799563897637055,
+          0.954025082815618
+        ],
+        "wilson95_summarize_py": [
+          0.8799554020266798,
+          0.9540254929427476
+        ]
+      },
+      "3": {
+        "wins": 180,
+        "n": 200,
+        "rate": 0.9,
+        "wilson95": [
+          0.8505941875672826,
+          0.9343295513309041
+        ],
+        "wilson95_summarize_py": [
+          0.8505931364369146,
+          0.9343300588284289
+        ]
+      },
+      "4": {
+        "wins": 173,
+        "n": 200,
+        "rate": 0.865,
+        "wilson95": [
+          0.8107086162924745,
+          0.9055342954521209
+        ],
+        "wilson95_summarize_py": [
+          0.8107074954488287,
+          0.9055349202307972
+        ]
+      },
+      "5": {
+        "wins": 170,
+        "n": 200,
+        "rate": 0.85,
+        "wilson95": [
+          0.7939442071583334,
+          0.89286406437758
+        ],
+        "wilson95_summarize_py": [
+          0.7939430617334484,
+          0.892864734123727
+        ]
+      },
+      "6": {
+        "wins": 172,
+        "n": 200,
+        "rate": 0.86,
+        "wilson95": [
+          0.8051011913429243,
+          0.9013301736654437
+        ],
+        "wilson95_summarize_py": [
+          0.8051000619915237,
+          0.9013308137472852
+        ]
+      },
+      "7": {
+        "wins": 158,
+        "n": 200,
+        "rate": 0.79,
+        "wilson95": [
+          0.7283538314009754,
+          0.8407158793002101
+        ],
+        "wilson95_summarize_py": [
+          0.7283526118460081,
+          0.8407167047213658
+        ]
+      },
+      "8": {
+        "wins": 140,
+        "n": 200,
+        "rate": 0.7,
+        "wilson95": [
+          0.6332093162728074,
+          0.7592525531762859
+        ],
+        "wilson95_summarize_py": [
+          0.6332080400667355,
+          0.759253557565936
+        ]
+      },
+      "9": {
+        "wins": 195,
+        "n": 500,
+        "rate": 0.39,
+        "wilson95": [
+          0.3482413304011046,
+          0.43343602450043706
+        ],
+        "wilson95_summarize_py": [
+          0.34824058390510465,
+          0.4334368321716941
+        ]
+      },
+      "10": {
+        "wins": 55,
+        "n": 500,
+        "rate": 0.11,
+        "wilson95": [
+          0.0854914151566031,
+          0.14045557040340767
+        ],
+        "wilson95_summarize_py": [
+          0.08549101658817662,
+          0.140456185865928
+        ]
+      }
+    },
+    "mean_A0_A10": 0.7486363636363635,
+    "act1_split": {
+      "overgrowth": {
+        "wins": 820,
+        "n": 1297,
+        "rate": 0.6322282189668466,
+        "wilson95": [
+          0.6056311668663416,
+          0.6580443161636612
+        ]
+      },
+      "underdocks": {
+        "wins": 977,
+        "n": 1503,
+        "rate": 0.6500332667997338,
+        "wilson95": [
+          0.6255655804114509,
+          0.6737359800546169
+        ]
+      }
+    }
+  },
+  "old_vs_published": {
+    "matches_published": true,
+    "mismatches": []
+  },
+  "paired": {
+    "per_level": {
+      "0": {
+        "pairs": 200,
+        "dropped_seeds": [],
+        "seeds_only_in_one_arm": 0,
+        "new_rate": 0.96,
+        "old_rate": 0.895,
+        "diff": 0.065,
+        "both_won": 173,
+        "b_new_won_old_lost": 19,
+        "c_old_won_new_lost": 6,
+        "both_lost": 2,
+        "mcnemar_exact_p": 0.01463329792022705,
+        "mcnemar_exact_p_scipy": 0.01463329792022705,
+        "newcombe10_ci95": [
+          0.016442350427251853,
+          0.11707817341699461
+        ],
+        "act1_agree": 200
+      },
+      "1": {
+        "pairs": 200,
+        "dropped_seeds": [],
+        "seeds_only_in_one_arm": 0,
+        "new_rate": 0.99,
+        "old_rate": 0.95,
+        "diff": 0.04,
+        "both_won": 188,
+        "b_new_won_old_lost": 10,
+        "c_old_won_new_lost": 2,
+        "both_lost": 0,
+        "mcnemar_exact_p": 0.03857421875,
+        "mcnemar_exact_p_scipy": 0.03857421875,
+        "newcombe10_ci95": [
+          0.0053592564082600505,
+          0.08040147258162561
+        ],
+        "act1_agree": 200
+      },
+      "2": {
+        "pairs": 200,
+        "dropped_seeds": [],
+        "seeds_only_in_one_arm": 0,
+        "new_rate": 0.935,
+        "old_rate": 0.925,
+        "diff": 0.01,
+        "both_won": 174,
+        "b_new_won_old_lost": 13,
+        "c_old_won_new_lost": 11,
+        "both_lost": 2,
+        "mcnemar_exact_p": 0.8388197422027588,
+        "mcnemar_exact_p_scipy": 0.8388197422027588,
+        "newcombe10_ci95": [
+          -0.03995991452047044,
+          0.06048208557844869
+        ],
+        "act1_agree": 200
+      },
+      "3": {
+        "pairs": 200,
+        "dropped_seeds": [],
+        "seeds_only_in_one_arm": 0,
+        "new_rate": 0.94,
+        "old_rate": 0.9,
+        "diff": 0.04,
+        "both_won": 172,
+        "b_new_won_old_lost": 16,
+        "c_old_won_new_lost": 8,
+        "both_lost": 4,
+        "mcnemar_exact_p": 0.15158963203430176,
+        "mcnemar_exact_p_scipy": 0.15158963203430176,
+        "newcombe10_ci95": [
+          -0.008693499270219937,
+          0.09090456746865017
+        ],
+        "act1_agree": 200
+      },
+      "4": {
+        "pairs": 200,
+        "dropped_seeds": [],
+        "seeds_only_in_one_arm": 0,
+        "new_rate": 0.95,
+        "old_rate": 0.865,
+        "diff": 0.085,
+        "both_won": 167,
+        "b_new_won_old_lost": 23,
+        "c_old_won_new_lost": 6,
+        "both_lost": 4,
+        "mcnemar_exact_p": 0.002315700054168701,
+        "mcnemar_exact_p_scipy": 0.002315700054168701,
+        "newcombe10_ci95": [
+          0.03363235540494301,
+          0.1399743956373835
+        ],
+        "act1_agree": 200
+      },
+      "5": {
+        "pairs": 200,
+        "dropped_seeds": [],
+        "seeds_only_in_one_arm": 0,
+        "new_rate": 0.915,
+        "old_rate": 0.85,
+        "diff": 0.065,
+        "both_won": 161,
+        "b_new_won_old_lost": 22,
+        "c_old_won_new_lost": 9,
+        "both_lost": 8,
+        "mcnemar_exact_p": 0.029449373483657837,
+        "mcnemar_exact_p_scipy": 0.029449373483657837,
+        "newcombe10_ci95": [
+          0.010811374194876197,
+          0.121215917381747
+        ],
+        "act1_agree": 200
+      },
+      "6": {
+        "pairs": 200,
+        "dropped_seeds": [],
+        "seeds_only_in_one_arm": 0,
+        "new_rate": 0.935,
+        "old_rate": 0.86,
+        "diff": 0.075,
+        "both_won": 164,
+        "b_new_won_old_lost": 23,
+        "c_old_won_new_lost": 8,
+        "both_lost": 5,
+        "mcnemar_exact_p": 0.010673840530216694,
+        "mcnemar_exact_p_scipy": 0.010673840530216694,
+        "newcombe10_ci95": [
+          0.021168248178619863,
+          0.13138568063075007
+        ],
+        "act1_agree": 200
+      },
+      "7": {
+        "pairs": 200,
+        "dropped_seeds": [],
+        "seeds_only_in_one_arm": 0,
+        "new_rate": 0.885,
+        "old_rate": 0.79,
+        "diff": 0.095,
+        "both_won": 144,
+        "b_new_won_old_lost": 33,
+        "c_old_won_new_lost": 14,
+        "both_lost": 9,
+        "mcnemar_exact_p": 0.007942726509483578,
+        "mcnemar_exact_p_scipy": 0.007942726509483574,
+        "newcombe10_ci95": [
+          0.028675470227430944,
+          0.16166839679878262
+        ],
+        "act1_agree": 200
+      },
+      "8": {
+        "pairs": 200,
+        "dropped_seeds": [],
+        "seeds_only_in_one_arm": 0,
+        "new_rate": 0.845,
+        "old_rate": 0.7,
+        "diff": 0.145,
+        "both_won": 125,
+        "b_new_won_old_lost": 44,
+        "c_old_won_new_lost": 15,
+        "both_lost": 16,
+        "mcnemar_exact_p": 0.00020372185740785698,
+        "mcnemar_exact_p_scipy": 0.00020372185740785698,
+        "newcombe10_ci95": [
+          0.07178673992637971,
+          0.21701197447141363
+        ],
+        "act1_agree": 200
+      },
+      "9": {
+        "pairs": 500,
+        "dropped_seeds": [],
+        "seeds_only_in_one_arm": 0,
+        "new_rate": 0.564,
+        "old_rate": 0.39,
+        "diff": 0.174,
+        "both_won": 139,
+        "b_new_won_old_lost": 143,
+        "c_old_won_new_lost": 56,
+        "both_lost": 162,
+        "mcnemar_exact_p": 5.806276090090465e-10,
+        "mcnemar_exact_p_scipy": 5.806276090090418e-10,
+        "newcombe10_ci95": [
+          0.12022810288367432,
+          0.22614217636704523
+        ],
+        "act1_agree": 500
+      },
+      "10": {
+        "pairs": 500,
+        "dropped_seeds": [],
+        "seeds_only_in_one_arm": 0,
+        "new_rate": 0.272,
+        "old_rate": 0.11,
+        "diff": 0.162,
+        "both_won": 32,
+        "b_new_won_old_lost": 104,
+        "c_old_won_new_lost": 23,
+        "both_lost": 341,
+        "mcnemar_exact_p": 1.6964329533149106e-13,
+        "mcnemar_exact_p_scipy": 1.6964329533149103e-13,
+        "newcombe10_ci95": [
+          0.1201175721168384,
+          0.20400205119894071
+        ],
+        "act1_agree": 500
+      }
+    },
+    "act1_agreement": {
+      "agree": 2800,
+      "pairs": 2800
+    },
+    "pooled": {
+      "mean_diff_A0_A10": 0.08690909090909091,
+      "bootstrap": {
+        "method": "seed-clustered percentile bootstrap, unstratified draw of 500 seeds (81,000,000-81,000,499) with replacement; each seed carries all its levels",
+        "resamples": 10000,
+        "rng": "numpy default_rng(20261026)",
+        "ci95": [
+          0.06632361009843239,
+          0.10849203800824637
+        ],
+        "se": 0.010744994080236225
+      },
+      "bootstrap_stratified_sensitivity": {
+        "method": "not pre-specified: same, but 200 seeds drawn from 81,000,000-199 and 300 from 81,000,200-499",
+        "rng": "numpy default_rng(20261027)",
+        "ci95": [
+          0.0660909090909091,
+          0.10800227272727271
+        ],
+        "se": 0.010645487945605764
+      },
+      "caveat": "Seeds 81,000,000-199 repeat across all 11 levels and 81,000,200-499 across A9 and A10, so the 11 level diffs are not independent; the CI resamples seeds as clusters for that reason. Descriptive only: the diff confounds the champion (plr_it550 -> a10_it700), the GH #830 search default, and every engine change between 0cab615a3 and 0181fa552 (690 commits, including the rl2 playout net, PR #816). It attributes nothing."
+    }
+  },
+  "cost": {
+    "per_level": {
+      "0": {
+        "runs": 200,
+        "wall_s_mean": 177.8965,
+        "wall_s_median": 176.29500000000002,
+        "wall_s_max": 411.04,
+        "batch_wall_s_log": 1333,
+        "runs_per_min_log": 9.0,
+        "cpu_hours": 9.88313888888889,
+        "load_at_start_1_5_15": [
+          8.94,
+          23.3,
+          29.1
+        ],
+        "start": "2026-10-26T10:58:17+01:00",
+        "done": "2026-10-26T11:20:30+01:00",
+        "old_wall_s_mean": 300.16115,
+        "old_wall_s_median": 291.37,
+        "old_batch_wall_s": 2005,
+        "old_cpu_hours": 16.675619444444447,
+        "wall_s_mean_ratio_new_over_old": 0.5926699707806956
+      },
+      "1": {
+        "runs": 200,
+        "wall_s_mean": 173.7323,
+        "wall_s_median": 166.42,
+        "wall_s_max": 456.12,
+        "batch_wall_s_log": 1384,
+        "runs_per_min_log": 8.7,
+        "cpu_hours": 9.651794444444445,
+        "load_at_start_1_5_15": [
+          10.95,
+          25.76,
+          30.45
+        ],
+        "start": "2026-10-26T12:23:40+01:00",
+        "done": "2026-10-26T12:46:44+01:00",
+        "old_wall_s_mean": 319.0284,
+        "old_wall_s_median": 303.7,
+        "old_batch_wall_s": 2114,
+        "old_cpu_hours": 17.7238,
+        "wall_s_mean_ratio_new_over_old": 0.5445668786854087
+      },
+      "2": {
+        "runs": 200,
+        "wall_s_mean": 161.88909999999998,
+        "wall_s_median": 150.71,
+        "wall_s_max": 300.05,
+        "batch_wall_s_log": 1182,
+        "runs_per_min_log": 10.2,
+        "cpu_hours": 8.993838888888888,
+        "load_at_start_1_5_15": [
+          10.07,
+          24.36,
+          28.51
+        ],
+        "start": "2026-10-26T13:07:08+01:00",
+        "done": "2026-10-26T13:26:50+01:00",
+        "old_wall_s_mean": 309.30655,
+        "old_wall_s_median": 298.73,
+        "old_batch_wall_s": 2066,
+        "old_cpu_hours": 17.18369722222222,
+        "wall_s_mean_ratio_new_over_old": 0.5233937011679836
+      },
+      "3": {
+        "runs": 200,
+        "wall_s_mean": 167.86970000000002,
+        "wall_s_median": 162.68,
+        "wall_s_max": 334.89,
+        "batch_wall_s_log": 1262,
+        "runs_per_min_log": 9.5,
+        "cpu_hours": 9.326094444444445,
+        "load_at_start_1_5_15": [
+          9.75,
+          24.21,
+          28.88
+        ],
+        "start": "2026-10-26T11:40:41+01:00",
+        "done": "2026-10-26T12:01:43+01:00",
+        "old_wall_s_mean": 315.7194,
+        "old_wall_s_median": 300.785,
+        "old_batch_wall_s": 2136,
+        "old_cpu_hours": 17.539966666666665,
+        "wall_s_mean_ratio_new_over_old": 0.53170536875466
+      },
+      "4": {
+        "runs": 200,
+        "wall_s_mean": 167.04014999999998,
+        "wall_s_median": 158.01,
+        "wall_s_max": 324.54,
+        "batch_wall_s_log": 1215,
+        "runs_per_min_log": 9.9,
+        "cpu_hours": 9.280008333333333,
+        "load_at_start_1_5_15": [
+          9.16,
+          23.31,
+          27.99
+        ],
+        "start": "2026-10-26T13:26:50+01:00",
+        "done": "2026-10-26T13:47:05+01:00",
+        "old_wall_s_mean": 311.51695,
+        "old_wall_s_median": 301.045,
+        "old_batch_wall_s": 2086,
+        "old_cpu_hours": 17.306497222222223,
+        "wall_s_mean_ratio_new_over_old": 0.5362152845936633
+      },
+      "5": {
+        "runs": 200,
+        "wall_s_mean": 169.01705,
+        "wall_s_median": 164.57,
+        "wall_s_max": 479.58,
+        "batch_wall_s_log": 1224,
+        "runs_per_min_log": 9.8,
+        "cpu_hours": 9.389836111111112,
+        "load_at_start_1_5_15": [
+          3.96,
+          16.49,
+          26.26
+        ],
+        "start": "2026-10-26T12:46:44+01:00",
+        "done": "2026-10-26T13:07:08+01:00",
+        "old_wall_s_mean": 302.80005,
+        "old_wall_s_median": 296.635,
+        "old_batch_wall_s": 2055,
+        "old_cpu_hours": 16.822225,
+        "wall_s_mean_ratio_new_over_old": 0.5581803899966331
+      },
+      "6": {
+        "runs": 200,
+        "wall_s_mean": 167.85505,
+        "wall_s_median": 157.95499999999998,
+        "wall_s_max": 349.4,
+        "batch_wall_s_log": 1210,
+        "runs_per_min_log": 9.9,
+        "cpu_hours": 9.325280555555556,
+        "load_at_start_1_5_15": [
+          5.33,
+          23.29,
+          30.16
+        ],
+        "start": "2026-10-26T11:20:30+01:00",
+        "done": "2026-10-26T11:40:41+01:00",
+        "old_wall_s_mean": 310.38165000000004,
+        "old_wall_s_median": 295.82,
+        "old_batch_wall_s": 2059,
+        "old_cpu_hours": 17.243425000000002,
+        "wall_s_mean_ratio_new_over_old": 0.540802106052339
+      },
+      "7": {
+        "runs": 200,
+        "wall_s_mean": 173.06994999999998,
+        "wall_s_median": 165.14,
+        "wall_s_max": 344.43,
+        "batch_wall_s_log": 1264,
+        "runs_per_min_log": 9.5,
+        "cpu_hours": 9.614997222222222,
+        "load_at_start_1_5_15": [
+          8.63,
+          24.26,
+          28.85
+        ],
+        "start": "2026-10-26T13:47:05+01:00",
+        "done": "2026-10-26T14:08:09+01:00",
+        "old_wall_s_mean": 309.1711,
+        "old_wall_s_median": 296.445,
+        "old_batch_wall_s": 2084,
+        "old_cpu_hours": 17.176172222222224,
+        "wall_s_mean_ratio_new_over_old": 0.5597869593891537
+      },
+      "8": {
+        "runs": 200,
+        "wall_s_mean": 179.75075,
+        "wall_s_median": 170.39499999999998,
+        "wall_s_max": 374.0,
+        "batch_wall_s_log": 1317,
+        "runs_per_min_log": 9.1,
+        "cpu_hours": 9.986152777777779,
+        "load_at_start_1_5_15": [
+          7.03,
+          21.39,
+          27.85
+        ],
+        "start": "2026-10-26T12:01:43+01:00",
+        "done": "2026-10-26T12:23:40+01:00",
+        "old_wall_s_mean": 313.49815,
+        "old_wall_s_median": 305.395,
+        "old_batch_wall_s": 2122,
+        "old_cpu_hours": 17.416563888888888,
+        "wall_s_mean_ratio_new_over_old": 0.573371007133535
+      },
+      "9": {
+        "runs": 500,
+        "wall_s_mean": 150.74446,
+        "wall_s_median": 145.46,
+        "wall_s_max": 490.52,
+        "batch_wall_s_log": 2628,
+        "runs_per_min_log": 11.4,
+        "cpu_hours": 20.936730555555556,
+        "load_at_start_1_5_15": [
+          5.37,
+          20.98,
+          28.46
+        ],
+        "start": "2026-10-26T10:14:28+01:00",
+        "done": "2026-10-26T10:58:17+01:00",
+        "old_wall_s_mean": 243.68352,
+        "old_wall_s_median": 246.885,
+        "old_batch_wall_s": 3966,
+        "old_cpu_hours": 33.84493333333333,
+        "wall_s_mean_ratio_new_over_old": 0.618607528321981
+      },
+      "10": {
+        "runs": 500,
+        "wall_s_mean": 162.365,
+        "wall_s_median": 158.33499999999998,
+        "wall_s_max": 464.42,
+        "batch_wall_s_log": 2882,
+        "runs_per_min_log": 10.4,
+        "cpu_hours": 22.550694444444446,
+        "load_at_start_1_5_15": [
+          2.79,
+          1.96,
+          1.96
+        ],
+        "start": "2026-10-26T09:26:26+01:00",
+        "done": "2026-10-26T10:14:28+01:00",
+        "old_wall_s_mean": 248.06222,
+        "old_wall_s_median": 250.12,
+        "old_batch_wall_s": 4019,
+        "old_cpu_hours": 34.45308611111111,
+        "wall_s_mean_ratio_new_over_old": 0.6545333666690559
+      }
+    },
+    "total": {
+      "cpu_hours": 128.93856666666667,
+      "batch_wall_h": 4.6947222222222225,
+      "old_cpu_hours": 223.38598611111112,
+      "old_batch_wall_h": 7.42
+    },
+    "notes": "Not a clean cost measurement: the box was shared during the sweep (a CF Pages wasm build, a test-public-shape wheel build and pytest run, and replays from a reproduction workflow, mostly during A10, A9 and A0); the load average at each START is recorded. CPU-hours = sum of per-run wall_s / 3600 (one process per run). The old sweep ran 32 procs on engine 0cab615a3 with a different champion and search, five characters interleaved per level; its wall times are context, not a baseline."
+  },
+  "depth_new": {
+    "per_level": {
+      "0": {
+        "n": 200,
+        "mean_total_floor": 44.785,
+        "died_act1": 1,
+        "died_act2": 2,
+        "died_act3": 5,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.005,
+        "share_died_act2": 0.01,
+        "share_died_act3": 0.025
+      },
+      "1": {
+        "n": 200,
+        "mean_total_floor": 45.09,
+        "died_act1": 0,
+        "died_act2": 0,
+        "died_act3": 2,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.0,
+        "share_died_act2": 0.0,
+        "share_died_act3": 0.01
+      },
+      "2": {
+        "n": 200,
+        "mean_total_floor": 44.71,
+        "died_act1": 0,
+        "died_act2": 4,
+        "died_act3": 9,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.0,
+        "share_died_act2": 0.02,
+        "share_died_act3": 0.045
+      },
+      "3": {
+        "n": 200,
+        "mean_total_floor": 44.755,
+        "died_act1": 0,
+        "died_act2": 4,
+        "died_act3": 8,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.0,
+        "share_died_act2": 0.02,
+        "share_died_act3": 0.04
+      },
+      "4": {
+        "n": 200,
+        "mean_total_floor": 44.99,
+        "died_act1": 0,
+        "died_act2": 1,
+        "died_act3": 9,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.0,
+        "share_died_act2": 0.005,
+        "share_died_act3": 0.045
+      },
+      "5": {
+        "n": 200,
+        "mean_total_floor": 44.04,
+        "died_act1": 2,
+        "died_act2": 7,
+        "died_act3": 8,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.01,
+        "share_died_act2": 0.035,
+        "share_died_act3": 0.04
+      },
+      "6": {
+        "n": 200,
+        "mean_total_floor": 44.71,
+        "died_act1": 0,
+        "died_act2": 5,
+        "died_act3": 8,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.0,
+        "share_died_act2": 0.025,
+        "share_died_act3": 0.04
+      },
+      "7": {
+        "n": 200,
+        "mean_total_floor": 44.475,
+        "died_act1": 1,
+        "died_act2": 5,
+        "died_act3": 17,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.005,
+        "share_died_act2": 0.025,
+        "share_died_act3": 0.085
+      },
+      "8": {
+        "n": 200,
+        "mean_total_floor": 43.965,
+        "died_act1": 1,
+        "died_act2": 12,
+        "died_act3": 18,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.005,
+        "share_died_act2": 0.06,
+        "share_died_act3": 0.09
+      },
+      "9": {
+        "n": 500,
+        "mean_total_floor": 40.872,
+        "died_act1": 24,
+        "died_act2": 81,
+        "died_act3": 113,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.048,
+        "share_died_act2": 0.162,
+        "share_died_act3": 0.226
+      },
+      "10": {
+        "n": 500,
+        "mean_total_floor": 40.628,
+        "died_act1": 36,
+        "died_act2": 79,
+        "died_act3": 249,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.072,
+        "share_died_act2": 0.158,
+        "share_died_act3": 0.498
+      }
+    },
+    "field": "final.act_index (1-based: 1, 2, 3) on lost rows; total_floor for the mean",
+    "total_floor_band_vs_act_index": {
+      "agree": 711,
+      "lost_rows": 711
+    }
+  },
+  "depth_old": {
+    "per_level": {
+      "0": {
+        "n": 200,
+        "mean_total_floor": 44.535,
+        "died_act1": 1,
+        "died_act2": 4,
+        "died_act3": 16,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.005,
+        "share_died_act2": 0.02,
+        "share_died_act3": 0.08
+      },
+      "1": {
+        "n": 200,
+        "mean_total_floor": 44.875,
+        "died_act1": 1,
+        "died_act2": 1,
+        "died_act3": 8,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.005,
+        "share_died_act2": 0.005,
+        "share_died_act3": 0.04
+      },
+      "2": {
+        "n": 200,
+        "mean_total_floor": 44.615,
+        "died_act1": 1,
+        "died_act2": 3,
+        "died_act3": 11,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.005,
+        "share_died_act2": 0.015,
+        "share_died_act3": 0.055
+      },
+      "3": {
+        "n": 200,
+        "mean_total_floor": 44.695,
+        "died_act1": 1,
+        "died_act2": 3,
+        "died_act3": 16,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.005,
+        "share_died_act2": 0.015,
+        "share_died_act3": 0.08
+      },
+      "4": {
+        "n": 200,
+        "mean_total_floor": 44.38,
+        "died_act1": 2,
+        "died_act2": 4,
+        "died_act3": 21,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.01,
+        "share_died_act2": 0.02,
+        "share_died_act3": 0.105
+      },
+      "5": {
+        "n": 200,
+        "mean_total_floor": 43.815,
+        "died_act1": 4,
+        "died_act2": 8,
+        "died_act3": 18,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.02,
+        "share_died_act2": 0.04,
+        "share_died_act3": 0.09
+      },
+      "6": {
+        "n": 200,
+        "mean_total_floor": 43.975,
+        "died_act1": 4,
+        "died_act2": 5,
+        "died_act3": 19,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.02,
+        "share_died_act2": 0.025,
+        "share_died_act3": 0.095
+      },
+      "7": {
+        "n": 200,
+        "mean_total_floor": 43.7,
+        "died_act1": 4,
+        "died_act2": 11,
+        "died_act3": 27,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.02,
+        "share_died_act2": 0.055,
+        "share_died_act3": 0.135
+      },
+      "8": {
+        "n": 200,
+        "mean_total_floor": 42.855,
+        "died_act1": 4,
+        "died_act2": 19,
+        "died_act3": 37,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.02,
+        "share_died_act2": 0.095,
+        "share_died_act3": 0.185
+      },
+      "9": {
+        "n": 500,
+        "mean_total_floor": 38.16,
+        "died_act1": 57,
+        "died_act2": 99,
+        "died_act3": 149,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.114,
+        "share_died_act2": 0.198,
+        "share_died_act3": 0.298
+      },
+      "10": {
+        "n": 500,
+        "mean_total_floor": 38.714,
+        "died_act1": 43,
+        "died_act2": 114,
+        "died_act3": 288,
+        "died_unknown_act": 0,
+        "share_died_act1": 0.086,
+        "share_died_act2": 0.228,
+        "share_died_act3": 0.576
+      }
+    },
+    "field": "runs.csv has no act_index: act from total_floor bands (<=16 act 1, 17-33 act 2, >=34 act 3), validated on the new rows (see new.total_floor_band_vs_act_index); floors 16 and 31-33 are not structurally unambiguous"
+  },
+  "inputs": {
+    "sweep_dir": "<experiment>",
+    "old_runs_csv": "<private-repo>/logs/2026-10-11-release-winrates/runs.csv",
+    "old_runs_csv_sha256": "2c3b2f5330414f47d2fba16e11213e3db5e3ab03aec034e9f301fc2a5d9e763d",
+    "progress_log_sha256": "f5318962b03e19a5c2a3730aa398c6ccce77d13b2f41e98fb800ac0354d86284"
+  }
+}

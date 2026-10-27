@@ -255,7 +255,7 @@ fn main() {
                 .collect();
 
             let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            if n % 100 == 0 || n == total {
+            if n.is_multiple_of(100) || n == total {
                 eprintln!(
                     "  {n}/{total} decisions labeled ({:.0}s)",
                     started.elapsed().as_secs_f64()

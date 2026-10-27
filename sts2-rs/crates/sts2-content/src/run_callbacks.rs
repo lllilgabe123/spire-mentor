@@ -2771,7 +2771,7 @@ mod tests {
         let spec = select_encounter_act1_to_3(&mut rs, 2, RoomType::Boss);
         let after = rs.rng.run_manager.counter();
         assert!(
-            std::ptr::eq(spec, &act2_boss_pool()[2]),
+            std::ptr::eq(spec, &raw const act2_boss_pool()[2]),
             "matching boss pin must return pool[encounter_index], got {:?}",
             spec.name
         );
@@ -3272,7 +3272,7 @@ mod tests {
             });
             let spec = select_encounter_act1_to_3(&mut rs, act, RoomType::Boss);
             assert!(
-                std::ptr::eq(spec, &pool[idx]),
+                std::ptr::eq(spec, &raw const pool[idx]),
                 "act {act}: matching pin must return that act's boss pool entry {idx}"
             );
         }

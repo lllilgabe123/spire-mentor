@@ -362,6 +362,16 @@ def tail_pooled(stats: list[dict], k: int) -> tuple[float, int]:
     return (wins / n if n else 0.0), n
 
 
+def wall_hours(stats: list[dict]) -> dict[str, float]:
+    """Training wall clock and its split, in hours. With `async_collect` the
+    collect and train phases overlap, so `collect_h + train_h` exceeds `iter_h`;
+    `iter_h` is the arm's real cost."""
+    return {
+        key: round(sum(r.get(field, 0.0) for r in stats) / 3600.0, 3)
+        for key, field in (("iter_h", "iter_s"), ("collect_h", "collect_s"), ("train_h", "train_s"))
+    }
+
+
 def report(
     a: Arm,
     b: Arm,
@@ -429,6 +439,12 @@ def report(
         # against a live env.
         dec = {k: v for k, v in last.items() if k.startswith("dec_per_run/")}
         print(f"  dec_per_run                                {dec}")
+        wall = wall_hours(stats)
+        print(
+            f"  wall h (iter / collect / train)            "
+            f"{wall['iter_h']} / {wall['collect_h']} / {wall['train_h']}"
+        )
+        out.update({f"{arm.name}_{k}": v for k, v in wall.items()})
         out[f"{arm.name}_train_wr_tail20"] = round(pooled, 4)
         out[f"{arm.name}_explained_variance"] = last.get("explained_variance")
 

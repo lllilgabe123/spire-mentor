@@ -637,7 +637,7 @@ def to_headless_combat_play(state: dict[str, Any]) -> dict[str, Any]:
     discard, next_idx = _translate_pile(discard_raw, next_idx)
     exhaust, next_idx = _translate_pile(exhaust_raw, next_idx)
     play, next_idx = _translate_pile(play_raw, next_idx)
-    master_deck, _next_idx = _translate_pile(master_deck_raw, next_idx)
+    master_deck, next_idx = _translate_pile(master_deck_raw, next_idx)
 
     enemies = [_translate_enemy(e, i) for i, e in enumerate(state.get("enemies") or [])]
 
@@ -698,6 +698,34 @@ def to_headless_combat_play(state: dict[str, Any]) -> dict[str, Any]:
     slot_count = run_state.get("potion_slot_count")
     if isinstance(slot_count, int) and not isinstance(slot_count, bool):
         out["player"]["potion_slots"] = slot_count
+
+    # Co-op teammates (PROTOCOL.md ``allies``), in the mod's order: an
+    # ``AnyAlly`` card lands on the first living one, in the engine and in
+    # the mod's autoplay alike. With their hand they are a whole seat whose
+    # remaining plays the engine simulates; their cards are numbered after
+    # ours so no ``stable_idx`` collides.
+    allies = []
+    for a in state.get("allies") or []:
+        if not isinstance(a, dict):
+            continue
+        ally: dict[str, Any] = {
+            "hp": int(a.get("hp") or 0),
+            "max_hp": int(a.get("max_hp") or 0),
+            "block": int(a.get("block") or 0),
+        }
+        if isinstance(a.get("hand"), list):
+            ally_hand, next_idx = _translate_pile(a["hand"], next_idx, hand=True)
+            ally.update(
+                character=character_display_name(a.get("character")),
+                energy=int(a.get("energy") or 0),
+                max_energy=int(a.get("max_energy") or 0),
+                powers=[_translate_power(p) for p in (a.get("powers") or [])],
+                hand=ally_hand,
+                ended_turn=bool(a.get("ended_turn")),
+            )
+        allies.append(ally)
+    if allies:
+        out["allies"] = allies
 
     # The run's RNG position, from the bridge envelope
     # (``SimStateExtractor.ApplyEnvelope``): the once-hashed master seed every

@@ -86,7 +86,7 @@ fn drive_run(seed: i32) -> RunSummary {
                 rc
             } else {
                 let combat = rm.combat.as_ref();
-                let prefer_attack = combat.map_or(true, |c| {
+                let prefer_attack = combat.is_none_or(|c| {
                     let hp = c.player.current_hp;
                     let max = c.player.max_hp.max(1);
                     hp * 2 > max

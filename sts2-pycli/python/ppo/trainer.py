@@ -214,6 +214,15 @@ class PPOConfig:
     # once the screen cuts collection it becomes the floor, which is what
     # this flag removes.
     device: str = "cpu"
+    # Matmul precision of the UPDATE's forward/backward: "fp32" (the campaign
+    # recipe) or "bf16" (autocast; the losses stay fp32). The update is plain
+    # fp32 SIMT GEMMs and saturates the GPU; bf16 halves it (59.6 -> 27.5
+    # ms/minibatch, RTX 4080, GH #926) but moves the recomputed logprobs off
+    # the acting ones (|dlogp| p99 0.04, max 0.10 vs fp32's 2e-5), which
+    # perturbs the PPO ratio. That changes training, so it is screen-only
+    # until a gate says otherwise. Collection and the acting snapshot are
+    # unaffected; the weights and optimizer state stay fp32.
+    update_precision: str = "fp32"
     character: str = "Ironclad"
     seed_base: int = 10_000_000  # disjoint from eval panels
     procs: int = 0  # 0 = cpu_count - 2
@@ -534,6 +543,25 @@ def plr_update_from_rows(sampler, rows: list[dict], cfg: PPOConfig, shaping, it:
     }
 
 
+UPDATE_PRECISIONS = ("fp32", "bf16")
+
+
+def update_autocast(cfg: PPOConfig, device: torch.device):
+    """The autocast context `ppo_update` runs the net's forward in.
+
+    A disabled autocast at "fp32", so the default update is unchanged.
+    """
+    if cfg.update_precision not in UPDATE_PRECISIONS:
+        raise ValueError(
+            f"--update-precision must be one of {UPDATE_PRECISIONS}, got {cfg.update_precision!r}"
+        )
+    return torch.autocast(
+        device_type=device.type,
+        dtype=torch.bfloat16,
+        enabled=cfg.update_precision == "bf16",
+    )
+
+
 def ppo_update(
     net: RunPolicyNet,
     opt: torch.optim.Optimizer,
@@ -545,6 +573,7 @@ def ppo_update(
     device: torch.device | None = None,
 ) -> dict:
     device = device or torch.device("cpu")
+    autocast = update_autocast(cfg, device)
     advs = np.array([t.advantage for t in trans], dtype=np.float64)
     adv_norm.update(advs)
     mean, std = adv_norm.mean, adv_norm.std
@@ -556,7 +585,10 @@ def ppo_update(
         for s in range(0, n, cfg.minibatch):
             mb = [trans[i] for i in order[s : s + cfg.minibatch]]
             b = collate([t.feat for t in mb], device)
-            logits, value, aux = net(b)
+            with autocast:
+                logits, value, aux = net(b)
+            # No-ops at fp32; under bf16 every loss term is computed in fp32.
+            logits, value, aux = logits.float(), value.float(), aux.float()
             logp = F.log_softmax(logits, dim=-1)
             act = torch.tensor([t.action_idx for t in mb], dtype=torch.long, device=device)
             new_lp = logp.gather(1, act.unsqueeze(1)).squeeze(1).clamp(-20, 20)
@@ -884,6 +916,7 @@ def train(cfg: PPOConfig, wheel: dict | None = None) -> RunPolicyNet:
         raise ValueError(f"--combat must be 'mcts' or 'surrogate', got {cfg.combat!r}")
     if cfg.combat == "surrogate" and not cfg.surrogate_path:
         raise ValueError("--combat surrogate requires --surrogate-path")
+    update_autocast(cfg, device)  # validates update_precision before any collection
     if cfg.plr_replay_p > 0 and cfg.async_collect:
         # The async background collector would read the PLR sampler while
         # update_and_log scores rows into it — a data race. Sync-only for now.
@@ -982,6 +1015,12 @@ def train(cfg: PPOConfig, wheel: dict | None = None) -> RunPolicyNet:
             f"N_CAT={schema.N_CAT} — promoting this net REQUIRES "
             f"champions.toml features={cfg.features!r}; served at the default "
             f"schema it is silently wrong, not broken",
+            flush=True,
+        )
+    if cfg.update_precision != "fp32":
+        print(
+            f"SCREEN: update precision={cfg.update_precision} — changes training, "
+            f"NOT campaign-comparable",
             flush=True,
         )
     print(potion_swap_banner(), flush=True)

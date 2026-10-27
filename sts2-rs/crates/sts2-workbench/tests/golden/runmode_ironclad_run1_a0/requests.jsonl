@@ -124,7 +124,7 @@
 {"i": 123, "method": "POST", "route": "/api/live/run-mode-step", "body": null, "status": 200, "sha256": "bfa367ba61b8921cdcbb316a485a0a507fd212e96e1cd1c4ebdd7c63b4a2a533", "decision": "game_over"}
 {"i": 124, "method": "POST", "route": "/api/live/quit", "body": null, "status": 200, "sha256": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93", "decision": null}
 {"i": 125, "method": "GET", "route": "/api/runs", "body": null, "status": 200, "sha256": "d6110096a127b7eee10f51590e33666659472a30efc9508f9e97d3e679002b0a", "decision": null}
-{"i": 126, "method": "GET", "route": "/api/runs/stat?path=<work>/logs/20260101_000000_Ironclad_1.jsonl", "body": null, "status": 200, "sha256": "33b4d0935f7fa0ea025580712e97b044ce7e89f4b58238f2d5c94c22e2d3be92", "decision": null}
+{"i": 126, "method": "GET", "route": "/api/runs/stat?path=<work>/logs/20260101_000000_Ironclad_1.jsonl", "body": null, "status": 200, "sha256": "d606a6e09e6591cda0061acda3cc31a0e13e9de2c5b00758220e223bdd12740e", "decision": null}
 {"i": 127, "method": "POST", "route": "/api/load", "body": {"path": "<work>/logs/20260101_000000_Ironclad_1.jsonl"}, "status": 200, "sha256": "6fdc666fecf1479f5897caa4aa40e7ce446c7ea7399b338472f337c679994a27", "decision": null}
 {"i": 128, "method": "GET", "route": "/api/timeline", "body": null, "status": 200, "sha256": "8f9ae6c4659e7cf7d5293f47c9ce252670a24bef6c80e06752d4eeb5dcb8aa48", "decision": null}
 {"i": 129, "method": "GET", "route": "/api/map", "body": null, "status": 200, "sha256": "a269c2aa49d554ecbe7ebc1db9c12dda4b0b37cd5ef4e5965baaac39c71e4dfb", "decision": null}

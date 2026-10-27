@@ -47,6 +47,7 @@ from .schema import (
     C_DX,
     C_DY,
     C_ENABLED,
+    C_ENCH_AMT,
     C_FLOOR,
     C_GOLD,
     C_GOLD_D,
@@ -63,6 +64,7 @@ from .schema import (
     C_RELIC_GAIN,
     C_RELIC_LOSS,
     DECK_SCALE,
+    ENCH_AMT_SCALE,
     FLOOR_SCALE,
     GOLD_SCALE,
     N_CONT,
@@ -253,6 +255,14 @@ class _Ctx:
         self.smith: list[str] = obs.get("smith_options") or []
         self.removal: list[Any] = obs.get("card_removal_options") or []
         self.grants: list[Any] = obs.get("card_grant_options") or []
+        # Per-card enchantments aligned with `deck` / `card_reward_ids` /
+        # `smith` / `removal` / `grants` (GH #947): `None` or `(UPPER_SNAKE id, amount)`.
+        # Short or missing means "not enchanted". Only read under `card_mods`.
+        self.deck_ench: list[Any] = obs.get("deck_enchantments") or []
+        self.card_reward_ench: list[Any] = obs.get("card_reward_option_enchantments") or []
+        self.smith_ench: list[Any] = obs.get("smith_option_enchantments") or []
+        self.removal_ench: list[Any] = obs.get("card_removal_option_enchantments") or []
+        self.grants_ench: list[Any] = obs.get("card_grant_option_enchantments") or []
         self.transform_idxs: list[int] = obs.get("transform_select_deck_indices") or []
         self.enchant_idxs: list[int] = obs.get("enchant_select_deck_indices") or []
         # Master-deck positions the engine offers for `upgrade_deck_card`, in
@@ -287,6 +297,23 @@ def _card_tok(
     if price:
         cont[C_PRICE] = price * GOLD_SCALE
     return SEC_CARD, cat, cont, AUX_IGNORE
+
+
+def _stamp_enchant(ctx: _Ctx, cat: list[int], cont: list[float], lst: list, i: Any) -> None:
+    """Stamp a card's own enchantment onto its token (GH #947).
+
+    The id goes into the enchantment column, the amount into ``C_ENCH_AMT``.
+    A no-op unless ``card_mods`` is on, and for an unenchanted card (the pad
+    row stays). A short or missing list reads as "not enchanted", like the
+    upgrade flags. Mirrors ``encoder.rs::stamp_enchant``.
+    """
+    if schema.CARD_MODS not in ctx.features or i is None:
+        return
+    ent = _at(lst, int(i), "enchantment")
+    if ent:
+        name, amount = ent
+        cat[schema.CAT_ENCHANT] = vocab.enchantments().index(str(name))
+        cont[C_ENCH_AMT] = int(amount) * ENCH_AMT_SCALE
 
 
 def _fixed_tok(kind: str, price: int = 0):
@@ -334,7 +361,9 @@ def _build_action_token(ctx: _Ctx, a: dict[str, Any]):
         up = schema.REWARD_UPGRADE in ctx.features and bool(
             _at(ctx.card_reward_upgraded, int(idx), "card reward upgrade")
         )
-        return _card_tok(ctx, cid, up, op="reward")
+        sec, cat, cont, aux = _card_tok(ctx, cid, up, op="reward")
+        _stamp_enchant(ctx, cat, cont, ctx.card_reward_ench, idx)
+        return sec, cat, cont, aux
     if kind == "pick_relic_reward":
         cat = empty_cat()
         if ctx.relic_reward_ids:
@@ -349,12 +378,18 @@ def _build_action_token(ctx: _Ctx, a: dict[str, Any]):
             cat[2] = vocab.relics().index(rid)
         return SEC_RELIC_OPT, cat, [0.0] * N_CONT, AUX_IGNORE
     if kind == "smith_card":
-        cid = _at(ctx.smith, int(a.get("idx", 0)), "smith")
-        return _card_tok(ctx, cid, op="smith")
+        idx = int(a.get("idx", 0))
+        cid = _at(ctx.smith, idx, "smith")
+        sec, cat, cont, aux = _card_tok(ctx, cid, op="smith")
+        _stamp_enchant(ctx, cat, cont, ctx.smith_ench, idx)
+        return sec, cat, cont, aux
     if kind == "remove_deck_card":
-        ent = _at(ctx.removal, int(a.get("idx", 0)), "removal")
+        idx = int(a.get("idx", 0))
+        ent = _at(ctx.removal, idx, "removal")
         cid, up = _pair(ent) if ent is not None else (None, False)
-        return _card_tok(ctx, cid, up, op="remove")
+        sec, cat, cont, aux = _card_tok(ctx, cid, up, op="remove")
+        _stamp_enchant(ctx, cat, cont, ctx.removal_ench, idx)
+        return sec, cat, cont, aux
     if kind == "upgrade_deck_card":
         # `idx` is a position in the engine's `is_upgradable()` subset
         # (`run_manager.rs:954-968` offers it, `do_upgrade_deck_card_at`
@@ -365,26 +400,40 @@ def _build_action_token(ctx: _Ctx, a: dict[str, Any]):
         # carries the engine's own offer map, exactly as transform/enchant do.
         deck_i = _at(ctx.upgrade_idxs, int(a.get("idx", 0)), "upgrade")
         ent = _at(ctx.deck, int(deck_i), "deck") if deck_i is not None else None
-        return _card_tok(ctx, ent[0] if ent else None, bool(ent[1]) if ent else False, op="upgrade")
+        sec, cat, cont, aux = _card_tok(
+            ctx, ent[0] if ent else None, bool(ent[1]) if ent else False, op="upgrade"
+        )
+        _stamp_enchant(ctx, cat, cont, ctx.deck_ench, deck_i)
+        return sec, cat, cont, aux
     if kind == "transform_deck_card":
         deck_i = _at(ctx.transform_idxs, int(a.get("idx", 0)), "transform")
         ent = _at(ctx.deck, int(deck_i), "deck") if deck_i is not None else None
-        return _card_tok(
+        sec, cat, cont, aux = _card_tok(
             ctx, ent[0] if ent else None, bool(ent[1]) if ent else False, op="transform"
         )
+        _stamp_enchant(ctx, cat, cont, ctx.deck_ench, deck_i)
+        return sec, cat, cont, aux
     if kind == "enchant_deck_card":
         deck_i = _at(ctx.enchant_idxs, int(a.get("idx", 0)), "enchant")
         ent = _at(ctx.deck, int(deck_i), "deck") if deck_i is not None else None
         sec, cat, cont, aux = _card_tok(
             ctx, ent[0] if ent else None, bool(ent[1]) if ent else False, op="enchant"
         )
+        # The target's own enchantment first, then the pending id over it:
+        # `CanEnchant` admits only a bare target or one already holding this
+        # same stackable enchantment, so the ids agree whenever both are set
+        # and the amount carries the target's existing stacks.
+        _stamp_enchant(ctx, cat, cont, ctx.deck_ench, deck_i)
         if ctx.pending_enchantment:
             cat[schema.CAT_ENCHANT] = vocab.enchantments().index(ctx.pending_enchantment)
         return sec, cat, cont, aux
     if kind == "grant_deck_card":
-        ent = _at(ctx.grants, int(a.get("idx", 0)), "grant")
+        idx = int(a.get("idx", 0))
+        ent = _at(ctx.grants, idx, "grant")
         cid, up = _pair(ent) if ent is not None else (None, False)
-        return _card_tok(ctx, cid, up, op="grant")
+        sec, cat, cont, aux = _card_tok(ctx, cid, up, op="grant")
+        _stamp_enchant(ctx, cat, cont, ctx.grants_ench, idx)
+        return sec, cat, cont, aux
     if kind == "shop_buy_card":
         e = _at(ctx.shop_cards, int(a.get("idx", 0)), "shop card") or {}
         sec, cat, cont, aux = _card_tok(
@@ -411,7 +460,8 @@ def _build_action_token(ctx: _Ctx, a: dict[str, Any]):
         cont[C_ENABLED] = 1.0 if e.get("available") else 0.0
         return SEC_POTION_OPT, cat, cont, AUX_IGNORE
     if kind == "shop_remove_card":
-        ent = _at(ctx.deck, int(a.get("deck_idx", 0)), "deck")
+        deck_i = int(a.get("deck_idx", 0))
+        ent = _at(ctx.deck, deck_i, "deck")
         sec, cat, cont, aux = _card_tok(
             ctx,
             ent[0] if ent else None,
@@ -420,6 +470,7 @@ def _build_action_token(ctx: _Ctx, a: dict[str, Any]):
             op="shop_remove",
         )
         cat[6] = vocab.fixed_index("shop_remove")
+        _stamp_enchant(ctx, cat, cont, ctx.deck_ench, deck_i)
         return sec, cat, cont, aux
     if kind == "leave_shop":
         return _fixed_tok("leave_shop")
@@ -558,11 +609,13 @@ def featurize_row(
     add_obs(SEC_STATE, state_cat, state_cont)
 
     # Deck / relic / potion tokens.
-    for cid, up in ctx.deck:
+    for i, (cid, up) in enumerate(ctx.deck):
         cat = empty_cat()
         cat[0] = vocab.cards().index(cid)
         cat[1] = min(vocab.MAX_UPGRADE, 1 if up else 0)
-        add_obs(SEC_DECK, cat, [0.0] * N_CONT)
+        cont = [0.0] * N_CONT
+        _stamp_enchant(ctx, cat, cont, ctx.deck_ench, i)
+        add_obs(SEC_DECK, cat, cont)
     for rid in obs.get("relics") or []:
         cat = empty_cat()
         cat[2] = vocab.relics().index(rid)

@@ -61,10 +61,11 @@
 # computes from the source: the newest ctime among sts2-py's `[tool.uv]
 # cache-keys` files (crates/sts2-py/pyproject.toml itself, every .rs and
 # Cargo.toml under crates/, every file in a crate's src/, runai's
-# data/runai/heuristic_v.toml, the workspace Cargo.toml, Cargo.lock and
-# rust-toolchain.toml). maturin's install never matches. So before
-# phase 0 the script takes that key (`sts2-pycli/scripts/uv_stamp_wheel.py
-# key`), and after the install it writes exactly that key (`stamp --check`,
+# data/runai/heuristic_v.toml, the move prior data/prior_nets/*.json, the
+# workspace Cargo.toml, Cargo.lock and rust-toolchain.toml). maturin's
+# install never matches. So before phase 0 the script takes that key
+# (`sts2-pycli/scripts/uv_stamp_wheel.py key`), and after the install it
+# writes exactly that key (`stamp --check`,
 # which refuses if the key has moved since or src_hash disagrees, and asks uv
 # whether it agrees). The PGO wheel then survives `uv run` until one of those
 # files changes after the build STARTED (an edit during the build included,
@@ -207,9 +208,18 @@ LOCK="$SRC/target-pgo-wheel.lock"
 # Preflight, before the first build: a missing tool must not surface only
 # after ~10 minutes of compiling. A host that cannot provide them trains on the
 # plain wheel with the trainer's --allow-plain-wheel.
+# Every rustc/cargo/maturin below runs on $SRC's rust-toolchain.toml pin.
+# rustup resolves the pin from the cwd, and `just sim-engine-pgo` runs from
+# sts2-pycli, which has none: the builds silently used the default toolchain,
+# and once the pin moved past it (#956) the instrumented build's profile no
+# longer matched the pinned llvm-profdata ("raw profile version mismatch").
+if command -v rustup >/dev/null 2>&1; then
+    RUSTUP_TOOLCHAIN="$(cd "$SRC" && rustup show active-toolchain | cut -d' ' -f1)"
+    export RUSTUP_TOOLCHAIN
+fi
 LLVM_PROFDATA="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/host: //p')/bin/llvm-profdata"
 if [[ ! -x "$LLVM_PROFDATA" ]]; then
-    echo "pgo-wheel: llvm-profdata not found — run: rustup component add llvm-tools" >&2
+    echo "pgo-wheel: llvm-profdata not found — run: rustup component add llvm-tools --toolchain ${RUSTUP_TOOLCHAIN:-<pinned>}" >&2
     exit 1
 fi
 declare -a SHARD_LIMIT=()

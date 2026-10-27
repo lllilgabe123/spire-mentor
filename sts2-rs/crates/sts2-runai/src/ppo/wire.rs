@@ -245,6 +245,23 @@ fn is_upgraded(c: &Value) -> bool {
     level || b(c, "upgraded")
 }
 
+/// A wire card's enchantment as `(registry id, amount)` (GH #947), mirroring
+/// `realgame_ppo._card_enchantment`. The wire spells it as the C# id entry or
+/// the display title (`PROTOCOL.md`: `enchantment`); either resolves to the
+/// UPPER_SNAKE registry id the engine-side obs carries. An unknown spelling is
+/// kept verbatim (it lands on the vocab's OOV row) rather than dropped, so a
+/// new enchantment still reads as "enchanted with something". An absent
+/// `enchantment_amount` is one stack, as in `sts2_wire::state_dict`.
+fn card_enchantment(c: &Value) -> super::obs::CardEnchantObs {
+    let name = opt_s(c, "enchantment")?;
+    let id = sts2_core::cards::EnchantmentId::from_wire_name(&name)
+        .map_or(name, |e| e.python_name().to_string());
+    let amount = obj(c, "enchantment_amount")
+        .and_then(Value::as_i64)
+        .unwrap_or(1);
+    Some((id, amount))
+}
+
 /// The act-map current coord, with the row-0 guard applied.
 ///
 /// Returns `None` both when there is no map in reach and when `current` sits
@@ -299,6 +316,8 @@ fn base_obs(state: &Value) -> PpoObs {
         .iter()
         .map(|c| (card_id(c).unwrap_or_default(), is_upgraded(c)))
         .collect();
+    let deck_enchantments: Vec<super::obs::CardEnchantObs> =
+        deck_entries.iter().map(card_enchantment).collect();
     let num_upgraded = deck_entries.iter().filter(|c| is_upgraded(c)).count() as i64;
 
     let relics: Vec<String> = arr(&run_state, "relics")
@@ -370,6 +389,7 @@ fn base_obs(state: &Value) -> PpoObs {
         seed: 0,
         ascension: i(&run_state, "ascension"),
         deck,
+        deck_enchantments: Some(deck_enchantments),
         relics: relics.clone(),
         potions: potions.clone(),
         map,
@@ -399,12 +419,16 @@ fn base_obs(state: &Value) -> PpoObs {
 
         card_reward_option_ids: None,
         card_reward_option_upgraded: None,
+        card_reward_option_enchantments: None,
         card_reward_bundles: None,
         relic_reward_ids: None,
         boss_relic_options: None,
         smith_options: None,
+        smith_option_enchantments: None,
         card_removal_options: None,
         card_grant_options: None,
+        card_removal_option_enchantments: None,
+        card_grant_option_enchantments: None,
         transform_select_deck_indices: None,
         enchant_select_deck_indices: None,
         // GH #545: same rationale as the deck-mutation selects below — the
@@ -543,6 +567,7 @@ fn build_card_reward(state: &Value) -> Option<WireDecision> {
             .collect(),
     );
     obs.card_reward_option_upgraded = Some(cards.iter().map(is_upgraded).collect());
+    obs.card_reward_option_enchantments = Some(cards.iter().map(card_enchantment).collect());
 
     let mut actions = Vec::with_capacity(cards.len() + 1);
     let mut responses = Vec::with_capacity(cards.len() + 1);

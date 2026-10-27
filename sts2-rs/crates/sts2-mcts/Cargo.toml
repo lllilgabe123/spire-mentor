@@ -36,3 +36,5 @@ getrandom = { workspace = true, features = ["js"] }
 
 [dev-dependencies]
 sts2-content = { workspace = true }
+# tests/prior_net.rs pins the built-in move prior's sha256 (GH #830).
+sha2 = "0.10"

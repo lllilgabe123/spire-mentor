@@ -31,6 +31,45 @@ pub use card_ids_generated::CardId;
 mod card_character_map_generated;
 pub use card_character_map_generated::character_of;
 
+/// The POD stat a run-persistent scaling card grows mid-combat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunScaledStat {
+    Damage,
+    Block,
+}
+
+impl RunScaledStat {
+    #[must_use]
+    pub const fn get(self, c: &Card) -> i32 {
+        match self {
+            Self::Damage => c.base_damage,
+            Self::Block => c.base_block,
+        }
+    }
+
+    pub fn get_mut(self, c: &mut Card) -> &mut i32 {
+        match self {
+            Self::Damage => &mut c.base_damage,
+            Self::Block => &mut c.base_block,
+        }
+    }
+}
+
+/// Cards whose `OnPlay` also buffs their run-deck copy (C#
+/// `DeckVersion.BuffFromPlay`), so the growth outlasts the combat. In both
+/// pinned builds the decomp has exactly two: The Scythe (`TheScythe.cs:73`,
+/// `CurrentDamage`) and Genetic Algorithm (`GeneticAlgorithm.cs:69`,
+/// `CurrentBlock`). Read by the `exit_combat` fold-back (GH #838) and the
+/// search's persistent-gain term (GH #839).
+#[must_use]
+pub const fn run_persistent_scaled_stat(id: CardId) -> Option<RunScaledStat> {
+    match id {
+        CardId::TheScythe => Some(RunScaledStat::Damage),
+        CardId::GeneticAlgorithm => Some(RunScaledStat::Block),
+        _ => None,
+    }
+}
+
 // Bead sts2-rs-ov4 (P6-1): keys for per-card persistent combat-state
 // (`Card::combat_vars`). Mirrors string keys used by Python's
 // `CardInstance.combat_vars: dict[str, int]` in `sts2_env/cards/base.py`.

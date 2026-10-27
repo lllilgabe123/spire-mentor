@@ -7,11 +7,12 @@ use super::prelude::*;
 /// [decompiled C# omitted — see the cited path]
 ///
 /// `AnyAlly` — unplayable in single-player (`card_effects::card_is_any_ally`);
-/// the body below is the target-collapsed effect for completeness.
-pub(crate) fn play_blaze(state: &mut CombatState, _t: Option<CreatureUid>) -> EffectResult {
-    // v0.111.0: Strength 5 (upg 7) to the target ally (decomp Blaze.cs:24-28).
-    let amt = if current_upgraded(state) { 7 } else { 5 };
-    apply_power_to_player(state, PowerKind::Strength, amt);
+/// in co-op the effect lands on the teammate (`any_ally_card_target`).
+pub(crate) fn play_blaze(_state: &mut CombatState, _t: Option<CreatureUid>) -> EffectResult {
+    // C# `PowerCmd.Apply<StrengthPower>(cardPlay.Target, 5 (upg 7))`: the teammate gains Strength — all of it lands on the co-op teammate
+    // (`cardPlay.Target`), whose turn is not simulated, so playing it
+    // changes nothing here but the energy and the card's own pile move.
+    // Unplayable without a living teammate (`card_is_any_ally`).
     EffectResult::Resolved
 }
 

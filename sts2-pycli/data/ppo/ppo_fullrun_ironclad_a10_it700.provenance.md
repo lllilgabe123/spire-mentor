@@ -64,6 +64,18 @@ All arms: one binary (wheel src_hash `457d7a9d3b9823a2`, origin/main
 `894213c42`), `net_greedy`, deployed eval budget 1000/4000, `--act1 roll`,
 potion-swap OFF, torch `.pt` inference. **0 errored rows in 7,200.**
 
+> **2026-10-25: the deployed Ironclad search changed after these gates (GH #830,
+> commit `a70aa8bec`).** The gates above ran the pre-ship search: the BeliefDraw
+> dialect, no forms or combo knobs, no move prior. The run agent now plays
+> Ironclad with the forms + combo knobs in every fight and a built-in BC move
+> prior in elite and boss fights. That bundle was gated on this champion: A10,
+> 1000/4000, 1,500 paired runs, +5.20 ± 1.18pp (19.5% → 24.7%), repeated
+> 97.06% CI [+2.62, +7.78]. A second, independent A10 gate of the same bundle
+> on 4,000 paired runs measured +3.45pp (19.5% → 22.9%, McNemar p 8.8e-07).
+> To reproduce the numbers in this file on a newer wheel, set
+> `STS2_RUNAI_MCTS_OVERRIDES=removed_counts_forms=0,endturn_widening_c=5.787,draw_widening_c=2.0`
+> and `STS2_RUNAI_PRIOR_NET=off`.
+
 | gate | champion | it700 | Δ | discordant | McNemar p |
 |---|---|---|---|---|---|
 | **A10 × 1000**, panel 131,000,000 (primary) | 12.2% | 19.1% | **+6.90pp** | 132/63 | 8.7e-07 |

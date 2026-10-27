@@ -1,0 +1,517 @@
+{
+  "experiment": "<experiment>",
+  "inputs": {
+    "D": "<experiment>/runs/D.jsonl",
+    "P": "<experiment>/runs/P.jsonl"
+  },
+  "exit_codes": {
+    "D": "0",
+    "P": "0"
+  },
+  "rows": {
+    "D": {
+      "total": 400,
+      "error": 0,
+      "timeout": 0,
+      "dropped": 0,
+      "scored": 400
+    },
+    "P": {
+      "total": 400,
+      "error": 0,
+      "timeout": 0,
+      "dropped": 0,
+      "scored": 400
+    },
+    "paired_n": 400
+  },
+  "scores": {
+    "D": {
+      "n": 400,
+      "A10": {
+        "wins": 107,
+        "n": 400,
+        "rate": 0.2675,
+        "wilson95": [
+          0.22648238411831478,
+          0.31294083274713314
+        ]
+      },
+      "A9est": {
+        "reached": 209,
+        "n": 400,
+        "rate": 0.5225,
+        "wilson95": [
+          0.4735694074890401,
+          0.5710025392659165
+        ]
+      },
+      "by_act1": {
+        "overgrowth": {
+          "n": 189,
+          "wins": 53,
+          "a9_reached": 105
+        },
+        "underdocks": {
+          "n": 211,
+          "wins": 54,
+          "a9_reached": 104
+        }
+      },
+      "losses_by_where": {
+        "act1": 30,
+        "act2": 77,
+        "act3_before_boss2": 84,
+        "act3_rsb": 102
+      }
+    },
+    "P": {
+      "n": 400,
+      "A10": {
+        "wins": 96,
+        "n": 400,
+        "rate": 0.24,
+        "wilson95": [
+          0.20074599691279923,
+          0.284200396141035
+        ]
+      },
+      "A9est": {
+        "reached": 199,
+        "n": 400,
+        "rate": 0.4975,
+        "wilson95": [
+          0.44875888867958347,
+          0.5462886727920879
+        ]
+      },
+      "by_act1": {
+        "overgrowth": {
+          "n": 189,
+          "wins": 54,
+          "a9_reached": 107
+        },
+        "underdocks": {
+          "n": 211,
+          "wins": 42,
+          "a9_reached": 92
+        }
+      },
+      "losses_by_where": {
+        "act1": 37,
+        "act2": 82,
+        "act3_before_boss2": 82,
+        "act3_rsb": 103
+      }
+    }
+  },
+  "scores_on_paired_seeds": {
+    "D": {
+      "n": 400,
+      "A10": {
+        "wins": 107,
+        "n": 400,
+        "rate": 0.2675,
+        "wilson95": [
+          0.22648238411831478,
+          0.31294083274713314
+        ]
+      },
+      "A9est": {
+        "reached": 209,
+        "n": 400,
+        "rate": 0.5225,
+        "wilson95": [
+          0.4735694074890401,
+          0.5710025392659165
+        ]
+      },
+      "by_act1": {
+        "overgrowth": {
+          "n": 189,
+          "wins": 53,
+          "a9_reached": 105
+        },
+        "underdocks": {
+          "n": 211,
+          "wins": 54,
+          "a9_reached": 104
+        }
+      },
+      "losses_by_where": {
+        "act1": 30,
+        "act2": 77,
+        "act3_before_boss2": 84,
+        "act3_rsb": 102
+      }
+    },
+    "P": {
+      "n": 400,
+      "A10": {
+        "wins": 96,
+        "n": 400,
+        "rate": 0.24,
+        "wilson95": [
+          0.20074599691279923,
+          0.284200396141035
+        ]
+      },
+      "A9est": {
+        "reached": 199,
+        "n": 400,
+        "rate": 0.4975,
+        "wilson95": [
+          0.44875888867958347,
+          0.5462886727920879
+        ]
+      },
+      "by_act1": {
+        "overgrowth": {
+          "n": 189,
+          "wins": 54,
+          "a9_reached": 107
+        },
+        "underdocks": {
+          "n": 211,
+          "wins": 42,
+          "a9_reached": 92
+        }
+      },
+      "losses_by_where": {
+        "act1": 37,
+        "act2": 82,
+        "act3_before_boss2": 82,
+        "act3_rsb": 103
+      }
+    }
+  },
+  "paired": {
+    "A10": {
+      "n": 400,
+      "both": 59,
+      "D_only_b": 48,
+      "P_only_c": 37,
+      "neither": 256,
+      "D_rate": 0.2675,
+      "P_rate": 0.24,
+      "diff_pp": 2.75,
+      "mcnemar_exact_p_two_sided": 0.27799928908055166,
+      "mcnemar_exact_p_scipy_crosscheck": 0.2779992890805517,
+      "ci95_pp_newcombe10": [
+        -1.764893583693853,
+        7.259809423882885
+      ],
+      "ci95_pp_wald": [
+        -1.7594481263352824,
+        7.259448126335283
+      ],
+      "ci95_pp_agresti_min": [
+        -1.7771450190301672,
+        7.249781834950565
+      ],
+      "ci_method": "Newcombe (1998) method 10 hybrid Wilson score interval for paired proportions (primary); Wald and Agresti-Min (+0.5/cell) as cross-checks"
+    },
+    "A9est": {
+      "n": 400,
+      "both": 154,
+      "D_only_b": 55,
+      "P_only_c": 45,
+      "neither": 146,
+      "D_rate": 0.5225,
+      "P_rate": 0.4975,
+      "diff_pp": 2.5,
+      "mcnemar_exact_p_two_sided": 0.36820161732669626,
+      "mcnemar_exact_p_scipy_crosscheck": 0.36820161732669615,
+      "ci95_pp_newcombe10": [
+        -2.382369088286203,
+        7.358634395021535
+      ],
+      "ci95_pp_wald": [
+        -2.3937812410512316,
+        7.393781241051231
+      ],
+      "ci95_pp_agresti_min": [
+        -2.4062494111038295,
+        7.381373789213283
+      ],
+      "ci_method": "Newcombe (1998) method 10 hybrid Wilson score interval for paired proportions (primary); Wald and Agresti-Min (+0.5/cell) as cross-checks"
+    }
+  },
+  "cost": {
+    "arm_wall_s_driver": {
+      "D": 2258,
+      "P": 2149
+    },
+    "arm_wall_ratio_D_over_P": 1.0507212657049791,
+    "per_run_wall_s": {
+      "D": {
+        "n": 400,
+        "min": 7.04,
+        "p05": 38.59,
+        "median": 150.16,
+        "mean": 160.52,
+        "p95": 327.93,
+        "max": 623.74,
+        "sum": 64209.1
+      },
+      "P": {
+        "n": 400,
+        "min": 4.2,
+        "p05": 34.99,
+        "median": 144.65,
+        "mean": 152.4,
+        "p95": 312.78,
+        "max": 523.84,
+        "sum": 60961.2
+      }
+    },
+    "per_run_mean_ratio_D_over_P": 1.053280839895013,
+    "per_run_median_ratio_D_over_P": 1.0380919460767368,
+    "per_run_sum_ratio_D_over_P": 1.0532781506925717,
+    "paired_per_seed_ratio_D_over_P": {
+      "median": 1.0376357361184443,
+      "geomean": 1.0677895876965233
+    },
+    "paired_ratio_same_final_floor": {
+      "n": 231,
+      "geomean": 1.0367506396546073
+    },
+    "per_step_s_mean": {
+      "D": 0.3006416112514467,
+      "P": 0.28813633433456415
+    },
+    "note": "rows carry wall_s per run only (no CPU field); each run is one single-threaded worker (OMP_NUM_THREADS=1, 30 procs), so per-run wall_s is the CPU-per-run proxy"
+  },
+  "checks": {
+    "D": {
+      "rows": 400,
+      "duplicate_seeds": [],
+      "missing_seeds": [],
+      "unexpected_seeds": [],
+      "invalid_rows": [],
+      "error_count": 0,
+      "timeout_count": 0,
+      "error_field_but_won_or_lost": [],
+      "distinct_values": {
+        "policy": [
+          "\"net_greedy\""
+        ],
+        "ascension": [
+          "10"
+        ],
+        "character": [
+          "\"Ironclad\""
+        ],
+        "py_src": [
+          "\"774d91045cdb5433\""
+        ],
+        "wheel": [
+          "{\"pgo\": true, \"pgo_instrumented\": false, \"profdata_sha256\": \"3d75d16a4b66730b43f4abd4479559fda1b737aec535f406e9ddb295e450cf1c\", \"so_path\": \"<venv>/lib/python3.13/site-packages/sts2_rs/sts2_rs.abi3.so\", \"src_hash\": \"4e5bb730d28e2976\", \"target_cpu\": null}"
+        ]
+      },
+      "inconsistent_rows": [],
+      "decisions_nonempty": 0,
+      "wall_s": {
+        "n": 400,
+        "min": 7.04,
+        "p05": 38.59,
+        "median": 150.16,
+        "mean": 160.52,
+        "p95": 327.93,
+        "max": 623.74,
+        "sum": 64209.1
+      },
+      "suspicious_durations": [
+        {
+          "seed": 91000116,
+          "wall_s": 13.28,
+          "steps": 155,
+          "outcome": "lost",
+          "act_index": 1,
+          "total_floor": 8,
+          "why": [
+            "<15s"
+          ]
+        },
+        {
+          "seed": 91000303,
+          "wall_s": 7.04,
+          "steps": 84,
+          "outcome": "lost",
+          "act_index": 1,
+          "total_floor": 8,
+          "why": [
+            "<15s"
+          ]
+        },
+        {
+          "seed": 91000202,
+          "wall_s": 623.74,
+          "steps": 724,
+          "outcome": "won",
+          "act_index": 3,
+          "total_floor": 46,
+          "why": [
+            ">3x_median(150s)"
+          ]
+        },
+        {
+          "seed": 91000228,
+          "wall_s": 620.71,
+          "steps": 877,
+          "outcome": "won",
+          "act_index": 3,
+          "total_floor": 46,
+          "why": [
+            ">3x_median(150s)"
+          ]
+        }
+      ],
+      "s_per_step": {
+        "median": 0.2833,
+        "mad": 0.0711
+      },
+      "act1": {
+        "overgrowth": 189,
+        "underdocks": 211
+      }
+    },
+    "P": {
+      "rows": 400,
+      "duplicate_seeds": [],
+      "missing_seeds": [],
+      "unexpected_seeds": [],
+      "invalid_rows": [],
+      "error_count": 0,
+      "timeout_count": 0,
+      "error_field_but_won_or_lost": [],
+      "distinct_values": {
+        "policy": [
+          "\"net_greedy\""
+        ],
+        "ascension": [
+          "10"
+        ],
+        "character": [
+          "\"Ironclad\""
+        ],
+        "py_src": [
+          "\"774d91045cdb5433\""
+        ],
+        "wheel": [
+          "{\"pgo\": true, \"pgo_instrumented\": false, \"profdata_sha256\": \"3d75d16a4b66730b43f4abd4479559fda1b737aec535f406e9ddb295e450cf1c\", \"so_path\": \"<venv>/lib/python3.13/site-packages/sts2_rs/sts2_rs.abi3.so\", \"src_hash\": \"4e5bb730d28e2976\", \"target_cpu\": null}"
+        ]
+      },
+      "inconsistent_rows": [],
+      "decisions_nonempty": 0,
+      "wall_s": {
+        "n": 400,
+        "min": 4.2,
+        "p05": 34.99,
+        "median": 144.65,
+        "mean": 152.4,
+        "p95": 312.78,
+        "max": 523.84,
+        "sum": 60961.2
+      },
+      "suspicious_durations": [
+        {
+          "seed": 91000065,
+          "wall_s": 4.2,
+          "steps": 94,
+          "outcome": "lost",
+          "act_index": 1,
+          "total_floor": 10,
+          "why": [
+            "<15s"
+          ]
+        },
+        {
+          "seed": 91000143,
+          "wall_s": 13.55,
+          "steps": 176,
+          "outcome": "lost",
+          "act_index": 1,
+          "total_floor": 14,
+          "why": [
+            "<15s"
+          ]
+        },
+        {
+          "seed": 91000303,
+          "wall_s": 7.02,
+          "steps": 84,
+          "outcome": "lost",
+          "act_index": 1,
+          "total_floor": 8,
+          "why": [
+            "<15s"
+          ]
+        },
+        {
+          "seed": 91000241,
+          "wall_s": 436.73,
+          "steps": 730,
+          "outcome": "won",
+          "act_index": 3,
+          "total_floor": 46,
+          "why": [
+            ">3x_median(145s)"
+          ]
+        },
+        {
+          "seed": 91000264,
+          "wall_s": 523.84,
+          "steps": 930,
+          "outcome": "lost",
+          "act_index": 3,
+          "total_floor": 46,
+          "why": [
+            ">3x_median(145s)"
+          ]
+        },
+        {
+          "seed": 91000289,
+          "wall_s": 478.64,
+          "steps": 857,
+          "outcome": "won",
+          "act_index": 3,
+          "total_floor": 46,
+          "why": [
+            ">3x_median(145s)"
+          ]
+        }
+      ],
+      "s_per_step": {
+        "median": 0.2759,
+        "mad": 0.0679
+      },
+      "act1": {
+        "overgrowth": 189,
+        "underdocks": 211
+      }
+    }
+  },
+  "act_check": {
+    "per_arm": {
+      "D": {
+        "overgrowth": 189,
+        "underdocks": 211
+      },
+      "P": {
+        "overgrowth": 189,
+        "underdocks": 211
+      }
+    },
+    "seed_mismatches_valid_pairs": [],
+    "seed_mismatches_all_rows": []
+  },
+  "cross_arm": {
+    "identical_trajectories": 1,
+    "identical_trajectory_seeds": [
+      91000303
+    ],
+    "same_A10_outcome": 315
+  },
+  "a9_definition": "won or reached_second_boss is True (None = run ended before act 3)"
+}

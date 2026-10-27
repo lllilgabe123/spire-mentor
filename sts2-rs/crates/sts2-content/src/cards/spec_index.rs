@@ -2080,7 +2080,7 @@ pub fn card_is_removable_instance(card: &sts2_core::cards::Card) -> bool {
 #[must_use]
 pub fn card_is_removable_csharp(card_id: CardId) -> bool {
     use super::types::CardKeywords;
-    spec_for_card_id(card_id).map_or(true, |spec| !spec.keywords.contains(CardKeywords::ETERNAL))
+    spec_for_card_id(card_id).is_none_or(|spec| !spec.keywords.contains(CardKeywords::ETERNAL))
 }
 
 /// Rewrite a card's spec-level POD stats (cost / base_damage / base_block)

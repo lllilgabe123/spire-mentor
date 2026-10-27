@@ -30,7 +30,7 @@ has an extra DLL trap: see
 [`../BUILDING-WINDOWS.md`](../BUILDING-WINDOWS.md#4-the-sts2-py-pyo3-crate-needs-a-real-python).
 
 The toolchain is pinned by [`rust-toolchain.toml`](rust-toolchain.toml) to
-**Rust 1.96.0**; the MSRV is **1.96** (`rust-version` in
+**Rust 1.99.1**; the MSRV is **1.99** (`rust-version` in
 [`Cargo.toml`](Cargo.toml)). All workspace crates share version **0.0.1**
 (there is no published release).
 

@@ -260,6 +260,26 @@ public-corpus data; `data/combat_bench` is outside the public export allowlist.
   Clairvoyant, so `--clair` is the deployed pilot with perfect information. A bare
   `STS2_RUNAI_HONEST=0` gives the older clairvoyant search instead.
 
+  **B0 moved for Ironclad on 2026-10-25 (GH #830, commit `a70aa8bec`).** B0, the arm with no
+  `STS2_*` variable, is the deployed pilot: the BeliefDraw dialect with the character's rl2 playout
+  net. For Ironclad fights the run agent now adds its own layer on top: the knobs
+  `removed_counts_forms=1,endturn_widening_c=23.148,draw_widening_c=4.0` in every fight, and the
+  built-in BC move prior (PUCT, mix 0.5, T 1) in elite and boss fights. The other four characters
+  are unchanged. The layer also applies under `--clair` (the `belief_dialect=1` knob turns it on),
+  but not under a bare `STS2_RUNAI_HONEST=0`.
+  - A wheel carries the layer iff `sts2_rs.builtin_prior_net_json("Ironclad")` returns text.
+    The header's `src_hash` tells a pre-ship B0 file from a post-ship one, because a resume
+    refuses a different `src_hash`.
+  - To reproduce the pre-ship B0 on a new wheel, pass both off switches:
+    `--overrides removed_counts_forms=0,endturn_widening_c=5.787,draw_widening_c=2.0 --env
+    STS2_RUNAI_PRIOR_NET=off`.
+  - `dev_v1` stays the frozen panel: it was selected by the pre-ship pilot on reps 40-47. Do not
+    re-run `devpanel.py` against the new default.
+  - Old `b0*` rows are not the deployed Ironclad pilot any more. Re-anchor B0 on the ship wheel
+    before you measure a new lever delta against it.
+  - `values_many` labels for Ironclad states (the oracle, deepbets) now score with forms on,
+    because `deployed_value_config` follows the state's character.
+
   `env` is the worker environment in full: the
   runner scrubs every inherited engine seam (`STS2_RUNAI_*`, `STS2_ROLLOUT_*`,
   `STS2_TRACE_*`, `STS2_COMBAT_LOG`) and applies `env` before the first

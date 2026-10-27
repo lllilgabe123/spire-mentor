@@ -5,7 +5,7 @@
 # Prerequisites:
 #   - Slay the Spire 2 installed via Steam
 #   - .NET 9+ SDK (ARM64 for Apple Silicon, x64 for Intel/Linux)
-#   - Rust 1.96+ toolchain (https://rustup.rs; ../sts2-rs/rust-toolchain.toml pins the exact version)
+#   - Rust 1.99+ toolchain (https://rustup.rs; ../sts2-rs/rust-toolchain.toml pins the exact version)
 #   - maturin (`cargo install maturin` or `pipx install maturin`)
 #   - sts2-pycli's uv venv synced (`just install-dev` or `uv sync --dev`)
 #     and ACTIVATED before running this script (we refuse to install

@@ -1,0 +1,23 @@
+
+=== ppo.probe --policy net_greedy n=200 asc=0 char=Ironclad ===
+outcomes: {'won': 192, 'lost': 8}
+win rate: 192/200 = 0.960
+wall/run: mean 177.9s  median 176.3s  max 411.0s; batch wall 1333s → 9.0 runs/min
+yielded decisions/run: mean 75.7
+
+ownership (phase/surface/class):
+  combat/None/combat-agent                         90414
+  map_choice/path/single-option-auto               5666
+  card_reward/card-pick/net                        4740
+  map_choice/path/net                              3291
+  shop/shop/net                                    1816
+  rest_site/rest/net                               1691
+  event/event/net                                  1516
+  rest_site/card-pick/net                          1390
+  boss_relic/card-pick/net                         396
+  shop/shop/single-option-auto                     387
+  map_choice/card-pick/net                         285
+  event/event/single-option-auto                   70
+  shop/card-pick/net                               18
+
+G1b ownership audit: PASS (no unexplained resolution classes)

@@ -34,8 +34,10 @@ features = ["pyo3/extension-module"]
 # `target/` (which sits at ../../target). `../../Cargo.lock` catches dep bumps.
 # The non-Rust files compiled in with `include_str!` are keys too: anything in
 # a crate's `src/` (sts2-vocab's vocab pins, …), runai's HeuristicV weights,
-# and the toolchain pin. `src_hash` (crates/sts2-srchash) covers the same
-# inputs, so uv and the wheel guards agree on what makes a build stale.
+# the built-in move prior (`data/prior_nets`, GH #830), and the toolchain pin.
+# `src_hash` (crates/sts2-srchash) covers the same inputs, so uv and the wheel
+# guards agree on what makes a build stale. (The playout nets in
+# `data/rollout_nets` are still missing here: a known gap.)
 # sts2-pycli/scripts/uv_stamp_wheel.py mirrors this list: keep to `file` keys.
 cache-keys = [
     { file = "pyproject.toml" },
@@ -45,6 +47,7 @@ cache-keys = [
     { file = "../**/Cargo.toml" },
     { file = "../*/src/**/*" },
     { file = "../../data/runai/heuristic_v.toml" },
+    { file = "../../data/prior_nets/*.json" },
     { file = "../../Cargo.toml" },
     { file = "../../Cargo.lock" },
     { file = "../../rust-toolchain.toml" },

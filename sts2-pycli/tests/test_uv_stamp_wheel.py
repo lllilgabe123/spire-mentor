@@ -41,6 +41,7 @@ cache-keys = [
     { file = "../**/Cargo.toml" },
     { file = "../*/src/**/*" },
     { file = "../../data/runai/heuristic_v.toml" },
+    { file = "../../data/prior_nets/*.json" },
     { file = "../../Cargo.toml" },
     { file = "../../Cargo.lock" },
     { file = "../../rust-toolchain.toml" },
@@ -74,6 +75,8 @@ def _tree(root: Path) -> Path:
         "crates/sts2-vocab/src/vocab_pins/card.txt": "",
         "data/runai/heuristic_v.toml": "",
         "data/runai/other.toml": "",
+        "data/prior_nets/ironclad.json": "",
+        "data/prior_nets/README.md": "",
         "Cargo.toml": "",
         "Cargo.lock": "",
         "rust-toolchain.toml": "",
@@ -93,6 +96,7 @@ def test_the_key_is_the_newest_ctime_among_the_cache_key_files(tmp_path):
         # The non-Rust inputs src_hash covers too.
         "crates/sts2-vocab/src/vocab_pins/card.txt",
         "data/runai/heuristic_v.toml",
+        "data/prior_nets/ironclad.json",
         "rust-toolchain.toml",
         "crates/sts2-core/.hegel/gen.rs",
     ):
@@ -108,7 +112,12 @@ def test_the_key_is_the_newest_ctime_among_the_cache_key_files(tmp_path):
             "directories": {},
         }
     # Files no key names do not move it.
-    for rel in ("crates/sts2-core/notes.txt", "data/runai/other.toml", "README.md"):
+    for rel in (
+        "crates/sts2-core/notes.txt",
+        "data/runai/other.toml",
+        "data/prior_nets/README.md",
+        "README.md",
+    ):
         _bump(tmp_path / rel)
     hegel = (tmp_path / "crates/sts2-core/.hegel/gen.rs").resolve()
     assert uv_stamp.cache_info(pkg)[1].resolve() == hegel

@@ -163,7 +163,7 @@ pub(crate) mod py {
                 let int_len = exp as usize + 1;
                 if digits.len() <= int_len {
                     out.push_str(&digits);
-                    out.extend(std::iter::repeat('0').take(int_len - digits.len()));
+                    out.extend(std::iter::repeat_n('0', int_len - digits.len()));
                     out.push_str(".0");
                 } else {
                     out.push_str(&digits[..int_len]);
@@ -172,7 +172,7 @@ pub(crate) mod py {
                 }
             } else {
                 out.push_str("0.");
-                out.extend(std::iter::repeat('0').take((-exp - 1) as usize));
+                out.extend(std::iter::repeat_n('0', (-exp - 1) as usize));
                 out.push_str(&digits);
             }
         } else {

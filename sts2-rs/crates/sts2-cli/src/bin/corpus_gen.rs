@@ -2860,7 +2860,7 @@ fn runmanager_pick_action(
     }
 
     let combat = rm.combat.as_ref();
-    let prefer_attack = combat.map_or(true, |c| {
+    let prefer_attack = combat.is_none_or(|c| {
         let hp = c.player.current_hp;
         let max = c.player.max_hp.max(1);
         hp * 2 > max
@@ -3209,7 +3209,7 @@ fn export_onmanifold_eval(args: &Args, out_dir: &Path) -> ExitCode {
             _ => tier_counts[0] += 1,
         }
         written += 1;
-        if written % 25 == 0 || written == target {
+        if written.is_multiple_of(25) || written == target {
             eprintln!(
                 "[corpus-gen] eval-export: {written}/{target} fixtures \
                  (common={} elite={} boss={}, runs driven={tries})",
@@ -3410,12 +3410,14 @@ fn build_combat_state(
         pending_end_turn_resume: None,
         pending_autoplay_resume: None,
         autoplay_inline_resolve: false,
+        vakuu_selector: false,
         pending_curse_choice: None,
         pending_potion_hook_resume: None,
         pending_enemy_exec_resume: None,
         combat_log: TurnEvents::default(),
         swipe_stolen: Vec::new(),
         escaped_creatures: 0,
+        coop: sts2_core::coop::CoopState::default(),
         heist_recovered_gold: 0,
         event_combat_timed_out: false,
         gold: 0,

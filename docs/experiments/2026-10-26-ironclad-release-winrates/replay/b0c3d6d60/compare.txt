@@ -1,0 +1,13 @@
+A10 81000005: sweep won  steps 623 floor 46 | replay won  steps 623 floor 46 | fields compared 13, differing: none | wall 200s -> 364s | replay src_hash cb57e2e9bd57b45a pgo False
+A10 81000008: sweep won  steps 784 floor 46 | replay won  steps 784 floor 46 | fields compared 13, differing: none | wall 357s -> 482s | replay src_hash cb57e2e9bd57b45a pgo False
+A10 81000000: sweep lost steps 670 floor 45 | replay lost steps 670 floor 45 | fields compared 13, differing: none | wall 249s -> 370s | replay src_hash cb57e2e9bd57b45a pgo False
+A10 81000001: sweep lost steps 166 floor 16 | replay lost steps 166 floor 16 | fields compared 13, differing: none | wall 32s -> 69s | replay src_hash cb57e2e9bd57b45a pgo False
+A9 81000000: sweep won  steps 767 floor 45 | replay won  steps 767 floor 45 | fields compared 13, differing: none | wall 315s -> 417s | replay src_hash cb57e2e9bd57b45a pgo False
+A9 81000002: sweep won  steps 530 floor 45 | replay won  steps 530 floor 45 | fields compared 13, differing: none | wall 224s -> 291s | replay src_hash cb57e2e9bd57b45a pgo False
+A9 81000001: sweep lost steps 391 floor 31 | replay lost steps 391 floor 31 | fields compared 13, differing: none | wall 116s -> 171s | replay src_hash cb57e2e9bd57b45a pgo False
+A9 81000003: sweep lost steps 244 floor 19 | replay lost steps 244 floor 19 | fields compared 13, differing: none | wall 47s -> 77s | replay src_hash cb57e2e9bd57b45a pgo False
+A0 81000000: sweep won  steps 638 floor 45 | replay won  steps 638 floor 45 | fields compared 13, differing: none | wall 210s -> 357s | replay src_hash cb57e2e9bd57b45a pgo False
+A0 81000011: sweep lost steps 688 floor 45 | replay lost steps 688 floor 45 | fields compared 13, differing: none | wall 244s -> 369s | replay src_hash cb57e2e9bd57b45a pgo False
+A7 81000000: sweep won  steps 593 floor 45 | replay won  steps 593 floor 45 | fields compared 13, differing: none | wall 176s -> 296s | replay src_hash cb57e2e9bd57b45a pgo False
+A7 81000001: sweep lost steps 523 floor 45 | replay lost steps 523 floor 45 | fields compared 13, differing: none | wall 137s -> 267s | replay src_hash cb57e2e9bd57b45a pgo False
+12 replay rows, 12 identical to the sweep's, 0 differing

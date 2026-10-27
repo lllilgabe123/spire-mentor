@@ -321,12 +321,14 @@ fn build_encounter_state(
         pending_end_turn_resume: None,
         pending_autoplay_resume: None,
         autoplay_inline_resolve: false,
+        vakuu_selector: false,
         pending_curse_choice: None,
         pending_potion_hook_resume: None,
         pending_enemy_exec_resume: None,
         combat_log: TurnEvents::default(),
         swipe_stolen: Vec::new(),
         escaped_creatures: 0,
+        coop: sts2_core::coop::CoopState::default(),
         heist_recovered_gold: 0,
         event_combat_timed_out: false,
         gold: 0,
@@ -2811,20 +2813,95 @@ fn ordered_state_hash(state: &CoreCombatState) -> u64 {
 }
 
 // The search configuration and leaf evaluator the deployed combat pilot
-// (`MctsCombatAgent`, `CombatBudget::eval_cheap`) plays out under, env seams
-// included. Lives in sts2-runai so its test can hold it against what
-// `mcts_pick` actually searches with (GH #830).
+// (`MctsCombatAgent`, `CombatBudget::eval_cheap`) plays out under in a fight
+// of a given character, env seams included. Lives in sts2-runai so its test
+// can hold it against what `mcts_pick` actually searches with (GH #830).
 use sts2_runai::policy::deployed_value_config;
 
 /// What the deployed search backs up for a playout that ended in `state`
-/// ([`sts2_mcts::playout_return`] under the deployed dialect): a won fight
-/// in `[1.0, 1.5]` (HP and kept potions raise it), a lost one in
-/// `[-1.45, -1.05)` (graded by enemy HP removed, HP kept and turns), a
-/// fight still running gets the depth-cut leaf value.
+/// ([`sts2_mcts::playout_return`] under the deployed pilot's config for the
+/// state's character): a won fight in `[1.0, 1.5]` (HP and kept potions
+/// raise it), a lost one in `[-1.45, -1.05)` (graded by enemy HP removed, HP
+/// kept and turns; an Ironclad state counts the forms a multi-form enemy
+/// still has, GH #830), a fight still running gets the depth-cut leaf value.
 #[pyfunction]
 fn search_playout_value(state: &PyCombatState) -> f32 {
-    let (cfg, leaf) = deployed_value_config();
-    sts2_mcts::playout_return(state.inner_ref(), &cfg, &leaf)
+    let s = state.inner_ref();
+    let (cfg, leaf) = deployed_value_config(s.player.character);
+    sts2_mcts::playout_return(s, &cfg, &leaf)
+}
+
+/// Run `run` over `jobs` once per character (`player.character`): each group
+/// under the deployed pilot's playout config for that character
+/// ([`deployed_value_config`]) after `edit`, the results scattered back in
+/// job order. One character (every batch of one run) is one call on the
+/// jobs as given. `run` must return one result per job of its group, each
+/// depending only on its own job (true of `playout_values` and
+/// `playout_trajectories_with`, which seed every job alone), so the split
+/// changes no result.
+fn by_character<T>(
+    jobs: &[(CoreCombatState, u64)],
+    edit: impl Fn(&mut MctsConfig),
+    run: impl Fn(&[(CoreCombatState, u64)], &MctsConfig, &LeafEval) -> Vec<T>,
+) -> Vec<T> {
+    let config = |character| {
+        let (mut cfg, leaf) = deployed_value_config(character);
+        edit(&mut cfg);
+        (cfg, leaf)
+    };
+    let mut groups: Vec<(Option<sts2_core::potions::CharacterId>, Vec<usize>)> = Vec::new();
+    for (i, (s, _)) in jobs.iter().enumerate() {
+        let character = s.player.character;
+        match groups.iter_mut().find(|(c, _)| *c == character) {
+            Some((_, idx)) => idx.push(i),
+            None => groups.push((character, vec![i])),
+        }
+    }
+    if groups.len() <= 1 {
+        let (cfg, leaf) = config(groups.first().and_then(|(c, _)| *c));
+        return run(jobs, &cfg, &leaf);
+    }
+    let mut out: Vec<Option<T>> = std::iter::repeat_with(|| None).take(jobs.len()).collect();
+    for (character, idx) in &groups {
+        let (cfg, leaf) = config(*character);
+        let group: Vec<(CoreCombatState, u64)> = idx.iter().map(|&i| jobs[i].clone()).collect();
+        let results = run(&group, &cfg, &leaf);
+        assert_eq!(results.len(), idx.len(), "one result per job");
+        for (&i, r) in idx.iter().zip(results) {
+            out[i] = Some(r);
+        }
+    }
+    out.into_iter()
+        .map(|r| r.expect("every job is in one group"))
+        .collect()
+}
+
+/// [`values_many`]'s rows: one playout per job under its character's
+/// deployed config ([`by_character`]), `depth` / `rollout_policy` overriding
+/// every group's. An error names the caller's job index.
+fn values_many_rows(
+    jobs: &[(CoreCombatState, u64)],
+    mode: sts2_mcts::values::PlayoutMode,
+    depth: Option<u32>,
+    rollout_policy: Option<sts2_mcts::RolloutPolicyKind>,
+) -> Result<Vec<sts2_mcts::values::PlayoutValue>, String> {
+    let results = by_character(
+        jobs,
+        |cfg| {
+            if let Some(d) = depth {
+                cfg.max_rollout_depth = d;
+            }
+            if let Some(p) = rollout_policy {
+                cfg.rollout_policy = p;
+            }
+        },
+        |group, cfg, leaf| sts2_mcts::values::playout_values(group, mode, cfg, leaf),
+    );
+    results
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| r.map_err(|e| format!("values_many: job {i}: {e}")))
+        .collect()
 }
 
 /// One playout per `(state, seed)` exactly as the deployed search plays out
@@ -2836,10 +2913,12 @@ fn search_playout_value(state: &PyCombatState) -> f32 {
 /// the player's HP at its end, `terminal` whether it ended the fight
 /// (otherwise it stopped at the depth cap and `search_value` is the depth-cut leaf).
 ///
-/// The config is the deployed pilot's ([`deployed_value_config`]: the
-/// BeliefDraw dialect with the character's playout net, the TexelWide leaf,
-/// rollout depth 200 raised for enemies that need a longer horizon, and the
-/// `STS2_RUNAI_*` env seams). `depth` and `rollout_policy` override the
+/// The config is the deployed pilot's for the state's character
+/// ([`deployed_value_config`]: the BeliefDraw dialect with the character's
+/// playout net, the TexelWide leaf, rollout depth 200 raised for enemies that
+/// need a longer horizon, the `STS2_RUNAI_*` env seams, and for an Ironclad
+/// state the run agent's Ironclad knobs, GH #830); a batch mixing characters
+/// scores each job under its own. `depth` and `rollout_policy` override the
 /// playout depth and policy as `mcts_recommend`'s arguments of those names
 /// do. A playout's policy RNG is seeded with its `seed`, the RNG a search
 /// seeded `seed` gives its first simulation.
@@ -2865,7 +2944,7 @@ fn values_many<'py>(
     depth: Option<u32>,
     rollout_policy: Option<&str>,
 ) -> PyResult<Bound<'py, PyList>> {
-    use sts2_mcts::values::{playout_values, PlayoutMode};
+    use sts2_mcts::values::PlayoutMode;
     if states.len() != seeds.len() {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "values_many: states and seeds differ in length",
@@ -2876,25 +2955,20 @@ fn values_many<'py>(
             "values_many: mode must be 'raw', 'belief' or 'belief_endturn', got {mode:?}"
         ))
     })?;
-    let (mut cfg, leaf) = deployed_value_config();
-    if let Some(d) = depth {
-        cfg.max_rollout_depth = d;
-    }
-    if let Some(p) = rollout_policy {
-        cfg.rollout_policy = sts2_wire::emit::mcts::parse_rollout_policy(p, "values_many")
-            .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    }
+    let rollout_policy = rollout_policy
+        .map(|p| sts2_wire::emit::mcts::parse_rollout_policy(p, "values_many"))
+        .transpose()
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
     let jobs: Vec<(CoreCombatState, u64)> = states
         .iter()
         .zip(&seeds)
         .map(|(s, &seed)| (s.inner_ref().clone(), seed))
         .collect();
-    let results = py.allow_threads(|| playout_values(&jobs, mode, &cfg, &leaf));
+    let rows = py
+        .allow_threads(|| values_many_rows(&jobs, mode, depth, rollout_policy))
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
     let out = PyList::empty(py);
-    for (i, r) in results.into_iter().enumerate() {
-        let v = r.map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("values_many: job {i}: {e}"))
-        })?;
+    for v in rows {
         let d = PyDict::new(py);
         d.set_item("search_value", v.value)?;
         d.set_item("won", v.won)?;
@@ -2953,6 +3027,37 @@ fn playout<'py>(
     d.set_item("round", end.round)?;
     d.set_item("steps", steps)?;
     Ok(d)
+}
+
+/// `LearnedPlayout.play_many`'s trajectories: every job played out by
+/// `net` ([`sts2_mcts::rollout_net::playout_trajectories_with`]), its
+/// `search_value` scored under the deployed pilot's config for the job's
+/// character ([`by_character`]).
+fn play_many_trajectories(
+    net: &sts2_mcts::rollout_net::RolloutNet,
+    jobs: &[(CoreCombatState, u64)],
+    temperature: f32,
+    no_early_end_turn: bool,
+    max_steps: u32,
+    belief: bool,
+) -> Vec<sts2_mcts::rollout_net::Trajectory> {
+    by_character(
+        jobs,
+        |_| {},
+        |group, cfg, leaf| {
+            sts2_mcts::rollout_net::playout_trajectories_with(
+                net,
+                group,
+                &sts2_mcts::rollout_net::TrajOptions {
+                    temperature,
+                    no_early_end_turn,
+                    max_steps,
+                    belief,
+                    score: Some((cfg, leaf)),
+                },
+            )
+        },
+    )
 }
 
 /// A learned playout policy held by Python, for training it on playout
@@ -3026,7 +3131,8 @@ impl PyLearnedPlayout {
     /// `rows` (u32), `x` (f32 x `action_dim`), `allowed` (u8); per playout
     /// `steps` (u32), `won` (u8), `hp_frac`, `removed`, `round` and
     /// `search_value` (f32). `search_value` is what the deployed search
-    /// backs up for the playout ([`search_playout_value`] of its final state).
+    /// backs up for the playout ([`search_playout_value`] of its final state,
+    /// under the deployed pilot's config for the job's character, GH #830).
     ///
     /// `belief`: start each playout from its own honest view of the state,
     /// the one the deployed search sees (`sts2_core::blindfold::belief_root`,
@@ -3045,7 +3151,7 @@ impl PyLearnedPlayout {
         max_steps: u32,
         belief: bool,
     ) -> PyResult<Bound<'py, PyDict>> {
-        use sts2_mcts::rollout_net::{FeatureVersion, TrajOptions};
+        use sts2_mcts::rollout_net::FeatureVersion;
         if states.len() != seeds.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "states and seeds differ in length",
@@ -3056,18 +3162,14 @@ impl PyLearnedPlayout {
             .zip(&seeds)
             .map(|(s, &seed)| (s.inner_ref().clone(), seed))
             .collect();
-        let (cfg, leaf) = deployed_value_config();
         let trajs = py.allow_threads(|| {
-            sts2_mcts::rollout_net::playout_trajectories_with(
+            play_many_trajectories(
                 &self.net,
                 &jobs,
-                &TrajOptions {
-                    temperature,
-                    no_early_end_turn: no_early_end,
-                    max_steps,
-                    belief,
-                    score: Some((&cfg, &leaf)),
-                },
+                temperature,
+                no_early_end,
+                max_steps,
+                belief,
             )
         });
         let (sd, ad) = (self.net.state_dim(), self.net.action_dim());
@@ -3238,6 +3340,35 @@ fn build_info(py: Python<'_>) -> PyResult<PyObject> {
     d.set_item("src_hash", src_hash())?;
     d.set_item("build_git", build_git())?;
     Ok(d.into())
+}
+
+/// This process's PUCT move-prior counters since it started
+/// (`sts2_mcts::prior_counts`, GH #830): `prior_lookups` (descent reads of
+/// a node's prior, cache hits included), `prior_evals` (playout-net prior
+/// evaluations: the per-node cache's misses) and `prior_uniform_fallbacks`
+/// (evaluations that fell back to uniform). All 0 for a search without a
+/// prior. Each spawned worker counts its own process.
+#[pyfunction]
+fn prior_counts(py: Python<'_>) -> PyResult<PyObject> {
+    let c = sts2_mcts::prior_counts::snapshot();
+    let d = PyDict::new(py);
+    d.set_item("prior_lookups", c.lookups)?;
+    d.set_item("prior_evals", c.evals)?;
+    d.set_item("prior_uniform_fallbacks", c.uniform_fallbacks)?;
+    Ok(d.into())
+}
+
+/// The compiled-in PUCT move-prior net of `character`
+/// (`sts2_mcts::rollout_net::builtin_prior_json`, GH #830) as its JSON text,
+/// or `None` when that character has none (every character but Ironclad).
+/// Harnesses hash it to pin the deployed prior, as the gate pinned the
+/// playout net. Accepts `Ironclad` or `ironclad`; raises `ValueError` on an
+/// unknown name.
+#[pyfunction]
+fn builtin_prior_net_json(character: &str) -> PyResult<Option<String>> {
+    let character = sts2_wire::emit::names::character_from_str(character)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(sts2_mcts::rollout_net::builtin_prior_json(character).map(str::to_owned))
 }
 
 /// Port of C# `StringHelper.GetDeterministicHashCode`.
@@ -3985,6 +4116,9 @@ pub fn sts2_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // (`sts2-cli/src/lib.rs`).
     sts2_content::relics::dispatch::ensure_installed();
     sts2_content::potions::dispatch::ensure_installed();
+    // Co-op teammates play their remaining hand inside `apply(EndTurn)`, also
+    // for a plain `state.apply` (the search registers it on its own).
+    sts2_core::coop::register_teammate_policy(sts2_mcts::expert::teammate_policy);
 
     m.add_function(wrap_pyfunction!(resolve_potion_swap_flag, m)?)?;
     m.add_function(wrap_pyfunction!(potion_swap_is_rule_side, m)?)?;
@@ -4005,6 +4139,8 @@ pub fn sts2_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLearnedPlayout>()?;
     m.add_function(wrap_pyfunction!(recompute_src_hash, m)?)?;
     m.add_function(wrap_pyfunction!(build_info, m)?)?;
+    m.add_function(wrap_pyfunction!(prior_counts, m)?)?;
+    m.add_function(wrap_pyfunction!(builtin_prior_net_json, m)?)?;
     m.add_function(wrap_pyfunction!(deterministic_hash_code, m)?)?;
     m.add_function(wrap_pyfunction!(seed_hash, m)?)?;
     m.add_function(wrap_pyfunction!(run_seed_hash, m)?)?;
@@ -4687,6 +4823,82 @@ mod build_info_tests {
             // The same value the freshness gate compares, so a run's record
             // names the source it trained on.
             assert_eq!(get("src_hash").extract::<String>().unwrap(), src_hash());
+        });
+    }
+
+    /// `sts2_rs.prior_counts()` reads the engine's prior counters, under the
+    /// key names the identity runner's rows carry (GH #830). A uniform prior
+    /// under PUCT is read (lookups) but is no net, so nothing evaluates.
+    #[test]
+    fn prior_counts_reads_the_engine_counters() {
+        sts2_content::cards::dispatch::ensure_installed();
+        sts2_content::relics::dispatch::ensure_installed();
+        sts2_content::potions::dispatch::ensure_installed();
+        let mut rm = sts2_content::run_callbacks::new_run_manager_for_character_with_ascension(
+            3,
+            sts2_core::CharacterId::Ironclad,
+            0,
+        )
+        .with_neow_start();
+        sts2_content::run_callbacks::initialize_run_setup(&mut rm);
+        for _ in 0..64 {
+            if rm.phase() == sts2_core::run_manager::Phase::Combat {
+                break;
+            }
+            let acts = rm.get_available_actions();
+            let _ = rm.take_action(acts[0]);
+        }
+        let combat = rm.combat.clone().expect("in combat");
+        let mut cfg = sts2_mcts::MctsConfig {
+            max_simulations: 64,
+            ..sts2_mcts::MctsConfig::default()
+        };
+        cfg.use_puct_prior = true;
+        let mut m = sts2_mcts::Mcts::new(combat, cfg);
+        m.try_search_n(64).expect("searchable");
+        let c = sts2_mcts::prior_counts::snapshot();
+        assert!(c.lookups > 0 && c.evals == 0, "{c:?}");
+        Python::with_gil(|py| {
+            let d = prior_counts(py).unwrap();
+            let d = d.downcast_bound::<PyDict>(py).unwrap();
+            let mut keys: Vec<String> = d.keys().iter().map(|k| k.to_string()).collect();
+            keys.sort();
+            assert_eq!(
+                keys,
+                ["prior_evals", "prior_lookups", "prior_uniform_fallbacks"]
+            );
+            let get = |k: &str| d.get_item(k).unwrap().expect(k).extract::<u64>().unwrap();
+            assert_eq!(
+                (
+                    get("prior_lookups"),
+                    get("prior_evals"),
+                    get("prior_uniform_fallbacks")
+                ),
+                (c.lookups, c.evals, c.uniform_fallbacks)
+            );
+        });
+    }
+
+    /// `sts2_rs.builtin_prior_net_json(character)` hands Python the
+    /// compiled-in move-prior text (GH #830), so a harness can hash it: Some
+    /// for Ironclad only, either spelling of the name, and `ValueError` on an
+    /// unknown name.
+    #[test]
+    fn builtin_prior_net_json_is_the_compiled_in_text() {
+        use sts2_core::CharacterId;
+        let ironclad = sts2_mcts::rollout_net::builtin_prior_json(CharacterId::Ironclad)
+            .expect("the Ironclad prior is compiled in");
+        Python::with_gil(|py| {
+            for name in ["Ironclad", "ironclad"] {
+                let got = builtin_prior_net_json(name).unwrap();
+                assert_eq!(got.as_deref(), Some(ironclad), "{name}");
+            }
+            for name in ["Silent", "Defect", "Regent", "Necrobinder"] {
+                assert_eq!(builtin_prior_net_json(name).unwrap(), None, "{name}");
+            }
+            let err = builtin_prior_net_json("Watcher").unwrap_err();
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert!(err.to_string().contains("unknown character"), "{err}");
         });
     }
 
@@ -6104,7 +6316,7 @@ mod playout_value_tests {
         card_dispatch::ensure_installed();
         sts2_content::relics::dispatch::ensure_installed();
         sts2_content::potions::dispatch::ensure_installed();
-        let (cfg, leaf) = deployed_value_config();
+        let (cfg, leaf) = deployed_value_config(None);
         assert_eq!(cfg.terminal_eval_mode, TerminalEvalMode::RichBoth);
         assert!(cfg.loss_gradient);
         let ends = terminals();
@@ -6133,6 +6345,254 @@ mod playout_value_tests {
             }
         }
         assert!(wins > 0 && losses > 0, "{wins} wins / {losses} losses");
+    }
+
+    // ── per-character scoring (GH #830) ──────────────────────────────────
+
+    /// `encounter` at A10 (Ironclad starter deck, 70 / 80 HP) at its first
+    /// decision.
+    fn scenario(encounter: &str, deck: &[&str], seed: u64) -> CoreCombatState {
+        card_dispatch::ensure_installed();
+        sts2_content::relics::dispatch::ensure_installed();
+        sts2_content::potions::dispatch::ensure_installed();
+        let deck: Vec<String> = deck.iter().map(|&c| c.to_owned()).collect();
+        build_scenario_state_impl(
+            seed,
+            "Ironclad",
+            &deck,
+            70,
+            80,
+            &[],
+            &[],
+            encounter,
+            10,
+            None,
+            None,
+        )
+        .unwrap_or_else(|e| panic!("{encounter}: {e}"))
+    }
+
+    const STARTER: [&str; 10] = [
+        "STRIKE_IRONCLAD",
+        "STRIKE_IRONCLAD",
+        "STRIKE_IRONCLAD",
+        "STRIKE_IRONCLAD",
+        "STRIKE_IRONCLAD",
+        "DEFEND_IRONCLAD",
+        "DEFEND_IRONCLAD",
+        "DEFEND_IRONCLAD",
+        "DEFEND_IRONCLAD",
+        "BASH",
+    ];
+
+    /// A Test Subject fight (as `sts2-wire/tests/eval_levers.rs` builds it)
+    /// the player lost after killing the first of its three forms: the loss
+    /// band, the one place the Ironclad layer's `removed_counts_forms` moves
+    /// a playout's value. With it off, form 1's death reads as all enemy HP
+    /// removed.
+    fn test_subject_lost(seed: u64, hp_left_on_form_1: i32) -> CoreCombatState {
+        use sts2_core::hooks::{CreatureRef, ValueProps};
+        let mut s = scenario("TEST_SUBJECT_BOSS", &STARTER, seed);
+        let ts = s.enemy_uids[0];
+        let _ = sts2_core::damage::apply_damage(
+            &mut s,
+            CreatureRef::Player,
+            ts,
+            111 - hp_left_on_form_1,
+            ValueProps::UNPOWERED,
+            None,
+        );
+        if hp_left_on_form_1 == 0 {
+            assert!(!s.is_over, "Adaptable keeps the fight open");
+        }
+        // The player dies (both HP fields: the mirror creature and the
+        // legacy one the death check reads), and the combat ends.
+        let me = s.player.creature_uid.expect("player creature");
+        for c in &mut s.creatures {
+            if c.id == me.0 {
+                c.current_hp = 0;
+            }
+        }
+        s.player.current_hp = 0;
+        let _ = sts2_core::combat_loop::check_combat_end(&mut s);
+        assert!(
+            sts2_core::is_terminal(&s) && !s.player_won,
+            "the player lost"
+        );
+        s
+    }
+
+    /// `s` as a Silent fight.
+    fn as_silent(s: &CoreCombatState) -> CoreCombatState {
+        let mut s = s.clone();
+        s.player.character = Some(sts2_core::potions::CharacterId::Silent);
+        s
+    }
+
+    fn bits(rows: &[sts2_mcts::values::PlayoutValue]) -> Vec<(u32, bool, i32, bool)> {
+        rows.iter()
+            .map(|v| (v.value.to_bits(), v.won, v.hp, v.terminal))
+            .collect()
+    }
+
+    /// `values_many` of each job alone.
+    fn singles(
+        jobs: &[(CoreCombatState, u64)],
+        depth: Option<u32>,
+    ) -> Vec<sts2_mcts::values::PlayoutValue> {
+        jobs.iter()
+            .map(|job| {
+                values_many_rows(
+                    std::slice::from_ref(job),
+                    sts2_mcts::values::PlayoutMode::Raw,
+                    depth,
+                    None,
+                )
+                .expect("scores")[0]
+            })
+            .collect()
+    }
+
+    /// GH #830: a batch mixing characters scores each job under its own
+    /// character's deployed config, exactly as a call of its own would. The
+    /// jobs are lost Test Subject fights, where the Ironclad config (forms
+    /// on) and any other (forms off) give different values; on an ordinary
+    /// state one config for the whole batch would pass unnoticed.
+    #[test]
+    fn values_many_scores_each_job_under_its_own_characters_config() {
+        use sts2_mcts::values::{playout_values, PlayoutMode};
+        let ic_a = test_subject_lost(7, 0);
+        let ic_b = test_subject_lost(8, 30);
+        let jobs = vec![(ic_a.clone(), 1), (as_silent(&ic_a), 2), (ic_b, 3)];
+        let alone = singles(&jobs, None);
+        // Non-vacuity: the Silent job under the Ironclad config is not its
+        // own value.
+        let (ic_cfg, ic_leaf) =
+            deployed_value_config(Some(sts2_core::potions::CharacterId::Ironclad));
+        let silent_as_ironclad =
+            playout_values(&jobs[1..2], PlayoutMode::Raw, &ic_cfg, &ic_leaf)[0].expect("scores");
+        assert_ne!(
+            silent_as_ironclad.value.to_bits(),
+            alone[1].value.to_bits(),
+            "the Silent job must score differently under the Ironclad config"
+        );
+        assert_eq!(alone[0].value.to_bits(), silent_as_ironclad.value.to_bits());
+        let batch = values_many_rows(&jobs, PlayoutMode::Raw, None, None).expect("scores");
+        assert_eq!(bits(&batch), bits(&alone));
+        // Order is the caller's, whatever order the groups run in.
+        let rev: Vec<_> = jobs.iter().rev().cloned().collect();
+        let mut back = values_many_rows(&rev, PlayoutMode::Raw, None, None).expect("scores");
+        back.reverse();
+        assert_eq!(bits(&back), bits(&alone));
+    }
+
+    /// The `depth` override reaches every character's group.
+    #[test]
+    fn values_many_overrides_reach_every_group() {
+        let ic = scenario("NIBBITS_WEAK", &STARTER, 5);
+        let jobs = vec![(ic.clone(), 11), (as_silent(&ic), 12), (ic, 13)];
+        let shallow = singles(&jobs, Some(1));
+        let deep = singles(&jobs, None);
+        assert_ne!(
+            shallow[1].value.to_bits(),
+            deep[1].value.to_bits(),
+            "depth 1 must move the Silent job's value"
+        );
+        assert!(shallow.iter().all(|v| !v.terminal));
+        let batch = values_many_rows(&jobs, sts2_mcts::values::PlayoutMode::Raw, Some(1), None)
+            .expect("scores");
+        assert_eq!(bits(&batch), bits(&shallow));
+    }
+
+    /// An error names the caller's index of the job, not its index within
+    /// its character's group.
+    #[test]
+    fn values_many_errors_name_the_callers_job_index() {
+        let lost = test_subject_lost(7, 0);
+        let mut open = scenario("NIBBITS_WEAK", &["ARMAMENTS"; 10], 5);
+        let play = core_legal_actions(&open)
+            .into_iter()
+            .find(|a| matches!(a, Action::PlayCard { .. }))
+            .expect("Armaments is playable");
+        let _ = core_apply(&mut open, play);
+        assert!(open.pending_choice.is_some(), "Armaments opened its choice");
+        assert!(!core_legal_actions(&open).contains(&Action::EndTurn));
+        // The open state is the Ironclad group's second job and the batch's
+        // third.
+        let jobs = vec![(as_silent(&lost), 1), (lost, 2), (open, 3)];
+        let err = values_many_rows(
+            &jobs,
+            sts2_mcts::values::PlayoutMode::BeliefEndTurn,
+            None,
+            None,
+        )
+        .expect_err("a choice is open");
+        assert!(err.starts_with("values_many: job 2: "), "{err}");
+    }
+
+    /// `LearnedPlayout.play_many` scores `search_value` the same way: each
+    /// job under its own character's config, as a call of its own would.
+    #[test]
+    fn play_many_scores_each_job_under_its_own_characters_config() {
+        let net = sts2_mcts::rollout_net::builtin_net(sts2_core::potions::CharacterId::Ironclad)
+            .expect("the built-in Ironclad playout net");
+        let ic_a = test_subject_lost(7, 0);
+        let ic_b = test_subject_lost(8, 30);
+        let jobs = vec![(ic_a.clone(), 1), (as_silent(&ic_a), 2), (ic_b, 3)];
+        let key = |t: &sts2_mcts::rollout_net::Trajectory| {
+            (t.search_value.to_bits(), t.won, t.steps.len())
+        };
+        let alone: Vec<_> = jobs
+            .iter()
+            .map(|job| {
+                key(
+                    &play_many_trajectories(net, std::slice::from_ref(job), 1.0, false, 600, false)
+                        [0],
+                )
+            })
+            .collect();
+        let (ic_cfg, ic_leaf) =
+            deployed_value_config(Some(sts2_core::potions::CharacterId::Ironclad));
+        let silent_as_ironclad = sts2_mcts::rollout_net::playout_trajectories_with(
+            net,
+            &jobs[1..2],
+            &sts2_mcts::rollout_net::TrajOptions {
+                temperature: 1.0,
+                no_early_end_turn: false,
+                max_steps: 600,
+                belief: false,
+                score: Some((&ic_cfg, &ic_leaf)),
+            },
+        );
+        assert_ne!(key(&silent_as_ironclad[0]), alone[1], "non-vacuity");
+        let batch: Vec<_> = play_many_trajectories(net, &jobs, 1.0, false, 600, false)
+            .iter()
+            .map(key)
+            .collect();
+        assert_eq!(batch, alone);
+    }
+
+    /// `search_playout_value` reads the state's character too.
+    #[test]
+    fn search_playout_value_reads_the_states_character() {
+        let lost = test_subject_lost(7, 0);
+        let (ic_cfg, ic_leaf) =
+            deployed_value_config(Some(sts2_core::potions::CharacterId::Ironclad));
+        let (none_cfg, none_leaf) = deployed_value_config(None);
+        let py_ic = PyCombatState::from_inner(lost.clone(), 0);
+        let py_silent = PyCombatState::from_inner(as_silent(&lost), 0);
+        assert_eq!(
+            search_playout_value(&py_ic).to_bits(),
+            sts2_mcts::playout_return(&lost, &ic_cfg, &ic_leaf).to_bits()
+        );
+        assert_eq!(
+            search_playout_value(&py_silent).to_bits(),
+            sts2_mcts::playout_return(&lost, &none_cfg, &none_leaf).to_bits()
+        );
+        assert_ne!(
+            search_playout_value(&py_ic).to_bits(),
+            search_playout_value(&py_silent).to_bits()
+        );
     }
 
     /// `state_hash` cannot tell two draw orders apart; `ordered_hash` can,

@@ -349,7 +349,7 @@ fn replay_scenario(dir: &Path) -> Vec<String> {
                     status == req.status,
                     py_keys
                         .as_ref()
-                        .map_or(true, |py| rust_keys.iter().all(|k| py.contains(k))),
+                        .is_none_or(|py| rust_keys.iter().all(|k| py.contains(k))),
                 ),
                 // The coach assesses every move the oracle does and more:
                 // Python's wire round-trip loses a potion's slot and can lose
@@ -357,11 +357,11 @@ fn replay_scenario(dir: &Path) -> Vec<String> {
                 // snapshot scores the move. Never the reverse.
                 "/api/live/last-move-regret" => (
                     status == req.status || (req.status == 409 && status == 200),
-                    status != req.status || py_keys.as_ref().map_or(true, |py| *py == rust_keys),
+                    status != req.status || py_keys.as_ref().is_none_or(|py| *py == rust_keys),
                 ),
                 _ => (
                     status == req.status,
-                    py_keys.as_ref().map_or(true, |py| *py == rust_keys),
+                    py_keys.as_ref().is_none_or(|py| *py == rust_keys),
                 ),
             };
             if !status_ok || !shape_ok {

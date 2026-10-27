@@ -9,7 +9,11 @@ use super::prelude::*;
 /// spec refresh; current spec targets Self, so this body routes
 /// through `gain_block_player`. Bead `sts2-rs-6ynt.8` wave (Lift).
 pub(crate) fn play_lift(state: &mut CombatState, _t: Option<CreatureUid>) -> EffectResult {
-    gain_block_player(state, current_block(state));
+    // C# `CreatureCmd.GainBlock(cardPlay.Target, Block, cardPlay)`: the
+    // teammate gains the block, with the player's Dexterity on it.
+    if let Some(ally) = state.any_ally_card_target() {
+        let _ = sts2_core::card_effects::gain_block_ally(state, ally, current_block(state));
+    }
     EffectResult::Resolved
 }
 

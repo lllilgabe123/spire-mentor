@@ -655,7 +655,7 @@ fn generate_act_rooms(
     // (`NextItem` = `NextInt(0, count - 1)`), identical to the prior
     // count-only consumption — capturing the identity is read-neutral.
     let mut ancient_pool: Vec<AncientId> = act.own_ancients.to_vec();
-    ancient_pool.extend(std::iter::repeat(SHARED_ANCIENT).take(subset_ancients));
+    ancient_pool.extend(std::iter::repeat_n(SHARED_ANCIENT, subset_ancients));
     let ancient = if ancient_pool.is_empty() {
         None
     } else {

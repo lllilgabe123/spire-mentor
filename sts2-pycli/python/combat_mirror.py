@@ -112,6 +112,13 @@ class MirrorPolicy(StrEnum):
     run. There is deliberately no "repair" mode: a mirror that silently
     patches over a mismatch is worse than no mirror, because its search then
     plans against a board that never existed.
+
+    Co-op (:attr:`CombatMirror.teammates`) is not a repair in that sense. A
+    teammate's moves land on the enemies between ours, so an enemy field the
+    engine could not have predicted is not a misprediction; the reconcile
+    already ADOPTS the world's board, and only the carried hidden state is
+    kept. That is counted (:attr:`MirrorStats.teammate_adoptions`), never
+    silent, and scoped to ``$.encounter``: our own side still diverges.
     """
 
     STRICT = "strict"
@@ -203,6 +210,10 @@ class MirrorStats:
     #: :attr:`in_flight_skips`, for the choice channel; see
     #: :func:`_choice_effect_in_flight`.
     choice_in_flight_skips: int = 0
+    #: Co-op reconciles whose whole diff was enemy-side, so the world's board
+    #: was adopted instead of reported (see :class:`MirrorPolicy`). Kept out
+    #: of :attr:`desyncs`: a teammate's hit is not an engine misprediction.
+    teammate_adoptions: int = 0
     searches: int = 0
     seeds: int = 0
     drops: int = 0
@@ -232,6 +243,7 @@ class MirrorStats:
             "parked_verifies": self.parked_verifies,
             "in_flight_skips": self.in_flight_skips,
             "choice_in_flight_skips": self.choice_in_flight_skips,
+            "teammate_adoptions": self.teammate_adoptions,
             "searches": self.searches,
             "seeds": self.seeds,
             "drops": self.drops,
@@ -466,6 +478,16 @@ def observables(wire: dict[str, Any]) -> dict[str, Any]:
         out[f"$.encounter[{key}].powers"] = _powers(e.get("powers"))
         out[f"$.encounter[{key}].intents"] = [_intent_key(it) for it in e.get("intents") or []]
     return out
+
+
+def _teammate_reachable(path: str) -> bool:
+    """Is ``path`` a field a co-op teammate's moves can change under us?
+
+    The enemy side (``$.encounter[X].hp``, ``.powers``, ``.intents``, the
+    roster) and the teammate's own creature (``$.allies``: they block, take
+    hits and heal on their own). Everything of ours is still ours to predict.
+    """
+    return path.startswith(("$.encounter", "$.allies"))
 
 
 def unreported_paths(raw_world_wire: dict[str, Any]) -> frozenset[str]:
@@ -916,6 +938,13 @@ class CombatMirror:
         #: decides to raise. Lets a sweep classify divergences live instead of
         #: re-parsing the forensic log. Never swallows the divergence.
         self.on_divergence: Callable[[list[str]], None] | None = None
+        #: How many other players share this fight (co-op). Non-zero lets a
+        #: reconcile adopt an enemy-side diff instead of reporting it; see
+        #: :class:`MirrorPolicy`. The driver sets it from the board.
+        self.teammates = 0
+        #: The diff the last reconcile adopted under :attr:`teammates`, so a
+        #: caller can tally what the teammate changed. Empty otherwise.
+        self.last_adopted: list[Desync] = []
 
         self._state: Any | None = None
         # The state the last `drop()` discarded, kept one divergence long so
@@ -1130,6 +1159,7 @@ class CombatMirror:
             return []
 
         self.stats.reconciles += 1
+        self.last_adopted = []
         carried = self._state
 
         # A card whose OnPlay opened a screen has the REST of itself suspended
@@ -1427,6 +1457,13 @@ class CombatMirror:
         self._crossed_shuffle = False
         self._last_wire = wire
         self._last_drift = drift
+
+        if desyncs and self.teammates and all(_teammate_reachable(d.path) for d in desyncs):
+            # Co-op: every diff is on the enemies, which a teammate moves
+            # between our decisions. `fresh` already holds the world's board
+            # plus our carried hidden state, so keep it rather than drop it.
+            self.stats.teammate_adoptions += 1
+            self.last_adopted, desyncs = desyncs, []
 
         if desyncs:
             self.stats.desyncs += 1

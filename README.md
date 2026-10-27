@@ -31,7 +31,7 @@ move.</sub>
 ### AI
 
 - MCTS-based combat  
-- PPO / reinforcement-learning-based run-level AI, trained over many weeks, with the best win rates of any STS2 AI I'm aware of (e.g. Ironclad 90% A0, 39% A9, 11% A10; Defect 22% A10)  
+- PPO / reinforcement-learning-based run-level AI, trained over many weeks, with the best win rates of any STS2 AI I'm aware of (e.g. Ironclad champion `a10_it700`: 96% A0, 56% A9, 27% A10 in the simulator at 8,000 sims per decision)  
 - **non-clairvoyant** / using chance nodes, i.e. it doesn’t cheat by exploiting the RNG or using information like which card it’s about to draw
 
 ### UI / workbench
@@ -61,19 +61,36 @@ More performance benchmarks: [benchmarks page](https://tfriedel.github.io/spire-
 method and commands:
 [`sts2-rs/docs/perf/2026-10-14-benchmarks.md`](sts2-rs/docs/perf/2026-10-14-benchmarks.md).
 
-**Current win rates** (8,000 sims per decision, 
+**Win rates of the current champions** (8,000 sims per decision, 
 measured October 2026; 200 runs per cell at A0–A8, 500 at A9–A10):
 
 | Character | A0 | A4 | A8 | A9 | A10 | Mean A0–A10 | Promotion gate (vs previous champion) |
 |---|---|---|---|---|---|---|---|
+| Ironclad | 96.0% | 95.0% | 84.5% | 56.4% | 27.2% | **83.6%** | pooled +1.6 pp, p = 0.11 (missed); promoted on A10: +6.9 pp, p = 9e-7 |
 | Defect | 93.0% | 90.5% | 70.0% | 39.2% | 22.0% | **76.1%** | +5.5 pp, p = 2e-6 |
-| Ironclad | 89.5% | 86.5% | 70.0% | 39.0% | 11.0% | **74.9%** | +5.2 pp, p = 1e-6 |
 | Silent | 78.5% | 67.5% | 55.5% | 20.0% | 9.0% | **59.9%** | +5.6 pp, p = 7e-7, all 11 levels up |
 | Regent | 67.5% | 66.0% | 43.5% | 15.6% | 6.2% | **53.8%** | +4.6 pp, p = 1e-4 |
 | Necrobinder | 66.5% | 62.5% | 44.5% | 13.8% | 5.6% | **51.7%** | +6.8 pp, p = 6e-10, all 11 levels up |
 
 Win rates for every ascension level are in the
-[docs](https://tfriedel.github.io/spire-mentor/#ai).
+[docs](https://tfriedel.github.io/spire-mentor/#ai). The table mixes two dates
+and two generations of combat search: the Ironclad row was re-measured on 26
+October 2026 with the current champion (`a10_it700`) and the combat search the
+run agent has shipped for Ironclad since 26 October (a gated layer of search
+settings plus a move prior in elite and boss fights, on top of the learned
+playout net it has used since 18 October), on that day's engine; the other four
+rows are from the 11–13 October 2026 sweep, on the engine of that time. Those
+four keep the same champions, but their combat search has used a learned
+playout net of its own since 21 October, and their rows have not been re-run
+since. Same seeds and protocol; comparisons between the Ironclad row and the
+others are descriptive. Write-ups:
+[`docs/experiments/2026-10-26-ironclad-release-winrates.md`](docs/experiments/2026-10-26-ironclad-release-winrates.md)
+and [`docs/experiments/2026-10-11-release-winrates.md`](docs/experiments/2026-10-11-release-winrates.md).
+The last column is each champion's own promotion gate, at the gates' cheaper
+1,000/4,000-sim budget, from its provenance file in `sts2-pycli/data/ppo/`.
+Ironclad's `a10_it700` missed the pooled significance bar and was promoted on
+its A10 result
+([`ppo_fullrun_ironclad_a10_it700.provenance.md`](sts2-pycli/data/ppo/ppo_fullrun_ironclad_a10_it700.provenance.md)).
 
 ## The browser workbench
 
@@ -108,7 +125,7 @@ turn or even a full run.
 You need `rustup`, `just` 1.38+, `uv`, Node 20+ and the `wasm-bindgen` CLI
 in the version the crate uses
 (`cargo install wasm-bindgen-cli --version 0.2.120 --locked`). The repo pins
-Rust 1.96 and the `wasm32-unknown-unknown` target, so `rustup` fetches those
+Rust 1.99.1 and the `wasm32-unknown-unknown` target, so `rustup` fetches those
 by itself, and the first build runs `npm install` for you. On Windows,
 `.\install-windows-deps.ps1` installs everything except `rustup`, `uv`, git
 and the VS Build Tools (see [Windows](#windows)).
@@ -182,7 +199,7 @@ There are three levels of setup, depending on what you want to work on. More
 on the prerequisites in
 [docs/bring-your-own-game.md](docs/bring-your-own-game.md).
 
-**Engine only (no game needed).** Rust 1.96 (pinned by
+**Engine only (no game needed).** Rust 1.99.1 (pinned by
 `sts2-rs/rust-toolchain.toml`), `cargo-nextest` and `just` 1.38+. `sccache`
 is optional; to use it, `export RUSTC_WRAPPER=sccache`.
 

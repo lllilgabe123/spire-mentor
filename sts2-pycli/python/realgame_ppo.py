@@ -195,6 +195,44 @@ def _card_id(c: dict[str, Any]) -> str | None:
     return _vocab_card_id(str(cid)) if cid else None
 
 
+def _alnum_upper(name: str) -> str:
+    return "".join(ch for ch in name if ch.isalnum()).upper()
+
+
+@lru_cache(maxsize=256)
+def _vocab_enchantment_id(raw: str) -> str:
+    """Bridge enchantment spelling -> the training vocab's UPPER_SNAKE id.
+
+    The wire carries the C# id entry (``NIMBLE``) or the display title
+    (``Soul's Power``); both reduce to the same alphanumeric key, which is
+    what ``EnchantmentId::from_wire_name`` matches on in the Rust lane
+    (``ppo::wire::card_enchantment``). An unknown spelling is kept verbatim so
+    it lands on the vocab's OOV row instead of reading as unenchanted.
+    """
+    key = _alnum_upper(raw.removesuffix(".title"))
+    try:
+        from ppo import vocab
+    except Exception:  # pragma: no cover - vocab needs sts2_rs
+        return raw
+    for name in vocab.enchantments().names:
+        if _alnum_upper(name) == key:
+            return name
+    return raw
+
+
+def _card_enchantment(c: dict[str, Any]) -> tuple[str, int] | None:
+    """A wire card's enchantment as ``(registry id, amount)``, or ``None`` (GH #947).
+
+    An absent ``enchantment_amount`` is one stack (PROTOCOL.md; the engine's
+    ``state_dict`` reads it the same way).
+    """
+    ench = c.get("enchantment")
+    if not ench:
+        return None
+    amount = c.get("enchantment_amount")
+    return _vocab_enchantment_id(str(ench)), int(amount) if amount is not None else 1
+
+
 @lru_cache(maxsize=1)
 def _non_removable_cards() -> frozenset[str]:
     """Card ids the game will not put on a removal screen, FROM THE ENGINE.
@@ -320,6 +358,7 @@ def _base_obs(state: dict[str, Any], run_state: dict[str, Any]) -> dict[str, Any
         "deck": [
             (_card_id(c), bool(c.get("upgrade_level")) or bool(c.get("upgraded"))) for c in deck
         ],
+        "deck_enchantments": [_card_enchantment(c) for c in deck],
         "relics": [r.get("id") for r in (run_state.get("relics") or [])],
         "potions": [p.get("id") for p in (run_state.get("potions") or []) if not p.get("empty")],
         "map": {"rows": [map_nodes], "boss": m.get("boss")} if map_nodes else None,
@@ -435,6 +474,7 @@ def _build_card_reward(state: dict[str, Any]) -> PpoDecision | None:
     obs["card_reward_option_upgraded"] = [
         bool(c.get("upgrade_level") or c.get("upgraded")) for c in cards
     ]
+    obs["card_reward_option_enchantments"] = [_card_enchantment(c) for c in cards]
     actions: list[dict[str, Any]] = []
     responses: list[dict[str, Any]] = []
     labels: list[str] = []
@@ -1170,12 +1210,14 @@ def _build_card_select(state: dict[str, Any], prev_msg_type: str | None) -> PpoD
         # ppo.env "card-pick": obs.smith_options = [card_id, ...] (plain ids,
         # rm.smith_options() shape), action smith_card idx-aligned.
         obs["smith_options"] = [_card_id(c) for c in cards]
+        obs["smith_option_enchantments"] = [_card_enchantment(c) for c in cards]
         kind = "smith_card"
     elif surface == "removal":
         # obs.card_removal_options = [(card_id, upgraded), ...].
         obs["card_removal_options"] = [
             (_card_id(c), bool(c.get("upgrade_level") or c.get("upgraded"))) for c in cards
         ]
+        obs["card_removal_option_enchantments"] = [_card_enchantment(c) for c in cards]
         kind = "remove_deck_card"
     elif surface in ("transform", "enchant"):
         # These two are shaped differently from every other surface here, and
@@ -1192,25 +1234,35 @@ def _build_card_select(state: dict[str, Any], prev_msg_type: str | None) -> PpoD
         #
         # Duplicate card ids look like they make that ambiguous. They do not,
         # for this purpose: the index is ONLY ever dereferenced to read
-        # `(card_id, upgraded)` back out, so any deck position holding the same
-        # pair produces an identical token. Two Strikes are interchangeable to
-        # the encoder. What has to be exact is the RESPONSE, and that uses the
-        # option-list index like every other surface below.
+        # `(card_id, upgraded)` and the enchantment back out, so any deck
+        # position holding the same triple produces an identical token. Two
+        # plain Strikes are interchangeable to the encoder; a Sharp Strike and
+        # a plain one are not under `card_mods` (GH #947), hence the triple.
+        # What has to be exact is the RESPONSE, and that uses the option-list
+        # index like every other surface below.
         #
         # A card the master deck does not contain (shouldn't happen — these
         # screens offer from the deck) falls to an out-of-range index, which
         # `encoder._at` degrades to the unknown-card token rather than raising.
         # That costs the net one option's identity; it does not break the
         # never-crash contract.
-        deck_pairs = obs["deck"]
-        missing = len(deck_pairs)
+        deck_triples = list(zip(obs["deck"], obs["deck_enchantments"], strict=True))
+        missing = len(deck_triples)
         idxs: list[int] = []
         for c in cards:
             pair = (
                 _card_id(c),
                 bool(c.get("upgrade_level")) or bool(c.get("upgraded")),
             )
-            idxs.append(deck_pairs.index(pair) if pair in deck_pairs else missing)
+            triple = (pair, _card_enchantment(c))
+            if triple in deck_triples:
+                idxs.append(deck_triples.index(triple))
+            else:
+                # A screen whose option omits the enchantment its deck copy
+                # carries still names that card: fall back to the pair match
+                # the pre-#947 code used rather than dropping its identity.
+                pairs = [p for p, _ in deck_triples]
+                idxs.append(pairs.index(pair) if pair in pairs else missing)
         if surface == "transform":
             obs["transform_select_deck_indices"] = idxs
             kind = "transform_deck_card"
@@ -1231,6 +1283,7 @@ def _build_card_select(state: dict[str, Any], prev_msg_type: str | None) -> PpoD
         obs["card_grant_options"] = [
             (_card_id(c), bool(c.get("upgrade_level") or c.get("upgraded"))) for c in cards
         ]
+        obs["card_grant_option_enchantments"] = [_card_enchantment(c) for c in cards]
         kind = "grant_deck_card"
     for i, c in enumerate(cards):
         actions.append({"action": kind, "idx": i})

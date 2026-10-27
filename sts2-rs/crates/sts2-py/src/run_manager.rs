@@ -525,6 +525,12 @@ impl PyRunManager {
         emit_rm::card_grant_options(&self.inner)
     }
 
+    /// Enchantment per grant option, index-aligned with
+    /// [`Self::card_grant_options`]. GH #947.
+    fn card_grant_option_enchantments(&self) -> Vec<Option<(String, i64)>> {
+        emit_rm::card_grant_option_enchantments(&self.inner)
+    }
+
     /// `true` while the current card offering is a *choose screen* (C#
     /// `FromChooseACardScreen` — HeftyTablet's 3 Rares, LeadPaperweight's
     /// 2 Colorless): a UI host should render a skippable 1-of-N
@@ -578,6 +584,12 @@ impl PyRunManager {
 
     fn smith_options(&self) -> Vec<String> {
         emit_rm::smith_options(&self.inner)
+    }
+
+    /// Enchantment per Smith option, index-aligned with
+    /// [`Self::smith_options`]. GH #947.
+    fn smith_option_enchantments(&self) -> Vec<Option<(String, i64)>> {
+        emit_rm::smith_option_enchantments(&self.inner)
     }
 
     /// 3-tuple of `SCREAMING_SNAKE_CASE` relic ids `(positive_1,
@@ -1018,6 +1030,12 @@ impl PyRunManager {
         emit_rm::master_deck_detailed(&self.inner)
     }
 
+    /// Each deck card's enchantment as `(UPPER_SNAKE id, amount)` or `None`,
+    /// index-aligned with [`Self::master_deck_detailed`]. GH #947.
+    fn master_deck_enchantments(&self) -> Vec<Option<(String, i64)>> {
+        emit_rm::master_deck_enchantments(&self.inner)
+    }
+
     /// `(card_id, upgraded)` for the pending deck-removal offer, in C#
     /// `FromDeckForRemoval` order (removable cards only, Curse-type sorted to
     /// the front). The workbench renders these as the removal `card_select`
@@ -1026,6 +1044,12 @@ impl PyRunManager {
     /// `RunState::removal_offer_order`. Bead: deck-removal curse-front parity.
     fn card_removal_options(&self) -> Vec<(String, bool)> {
         emit_rm::card_removal_options(&self.inner)
+    }
+
+    /// Enchantment per removal option, index-aligned with
+    /// [`Self::card_removal_options`]. GH #947.
+    fn card_removal_option_enchantments(&self) -> Vec<Option<(String, i64)>> {
+        emit_rm::card_removal_option_enchantments(&self.inner)
     }
 
     /// Append a card to the master deck by id (e.g. `"CARD.STRIKE"` or
@@ -1251,6 +1275,13 @@ impl PyRunManager {
     /// (GH #545).
     fn card_reward_option_upgraded(&self) -> Vec<bool> {
         emit_rm::card_reward_option_upgraded(&self.inner)
+    }
+
+    /// Per-option enchantment (a relic stamp, GH #806), index-aligned with
+    /// [`Self::card_reward_option_ids`]; shorter (or empty) means "not
+    /// enchanted". GH #947.
+    fn card_reward_option_enchantments(&self) -> Vec<Option<(String, i64)>> {
+        emit_rm::card_reward_option_enchantments(&self.inner)
     }
 
     /// When the current `CardReward` offering is a Scroll Boxes bundle pick,

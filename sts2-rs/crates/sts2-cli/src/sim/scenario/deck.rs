@@ -801,8 +801,7 @@ mod tests {
 
     #[test]
     fn rejects_oversized_deck() {
-        let huge = std::iter::repeat("Strike")
-            .take(MAX_DECK_SIZE + 1)
+        let huge = std::iter::repeat_n("Strike", MAX_DECK_SIZE + 1)
             .collect::<Vec<_>>()
             .join(",");
         let err = resolve_deck(&DeckInput::Inline(huge), PlayerClass::Ironclad).unwrap_err();

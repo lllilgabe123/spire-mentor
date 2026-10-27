@@ -96,6 +96,8 @@ pub mod event_log;
 // extend with player turn-start, end-turn pipeline, enemy turn execution,
 // and `check_combat_end`.
 pub mod combat_loop;
+// Co-op: teammates as whole players, seated one at a time.
+pub mod coop;
 
 // Phase 4 (bead sts2-rs-pg5 P4-3): stub monster system + 5 Act-1 enemies.
 // Hand-coded `roll_intent(rng, history) -> Intent` per enemy; Phase 5's
@@ -3828,6 +3830,15 @@ pub struct CombatState {
     /// surfacing again (C# `DoSelectCards`, `RunSimulator.cs:2165`). Raised by
     /// the resume path, lowered when it returns. `false` at rest (not hashed).
     pub autoplay_inline_resolve: bool,
+    /// Mirror of C# `CardSelectCmd.PushSelector(new VakuuCardSelector())`,
+    /// which `WhisperingEarring.AfterAutoPrePlayPhaseEnteredLate` holds for the
+    /// whole of its turn-1 auto-play loop (`WhisperingEarring.cs`). While it is
+    /// raised, every card selection opened by those plays resolves INLINE and
+    /// never surfaces, taking the first `max_select` options in order
+    /// (`VakuuCardSelector.GetSelectedCards` = `options.Take(maxSelect)`) —
+    /// not the `min_select.max(1)` prefix of [`Self::autoplay_inline_resolve`].
+    /// Raised and lowered inside one `apply()`; `false` at rest (not hashed).
+    pub vakuu_selector: bool,
     pub combat_log: TurnEvents,
 
     /// Cards stolen from the run deck this combat by `SwipePower` thieves
@@ -3841,6 +3852,11 @@ pub struct CombatState {
     /// is scaled by `GoldProportion = 1 - escaped / total_monsters`
     /// (`CombatRoom.cs:216`) at `exit_combat`. Bead `sts2-rs-RP15`.
     pub escaped_creatures: u32,
+
+    /// Co-op seats: the round the teammates are simulated for, who still has
+    /// a play phase ahead, and what each seat owns off [`PlayerCombatState`].
+    /// `Default` solo. See [`coop`].
+    pub coop: coop::CoopState,
 
     /// Gold recovered this combat by KILLING a `HeistPower` carrier (C#
     /// `HeistPower.BeforeDeath` → `CombatRoom.AddExtraReward(player, new
@@ -4076,9 +4092,11 @@ impl Default for CombatState {
             pending_end_turn_resume: None,
             pending_autoplay_resume: None,
             autoplay_inline_resolve: false,
+            vakuu_selector: false,
             combat_log: TurnEvents::default(),
             swipe_stolen: Vec::new(),
             escaped_creatures: 0,
+            coop: crate::coop::CoopState::default(),
             heist_recovered_gold: 0,
             event_combat_timed_out: false,
             gold: 0,
@@ -5221,6 +5239,24 @@ impl CombatState {
         out
     }
 
+    /// Remove power `pid` from the arena and from every list that names it:
+    /// the player's legacy list, each creature's, and each co-op seat's
+    /// (an ally's list and its [`coop::SeatStash`]), so a teammate's
+    /// instance leaves no dangling uid behind.
+    pub fn drop_power(&mut self, pid: NonZeroU32) {
+        self.powers.retain(|p| p.id != pid);
+        self.player.powers.retain(|u| u.0 != pid);
+        for c in &mut self.creatures {
+            c.powers.retain(|u| u.0 != pid);
+        }
+        for a in &mut self.allies {
+            a.powers.retain(|u| u.0 != pid);
+        }
+        for s in &mut self.coop.stash {
+            s.powers.retain(|u| u.0 != pid);
+        }
+    }
+
     /// Count living player-side **ally** creatures (NOT counting the
     /// player itself): summoned allies in [`Self::allies`] plus a living
     /// Osty pet (`player.pet_uid`). Used for DieForYou / pet-aware logic.
@@ -5250,6 +5286,19 @@ impl CombatState {
     #[must_use]
     pub fn has_any_ally_card_target(&self) -> bool {
         self.allies.iter().any(|a| a.current_hp > 0)
+    }
+
+    /// The teammate an `AnyAlly` card lands on: the first living ally, as an
+    /// index into [`Self::allies`]. `None` when there is none, which is also
+    /// when such a card is unplayable ([`Self::has_any_ally_card_target`]).
+    ///
+    /// C# lets the player pick any living teammate. With two players there is
+    /// only one; with three or four the simulation always picks the first,
+    /// and the mod's autoplay aims at the same one (`$.allies` order).
+    #[must_use]
+    pub fn any_ally_card_target(&self) -> Option<u8> {
+        let i = self.allies.iter().position(|a| a.current_hp > 0)?;
+        u8::try_from(i).ok()
     }
 
     /// Sum the player's instances of `kind` across the mirror+legacy
@@ -5632,7 +5681,7 @@ impl CombatState {
                 self.powers
                     .iter()
                     .find(|p| p.id == u.0)
-                    .map_or(true, |p| p.kind != PowerKind::DieForYou)
+                    .is_none_or(|p| p.kind != PowerKind::DieForYou)
             })
             .map(|u| u.0)
             .collect();
@@ -7599,8 +7648,14 @@ impl CombatState {
             // Skipped entirely when no Automation is live (`present_kinds`
             // superset gate hoisted above — the walk could never match).
             if automation_present {
+                // Co-op: only the drawer's instances count their draws
+                // (C# `AutomationPower.cs:38`); a waiting teammate's row
+                // stays in the arena.
+                let seated = crate::coop::has_seats(self).then(|| self.player_power_uids());
                 for p in &mut self.powers {
-                    if p.kind == PowerKind::Automation {
+                    if p.kind == PowerKind::Automation
+                        && seated.as_ref().is_none_or(|s| s.contains(&PowerUid(p.id)))
+                    {
                         let new_counter = p.counter.saturating_add(1);
                         if new_counter >= 10 {
                             p.counter = 0;
@@ -8018,7 +8073,7 @@ impl CombatState {
                 |uid| {
                     cards
                         .get(uid.0.get() as usize - 1)
-                        .map_or(true, |c| !crate::card_effects::card_innate_inst(c))
+                        .is_none_or(|c| !crate::card_effects::card_innate_inst(c))
                 },
             )
         } else {
@@ -10337,19 +10392,20 @@ fn resolve_foregone_conclusion_from_draw(
     }
     // C# `PowerCmd.Remove(this)`: strip the foregone power(s) now that the
     // (deferred) select has resolved. Re-scan by kind — the surfacing hook
-    // intentionally did NOT remove them.
+    // intentionally did NOT remove them. The drawer's own only: a waiting
+    // teammate's row stays in the arena.
+    let seated = state.player_power_uids();
     let foregone_ids: Vec<_> = state
         .powers
         .iter()
-        .filter(|p| p.kind == crate::powers::PowerKind::ForegoneConclusion)
+        .filter(|p| {
+            p.kind == crate::powers::PowerKind::ForegoneConclusion
+                && seated.contains(&PowerUid(p.id))
+        })
         .map(|p| p.id)
         .collect();
     for pid in foregone_ids {
-        state.powers.retain(|p| p.id != pid);
-        state.player.powers.retain(|u| u.0 != pid);
-        for c in &mut state.creatures {
-            c.powers.retain(|u| u.0 != pid);
-        }
+        state.drop_power(pid);
     }
 }
 
@@ -11297,6 +11353,116 @@ pub fn loot_at_risk_hp_equiv(state: &CombatState) -> f32 {
     };
 
     cards + gold + escape
+}
+
+/// HP-equivalent of one point of max HP beyond the current-HP gain that
+/// [`evaluate_victory`] already counts: a higher ceiling lets later rest-site
+/// and percentage heals restore more. A rough half-HP per point. GH #839.
+pub const PERSISTENT_MAX_HP_HP_EQUIV: f32 = 0.5;
+
+/// HP-equivalent of one point of permanent card growth (a Genetic Algorithm
+/// block point or a Scythe damage point) per future play. Block overflows and
+/// damage only shortens fights, so a point is worth under one HP. GH #839.
+pub const PERSISTENT_GROWTH_HP_EQUIV: f32 = 0.5;
+
+/// Expected plays per future fight of a run-scaling card. Both scalers
+/// Exhaust, so it is at most one play per fight, less the fights it is not
+/// drawn in. GH #839.
+pub const PERSISTENT_SCALER_PLAYS_PER_FIGHT: f32 = 0.7;
+
+/// Rough combats per act (hallway fights, elites and the boss) for the
+/// remaining-run estimate in [`persistent_combats_left`]. GH #839.
+pub const PERSISTENT_COMBATS_PER_ACT: f32 = 9.0;
+
+/// Acts in a run, for [`persistent_combats_left`]. A10's second final boss
+/// is ignored: it is one fight. GH #839.
+const PERSISTENT_RUN_ACTS: u8 = 3;
+
+/// Run-level values a search measures persistent gains against: the search
+/// ROOT's max HP, theft-adjusted gold and run-scaling card stats. Siblings
+/// share the root, so pricing the change from it ranks actions exactly as a
+/// combat-start baseline would, and it needs no extra `CombatState` field
+/// (live-bridge and fixture states carry no combat-start snapshot). GH #839.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PersistentBaseline {
+    pub max_hp: i32,
+    pub gold: i32,
+    pub scaled_stat_total: i32,
+}
+
+impl PersistentBaseline {
+    #[must_use]
+    pub fn of(state: &CombatState) -> Self {
+        Self {
+            max_hp: state.player.max_hp,
+            gold: gold_excluding_theft(state),
+            scaled_stat_total: run_scaled_stat_total(state),
+        }
+    }
+}
+
+/// `state.gold` with every coin a thief took added back. Theft lowers
+/// `state.gold` directly (`ThieveryPower`), and [`loot_at_risk_hp_equiv`]
+/// already charges the gold still outstanding, so the persistent-gain term
+/// must not see it a second time. Outstanding plus recovered is the full
+/// amount taken whether or not the thief's power outlives its death.
+fn gold_excluding_theft(state: &CombatState) -> i32 {
+    state.gold + stolen_gold_outstanding(state) + state.heist_recovered_gold.max(0)
+}
+
+/// Sum of the run-persistent stat over every run-scaling card in the combat
+/// arena ([`cards::run_persistent_scaled_stat`]). The arena keeps exhausted
+/// cards, so a played Genetic Algorithm still counts.
+fn run_scaled_stat_total(state: &CombatState) -> i32 {
+    state
+        .cards
+        .iter()
+        .filter_map(|c| cards::run_persistent_scaled_stat(c.card_id).map(|s| s.get(c)))
+        .sum()
+}
+
+/// Estimated combats left in the run after this one: the acts after this
+/// one, plus half of this act unless this is its boss. Zero at the final
+/// boss, so a gain there is worth nothing. GH #839.
+#[must_use]
+pub fn persistent_combats_left(state: &CombatState) -> f32 {
+    let act = state.act_index.clamp(1, PERSISTENT_RUN_ACTS);
+    let acts_after = f32::from(PERSISTENT_RUN_ACTS - act);
+    let this_act = if state.is_boss {
+        0.0
+    } else {
+        PERSISTENT_COMBATS_PER_ACT / 2.0
+    };
+    acts_after * PERSISTENT_COMBATS_PER_ACT + this_act
+}
+
+/// HP-equivalent value of the gains this position has made since the search
+/// root that outlast the combat. Signed: Debt's gold loss and Brightest
+/// Flame's max-HP loss count against. Three terms:
+///
+/// * **Max HP** (Feed): the change times [`PERSISTENT_MAX_HP_HP_EQUIV`].
+/// * **Gold** (Hand of Greed, Debt), theft excluded: the change times
+///   [`LOOT_GOLD_HP_EQUIV`].
+/// * **Card growth** (Genetic Algorithm, The Scythe; GH #838 carries it to
+///   the next fight): the change times [`PERSISTENT_GROWTH_HP_EQUIV`] times
+///   the expected future plays.
+///
+/// The first two shrink linearly with the run left; growth scales with the
+/// combats left directly. GH #839.
+#[must_use]
+pub fn persistent_gain_hp_equiv(state: &CombatState, baseline: &PersistentBaseline) -> f32 {
+    let combats_left = persistent_combats_left(state);
+    let run_left = combats_left / (f32::from(PERSISTENT_RUN_ACTS) * PERSISTENT_COMBATS_PER_ACT);
+    #[allow(clippy::cast_precision_loss)]
+    let max_hp = (state.player.max_hp - baseline.max_hp) as f32 * PERSISTENT_MAX_HP_HP_EQUIV;
+    #[allow(clippy::cast_precision_loss)]
+    let gold = (gold_excluding_theft(state) - baseline.gold) as f32 * LOOT_GOLD_HP_EQUIV;
+    #[allow(clippy::cast_precision_loss)]
+    let growth = (run_scaled_stat_total(state) - baseline.scaled_stat_total).max(0) as f32
+        * PERSISTENT_GROWTH_HP_EQUIV
+        * PERSISTENT_SCALER_PLAYS_PER_FIGHT
+        * combats_left;
+    (max_hp + gold) * run_left + growth
 }
 
 /// In-progress (depth-cap leaf) player-HP weight — the tuned base
@@ -12848,101 +13014,17 @@ pub fn effective_star_cost_in_combat(state: &CombatState, card: &crate::cards::C
     base
 }
 
-#[must_use]
-pub fn legal_actions(state: &CombatState) -> SmallVec<[Action; 16]> {
-    let mut out: SmallVec<[Action; 16]> = SmallVec::new();
-    if state.is_over {
-        return out;
-    }
-    if let Some(pc) = state.pending_choice.as_ref() {
-        // Bead sts2-rs-419n: enumerate one `ResolveChoice` per legal
-        // selection. For single-pick choices (Headbutt's `PutBack`),
-        // that's one entry per option. For variable-pick choices with
-        // `can_skip`, an empty selection is also legal. Multi-pick
-        // (max_select > 1) combinatorial enumeration is gated to single-
-        // pick at this pin to avoid a 2^N explosion — sub-beads will
-        // land Forethought / Ashwater fan-outs when their resolvers are
-        // wired. If the option list is empty (e.g. discard-empty
-        // Headbutt), emit a single empty selection so the rollout can
-        // advance past the choice (Python auto-resolves empty choices
-        // by short-circuiting before opening one; we mirror that here).
-        if pc.options.is_empty() || pc.max_select == 0 {
-            out.push(Action::ResolveChoice {
-                selection: SmallVec::new(),
-            });
-        } else if pc.max_select == 1 {
-            #[allow(clippy::cast_possible_truncation)]
-            for i in 0..pc.options.len() {
-                let mut sel: SmallVec<[u8; 4]> = SmallVec::new();
-                sel.push(i as u8);
-                out.push(Action::ResolveChoice { selection: sel });
-            }
-            if pc.can_skip || pc.min_select == 0 {
-                out.push(Action::ResolveChoice {
-                    selection: SmallVec::new(),
-                });
-            }
-        } else {
-            // Multi-pick (`max_select > 1`). Bead `sts2-rs-sopgf`:
-            // SEQUENTIAL single-pick decomposition so MCTS can choose
-            // *which* cards a multi-pick adds (Dredge "add up to N discard
-            // cards"), without a `C(n,k)` subset enumeration. Each node
-            // branches at most N ways (one incremental pick per still-
-            // unpicked option) and the tree is at most K deep. Progress is
-            // carried in `pc.picked` (the ORIGINAL option indices chosen so
-            // far); `options` is never mutated, so indices stay stable.
-            //
-            // Each emitted incremental `ResolveChoice { [i] }` appends `i`
-            // to `picked` and RE-OPENS the same choice (no effect fires); a
-            // FINALIZE `ResolveChoice { [] }` runs the per-`ChoiceKind`
-            // resolver ONCE over the full accumulated set. See
-            // [`resolve_choice_action`] for the accumulation/finalize split
-            // and [`resolve_choice_atomic`] for the parity-safe one-shot
-            // path the replay/oracle drivers use.
-            let picked_n = pc.picked.len();
-            let max_n = usize::from(pc.max_select);
-            if picked_n >= max_n {
-                // Reached the cap: FINALIZE is the ONLY legal action —
-                // no further picks (the `+1 == max_select` incremental
-                // path already auto-finalized, so this is the defensive
-                // floor for a choice re-opened exactly at `max_select`).
-                out.push(Action::ResolveChoice {
-                    selection: SmallVec::new(),
-                });
-            } else {
-                // FINALIZE is legal once the minimum is satisfied (the
-                // player may stop early), OR when zero picks already
-                // satisfy a skippable choice and nothing is picked yet.
-                if picked_n >= usize::from(pc.min_select)
-                    || ((pc.can_skip || pc.min_select == 0) && picked_n == 0)
-                {
-                    out.push(Action::ResolveChoice {
-                        selection: SmallVec::new(),
-                    });
-                }
-                // One incremental pick per option NOT already in `picked`,
-                // in ascending option order (so the deterministic drainers
-                // accumulate `[0, 1, …, min-1]` — byte-identical to the
-                // prior "first-K" selection).
-                #[allow(clippy::cast_possible_truncation)]
-                for i in 0..pc.options.len() {
-                    let idx = i as u8;
-                    if pc.picked.contains(&idx) {
-                        continue;
-                    }
-                    let mut sel: SmallVec<[u8; 4]> = SmallVec::new();
-                    sel.push(idx);
-                    out.push(Action::ResolveChoice { selection: sel });
-                }
-            }
-        }
-        return out;
-    }
-    if state.phase != CombatPhase::PlayerPlayPhase {
-        out.push(Action::EndTurn);
-        return out;
-    }
-
+/// Push one `PlayCard` action per playable hand card (per alive enemy for
+/// an `Enemy`-target card) onto `out` — the card half of [`legal_actions`],
+/// with no phase / pending-choice / `is_over` gate of its own.
+///
+/// Split out so the Whispering Earring's turn-1 auto-play loop can ask C#'s
+/// `CardModel.CanPlay()` question ("first card in hand that can be played")
+/// through the SAME gates the legal-action surface uses, while the player is
+/// still in the AutoPrePlay phase (where `legal_actions` itself only offers
+/// `EndTurn`). Emission order is unchanged: `legal_actions` calls this first.
+#[inline]
+pub(crate) fn push_card_play_actions(state: &CombatState, out: &mut SmallVec<[Action; 16]>) {
     // Player card plays.
     let alive_enemies: SmallVec<[u8; 8]> = state
         .enemy_uids
@@ -13334,6 +13416,104 @@ pub fn legal_actions(state: &CombatState) -> SmallVec<[Action; 16]> {
             }
         }
     }
+}
+
+#[must_use]
+pub fn legal_actions(state: &CombatState) -> SmallVec<[Action; 16]> {
+    let mut out: SmallVec<[Action; 16]> = SmallVec::new();
+    if state.is_over {
+        return out;
+    }
+    if let Some(pc) = state.pending_choice.as_ref() {
+        // Bead sts2-rs-419n: enumerate one `ResolveChoice` per legal
+        // selection. For single-pick choices (Headbutt's `PutBack`),
+        // that's one entry per option. For variable-pick choices with
+        // `can_skip`, an empty selection is also legal. Multi-pick
+        // (max_select > 1) combinatorial enumeration is gated to single-
+        // pick at this pin to avoid a 2^N explosion — sub-beads will
+        // land Forethought / Ashwater fan-outs when their resolvers are
+        // wired. If the option list is empty (e.g. discard-empty
+        // Headbutt), emit a single empty selection so the rollout can
+        // advance past the choice (Python auto-resolves empty choices
+        // by short-circuiting before opening one; we mirror that here).
+        if pc.options.is_empty() || pc.max_select == 0 {
+            out.push(Action::ResolveChoice {
+                selection: SmallVec::new(),
+            });
+        } else if pc.max_select == 1 {
+            #[allow(clippy::cast_possible_truncation)]
+            for i in 0..pc.options.len() {
+                let mut sel: SmallVec<[u8; 4]> = SmallVec::new();
+                sel.push(i as u8);
+                out.push(Action::ResolveChoice { selection: sel });
+            }
+            if pc.can_skip || pc.min_select == 0 {
+                out.push(Action::ResolveChoice {
+                    selection: SmallVec::new(),
+                });
+            }
+        } else {
+            // Multi-pick (`max_select > 1`). Bead `sts2-rs-sopgf`:
+            // SEQUENTIAL single-pick decomposition so MCTS can choose
+            // *which* cards a multi-pick adds (Dredge "add up to N discard
+            // cards"), without a `C(n,k)` subset enumeration. Each node
+            // branches at most N ways (one incremental pick per still-
+            // unpicked option) and the tree is at most K deep. Progress is
+            // carried in `pc.picked` (the ORIGINAL option indices chosen so
+            // far); `options` is never mutated, so indices stay stable.
+            //
+            // Each emitted incremental `ResolveChoice { [i] }` appends `i`
+            // to `picked` and RE-OPENS the same choice (no effect fires); a
+            // FINALIZE `ResolveChoice { [] }` runs the per-`ChoiceKind`
+            // resolver ONCE over the full accumulated set. See
+            // [`resolve_choice_action`] for the accumulation/finalize split
+            // and [`resolve_choice_atomic`] for the parity-safe one-shot
+            // path the replay/oracle drivers use.
+            let picked_n = pc.picked.len();
+            let max_n = usize::from(pc.max_select);
+            if picked_n >= max_n {
+                // Reached the cap: FINALIZE is the ONLY legal action —
+                // no further picks (the `+1 == max_select` incremental
+                // path already auto-finalized, so this is the defensive
+                // floor for a choice re-opened exactly at `max_select`).
+                out.push(Action::ResolveChoice {
+                    selection: SmallVec::new(),
+                });
+            } else {
+                // FINALIZE is legal once the minimum is satisfied (the
+                // player may stop early), OR when zero picks already
+                // satisfy a skippable choice and nothing is picked yet.
+                if picked_n >= usize::from(pc.min_select)
+                    || ((pc.can_skip || pc.min_select == 0) && picked_n == 0)
+                {
+                    out.push(Action::ResolveChoice {
+                        selection: SmallVec::new(),
+                    });
+                }
+                // One incremental pick per option NOT already in `picked`,
+                // in ascending option order (so the deterministic drainers
+                // accumulate `[0, 1, …, min-1]` — byte-identical to the
+                // prior "first-K" selection).
+                #[allow(clippy::cast_possible_truncation)]
+                for i in 0..pc.options.len() {
+                    let idx = i as u8;
+                    if pc.picked.contains(&idx) {
+                        continue;
+                    }
+                    let mut sel: SmallVec<[u8; 4]> = SmallVec::new();
+                    sel.push(idx);
+                    out.push(Action::ResolveChoice { selection: sel });
+                }
+            }
+        }
+        return out;
+    }
+    if state.phase != CombatPhase::PlayerPlayPhase {
+        out.push(Action::EndTurn);
+        return out;
+    }
+
+    push_card_play_actions(state, &mut out);
 
     // Potions. Bead sts2-rs-13q (P7-6) emits Action::DrinkPotion per
     // occupied slot in `state.player.potions`, gated by the per-potion

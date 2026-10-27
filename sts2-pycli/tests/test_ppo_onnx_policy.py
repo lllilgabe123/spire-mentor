@@ -167,8 +167,11 @@ class TestParityWithRecordedTorch:
         # the assertion silently became "the champion is stale" instead of "the
         # graph matches the encoder that feeds it". A champion exported at a
         # narrower schema than the encoder produces is exactly the mismatch
-        # worth failing on.
-        assert policy.n_cont == schema.N_CONT
+        # worth failing on. The one exception is an APPENDED slot a champion
+        # predates: `C_ENCH_AMT` (GH #947, `card_mods`) is the trailing cont
+        # column and both consumers slice it off a 25-cont graph, so the
+        # pre-#947 width is the only narrower one allowed here.
+        assert policy.n_cont in (schema.N_CONT, schema.C_ENCH_AMT)
         assert policy.n_cat == schema.N_CAT
 
 

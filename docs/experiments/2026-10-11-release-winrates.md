@@ -5,6 +5,29 @@ These are the numbers to quote for the release. The per-level tables in the
 champion provenance files are promotion-gate measurements and are not
 comparable to these or to each other (see "Why not the gate numbers").
 
+> **The Ironclad column was re-measured on 2026-10-26**
+> (`2026-10-26-ironclad-release-winrates.md`), with the current champion
+> `a10_it700` and the shipped Ironclad search default (GH #830: the forms +
+> combo knobs in every fight and a built-in BC move prior in elite and boss
+> fights), on engine `0181fa552`. Same protocol (`net_greedy`, 8,000 sims
+> per decision in one tree, boss fights included), seeds and n: A0 96.0,
+> A1 99.0, A2 93.5, A3 94.0, A4 95.0, A5 91.5, A6 93.5, A7 88.5, A8 84.5
+> (n = 200 each), A9 56.4, A10 27.2 (n = 500 each), mean A0–A10 83.6.
+> The tables below stay as the record of this sweep: their Ironclad column is
+> `plr_it550` on engine `0cab615a3`. A newer wheel is not expected to
+> reproduce it (untested): besides the old knob values and
+> `STS2_RUNAI_PRIOR_NET=off`, it would need `rollout_policy=heuristic` to turn
+> off the `rl2` playout net (PR #816, compiled in since 2026-10-18), and 690
+> engine commits separate `0cab615a3` from `0181fa552`.
+> The other four columns were not re-run. They are the latest measured
+> release numbers for those characters, but not their current stack: each
+> one's combat search has shipped a built-in playout net since 2026-10-21
+> (GH #822–#825), after this sweep. The one release-protocol check since, a
+> private one on 2026-10-21 (`defect-playout-net.md`), measured Defect A10
+> with its net at 23.2% (116/500; `deckmut_it150` re-exported for the v0.111
+> vocabulary, `net_greedy`, 8,000 sims, the same 500 seeds) against 22.0%
+> below.
+
 Data, driver and summary script: `logs/2026-10-11-release-winrates/`
 (`summary.csv` per cell, `runs.csv` per run, `run.sh`, `summarize.py`). That
 directory stays in the private monorepo; the public snapshot carries this
@@ -50,7 +73,15 @@ Win rate in %, Wilson 95% interval in brackets.
 The mean is unweighted across the 11 levels.
 
 - Defect and Ironclad are tied through A9; at A10 Defect wins twice as often
-  (22.0% vs 11.0%, intervals disjoint).
+  (22.0% vs 11.0%, intervals disjoint). This holds for the 2026-10-11
+  Ironclad column only. Re-measured on 2026-10-26 (`a10_it700`, the #830
+  default, engine `0181fa552`), Ironclad is ahead of this Defect column at
+  A9 (56.4% vs 39.2%, n = 500 each, intervals disjoint, two-proportion
+  p ≈ 5e-8). At A10 the gap (27.2% vs 22.0%) is within noise: the intervals
+  overlap ([23.5–31.3] vs [18.6–25.8]), p ≈ 0.06. Against Defect with its
+  own playout net (23.2% at A10, same seeds and budget; note above) the gap
+  is 4.0pp, p ≈ 0.15. These comparisons cross engines and search stacks, so
+  they are descriptive.
 - Silent is third. Regent and Necrobinder are statistically tied from A3 on.
 - Every character drops 15–30pp from A8 to A9 and roughly halves again at
   A10. The old gate panels show the same A8 → A9 cliff, so it is a property of

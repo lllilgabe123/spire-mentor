@@ -6,3 +6,5 @@
 justfile text eol=lf
 sts2-rs/tests/parity/** text eol=lf
 sts2-pycli/python/fixtures/*.jsonl text eol=lf
+docs/experiments/2026-10-26-ic-a10-it700-standard-eval/** text eol=lf
+docs/experiments/2026-10-26-ironclad-release-winrates/** text eol=lf

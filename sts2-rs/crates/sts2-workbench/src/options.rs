@@ -96,7 +96,7 @@ pub fn normalize_options(state: &Value) -> Vec<Value> {
                     )
                 })
                 .collect();
-            if py::get_raw(state, "can_skip").map_or(true, py::truthy) {
+            if py::get_raw(state, "can_skip").is_none_or(py::truthy) {
                 out.push(opt(
                     Value::from("Skip"),
                     "skip_card_reward",
@@ -197,7 +197,7 @@ pub fn normalize_options(state: &Value) -> Vec<Value> {
                     .filter(|v| py::truthy(v))
                     .cloned()
                     .unwrap_or_else(|| name_or_indexed(o, "Option"));
-                let enabled = py::get_raw(o, "is_enabled").map_or(true, py::truthy);
+                let enabled = py::get_raw(o, "is_enabled").is_none_or(py::truthy);
                 opt(
                     label,
                     "choose_option",

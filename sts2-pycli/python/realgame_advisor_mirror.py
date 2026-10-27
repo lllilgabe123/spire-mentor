@@ -151,6 +151,7 @@ class AdvisorMirror:
             "unfollowable": 0,
             "turns_followed": 0,
             "stale_reports_skipped": 0,
+            "teammate_adopted": 0,
         }
         #: Why the searched rung declined, by reason. The first live runs
         #: showed 8-10% of in-combat selections being searched and the rest
@@ -163,6 +164,9 @@ class AdvisorMirror:
         #: co-op run desyncs at 2-3x the solo rate, and only the paths can
         #: tell a teammate's move from an engine gap.
         self.desync_paths: dict[str, int] = {}
+        #: Co-op enemy-side diffs the mirror adopted instead of reporting
+        #: (a teammate's moves), by the same folded path.
+        self.adopted_paths: dict[str, int] = {}
         self._said: set[str] = set()
         #: The card whose play this advisor REPLAYED to answer a select, and
         #: the seed generation it was replayed under. See
@@ -254,6 +258,8 @@ class AdvisorMirror:
         self._catch_up_turns(wire)
         if self._mirror is None:
             return None
+        # Co-op: the teammate's moves land on the enemies between ours.
+        self._mirror.teammates = max(0, int(state.get("player_count") or 1) - 1)
         try:
             desyncs = self._mirror.reconcile(wire)
         except MirrorDivergence as exc:
@@ -276,6 +282,11 @@ class AdvisorMirror:
         for d in desyncs or []:
             key = _INDEX_RE.sub("[]", d.path)
             self.desync_paths[key] = self.desync_paths.get(key, 0) + 1
+        adopted = self._mirror.last_adopted if self._mirror is not None else []
+        self.stats["teammate_adopted"] += len(adopted)
+        for d in adopted:
+            key = _INDEX_RE.sub("[]", d.path)
+            self.adopted_paths[key] = self.adopted_paths.get(key, 0) + 1
         return self.live
 
     def _catch_up_turns(self, wire: dict[str, Any]) -> None:
@@ -1519,6 +1530,8 @@ class AdvisorMirror:
         why = ", ".join(f"{k} x{v}" for k, v in sorted(self.declines.items()))
         top = sorted(self.desync_paths.items(), key=lambda kv: (-kv[1], kv[0]))[:6]
         paths = ", ".join(f"{k} x{v}" for k, v in top)
+        top_adopted = sorted(self.adopted_paths.items(), key=lambda kv: (-kv[1], kv[0]))[:6]
+        adopted = ", ".join(f"{k} x{v}" for k, v in top_adopted)
         return (
             f"mirror: {s['reconciles']} reconciles, {s['desyncs']} desyncs, "
             f"{s['followed']} plays + {s['turns_followed']} turns followed "
@@ -1532,4 +1545,5 @@ class AdvisorMirror:
             )
             + (f" | declined: {why}" if why else "")
             + (f" | desynced: {paths}" if paths else "")
+            + (f" | teammate-adopted: {adopted}" if adopted else "")
         )

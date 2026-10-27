@@ -8,8 +8,10 @@ use super::prelude::*;
 ///
 /// `AnyAlly` — unplayable in single-player (`card_effects::card_is_any_ally`).
 pub(crate) fn play_fade(_state: &mut CombatState, _t: Option<CreatureUid>) -> EffectResult {
-    // TODO(S8b #794): FadePower 6 (upg 9) on the target ally once the power is
-    // ported. Unreachable in single-player (AnyAlly, no allies).
+    // C# `PowerCmd.Apply<FadePower>(cardPlay.Target, 6 (upg 9))` — all of it lands on the co-op teammate
+    // (`cardPlay.Target`), whose turn is not simulated, so playing it
+    // changes nothing here but the energy and the card's own pile move.
+    // Unplayable without a living teammate (`card_is_any_ally`).
     EffectResult::Resolved
 }
 

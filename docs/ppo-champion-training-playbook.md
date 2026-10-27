@@ -148,7 +148,9 @@ each combat root's visit and value sums. It is also faster:
 
 On a 31–82 h campaign that saves hours, and the build costs about a quarter of
 an hour: 14.4 min measured end to end on the dev host, plus ~3 min for the
-plain build after an engine edit. So build it first:
+plain build after an engine edit. Since GH #830 (2026-10-25) the default
+profile workload's Ironclad runs also play the shipped Ironclad search, so the
+profile covers the BC move prior in elite and boss fights. So build it first:
 
 ```bash
 cd sts2-pycli
@@ -193,8 +195,9 @@ These replace it with a plain build, and the guard catches each at launch:
   `cache-keys` name** (`sts2-rs/crates/sts2-py/pyproject.toml`): that
   `pyproject.toml` itself, every `.rs` and `Cargo.toml` under
   `sts2-rs/crates/`, every file in a crate's `src/` (the vocab pins and the
-  other `include_str!` inputs), `data/runai/heuristic_v.toml`, the workspace
-  `Cargo.toml`, `Cargo.lock` and `rust-toolchain.toml`. These are the inputs
+  other `include_str!` inputs), `data/runai/heuristic_v.toml`,
+  `data/prior_nets/*.json`, the workspace `Cargo.toml`, `Cargo.lock` and
+  `rust-toolchain.toml`. These are the inputs
   `src_hash` covers, plus tests, benches and the other crates, so in practice
   a write to any input `src_hash` covers makes `uv run` rebuild. uv compares
   one timestamp, not contents: the newest ctime among those files on unix,
@@ -494,6 +497,16 @@ the check on transfer; and re-derive the games multiplier from the current
 cost ratio when the engine changes (2026-08-19: 83.5 vs 22.5 s/run = 3.71×,
 `ppo.probe` one-liner in the screen playbook §0).
 
+**2026-10-25 (GH #830): Ironclad collection runs the shipped Ironclad
+search.** The run agent's Ironclad default applies at every budget, so
+collection at 250/1000 now uses the forms + combo knobs in every fight and
+the BC move prior in elite and boss fights. That bundle was gated at
+1000/4000 (A10) only. At 250 sims, where c_puct is 0.8, it is ungated, and
+the next Ironclad campaign trains under it. Its cost is ~1.02–1.04× CPU per
+combat step with the prior cache (measured at 1000/4000), which is too small
+to re-derive the games multiplier. A campaign that is already running keeps
+its pinned wheel (§0.4). The other four characters collect exactly as before.
+
 ### `--lr-anneal-final 0.3` — do not omit this
 
 **The default is `1.0`, which means OFF** (`trainer.py:350` returns early). It
@@ -740,7 +753,10 @@ signal.
 ### 2.1 Rules for a valid comparison
 
 - **One binary, both arms.** Differ only by `STS2_RUNAI_PPO`. Never set
-  `STS2_RUNAI_HONEST=0`.
+  `STS2_RUNAI_HONEST=0`. Since GH #830 (2026-10-25), both arms of an
+  Ironclad gate run the shipped Ironclad search (knobs, plus the BC move
+  prior in elite and boss fights), so comparing with a pre-ship Ironclad gate
+  number crosses a search change.
 - **Paired seeds**, McNemar exact two-sided on the discordant pairs.
 - **The full A0–A10 curve** if the net is ascension-conditioned, 200 paired
   seeds per level. An aggregate A0 number cannot clear a champion whose own
@@ -838,31 +854,83 @@ python ../docs/experiments/ironclad-a10/a10_score.py <cell>.jsonl
   multi-form enemies by what is left of them; the two widening constants open
   the EndTurn and draw chance nodes. 4000/16000 is 4× the deployed 1000/4000.
   Leave every other `STS2_*` variable unset, and use a fresh PGO wheel (§0.4).
+- **Ironclad since 2026-10-25 (GH #830, commit `a70aa8bec`).** These three
+  knobs are now the Ironclad run agent's default, so the
+  `STS2_RUNAI_MCTS_OVERRIDES` line is redundant for Ironclad (harmless: it
+  sets the same values). "Every other `STS2_*` unset" now also means the
+  built-in BC move prior runs in Ironclad's elite and boss fights (PUCT, mix
+  0.5, T 1). A wheel carries that default iff
+  `sts2_rs.builtin_prior_net_json("Ironclad")` returns text. To reproduce the
+  pre-ship Ironclad setting, add `STS2_RUNAI_PRIOR_NET=off`. The other four
+  characters are unchanged: for them the line is still needed.
 - **Panel: A10 × 400, seeds 91,000,000–91,000,399, always the same.** This is
   the one place where comparing win *rates* across nets is allowed (§2.1):
   the panel never changes, so the seed-quality variance is held fixed.
 - **Report the A10 win rate and the A9 estimate** read off the same runs
   (`reached_second_boss`; `a10_score.py` prints both). The estimate ran ~5pp
   below a true A9 sweep on Ironclad.
-- **Cost:** ~41 min on 30 procs, 0 errored rows in 800.
-- **It is not a gate.** It measures a setting that does not ship (the
-  deployed search runs the defaults: forms off, widening 0.5/1.0), at 4× the
-  deployed budget. Promotion still follows §2.1–2.3 at 1000/4000.
+- **Cost:** ~41 min on 30 procs, 0 errored rows in 800 (2026-10-23). On
+  2026-10-26 one Ironclad arm took 38 min with the GH #830 default and 36 min
+  with the prior off, again 0 errored rows in 800.
+- **It is not a gate.** It runs at 4× the deployed budget. For Silent,
+  Defect, Regent and Necrobinder it also measures search settings that do not
+  ship: their deployed search is the BeliefDraw dialect (forms off, EndTurn
+  widening C 5.787 / α 0.436, draw widening C 2.0; the 0.5 / 1.0 widening is
+  `MctsConfig::default`, which that dialect replaces). For Ironclad the
+  settings are the shipped ones (see above). Promotion still follows §2.1–2.3
+  at 1000/4000.
 
-**Why these settings.** On Ironclad `a10_it700`, paired on this panel
-(`~/ppo-ironclad-a10/evalmode/`): forms + combo at 4× scored 23.0% A10 / 49.8%
-A9-est; defaults at 4× scored 21.5% / 47.2%. The +1.5pp is not significant
-(discordant 43/37, p = 0.58), and on `plr_it550` at 1×, forms + combo was
-flat (+0.25pp A10, −2.0pp A9-est). It costs only ~7% more wall time, so it was
-adopted as the strongest setting measured. 16× sims (16000/64000) added only
-+1.5pp over 4× for 4× the cost, so the budget stops at 4×.
+**Why these settings.** On Ironclad `a10_it700`, paired on this panel (a
+private eval folder, `~/ppo-ironclad-a10/evalmode/`, not published): forms +
+combo at 4× scored 23.0% A10 / 49.8% A9-est; defaults at 4× scored 21.5% /
+47.2%. The +1.5pp is not significant (discordant 43/37, p = 0.58), and on
+`plr_it550` at 1×, forms + combo was flat (+0.25pp A10, −2.0pp A9-est). It
+costs only ~7% more wall time, so it was adopted as the strongest setting
+measured. 16× sims (16000/64000) added only +1.5pp over 4× for 4× the cost, so
+the budget stops at 4×.
 
 **Reference numbers** (add a row per champion):
 
 | net | A10 | A9 estimate | date |
 |---|---|---|---|
-| Ironclad `plr_it550` (older wheel, pre-#771) | 17.0% | 45.2% | 2026-10-21 |
-| Ironclad `a10_it700` | 23.0% | 49.8% | 2026-10-23 |
+| Ironclad `plr_it550` (older wheel, pre-#771; pre-bundle, no prior) | 17.0% | 45.2% | 2026-10-21 |
+| Ironclad `a10_it700` (pre-bundle, no prior) | 23.0% | 49.8% | 2026-10-23 |
+| Ironclad `a10_it700`, GH #830 default (knobs + BC prior in elite/boss; PGO wheel `4e5bb730d28e2976`) | 26.75% [22.65, 31.29] | 52.25% [47.36, 57.10] | 2026-10-26 |
+| Ironclad `a10_it700`, same wheel, prior off (`STS2_RUNAI_PRIOR_NET=off`) | 24.00% [20.07, 28.42] | 49.75% [44.88, 54.63] | 2026-10-26 |
+
+The first two Ironclad rows ran the knobs from the env line and no move
+prior, on older wheels; the 2026-10-23 row also ran on another host. The last
+two ran on one wheel and are paired by seed. Their brackets are Wilson 95%
+CIs at n = 400, about ±4.3pp at A10; `a10_score.py` prints the rates to one
+decimal (26.8% / 52.2% and 24.0% / 49.8%).
+
+Compare a new Ironclad net with the GH #830 default row: it is what the
+command above measures now, with every other `STS2_*` unset. Run the new net
+on a wheel that carries the default (`builtin_prior_net_json("Ironclad")`
+returns text), and pair it by seed instead of comparing rates. On `src_hash`
+`4e5bb730d28e2976` (`.so` `823fa393…`), pair it with the default row's own
+rows: `python ../docs/experiments/ironclad-a10/a10_score.py
+../docs/experiments/2026-10-26-ic-a10-it700-standard-eval/runs/D.jsonl
+<new>.jsonl`. A build from the public snapshot of the same engine source
+reports `src_hash` `6a98001ae326637b` (the export strips C# quotes from
+comments) and replayed both arms' rows exactly on every run checked: 24 runs
+on 14 seeds, listed in the write-up. On any other wheel, re-run `a10_it700`
+with the default on that wheel (~38 min on 30 procs on a PGO wheel) and pair
+with that run. A rate compared across wheels mixes engine changes
+with run noise at the size of the deltas this eval is read for.
+
+The prior-off row is the pre-ship setting (knobs only) on that same wheel,
+which also has PR #940's rule 5c. It is consistent with the 2026-10-23 row
+(unpaired: 1.0pp above it at A10, level with it on the A9 estimate to the
+printed decimal). Paired, the default scored +2.75pp over prior off at A10
+(48 seeds won only with the prior, 37 only without; exact McNemar p = 0.278)
+and +2.50pp on the A9 estimate (55/45, p = 0.368). At n = 400 this panel
+cannot tell that from zero. The ship rests on the two A10 gates at 1000/4000.
+The write-up, the per-seed rows, the driver and the analysis scripts are in
+`docs/experiments/2026-10-26-ic-a10-it700-standard-eval.md` and its sibling
+folder, which the public snapshot carries too. Its Reproduce section runs the
+eval from a fresh public clone; the snapshot ships no `.pt`, so it rebuilds the
+`a10_it700` checkpoint from the shipped `.onnx` first.
 
 ---
 
@@ -963,6 +1031,14 @@ Follow `sts2-rs/docs/ppo-rust-inference.md` §Checkpoint-swap procedure, then:
       *resolver* path rather than the env override the gate used. 5 seeds,
       expect all runs to complete with no panic.
 - [ ] Overflow headroom checked (below)
+- [ ] **Published win rates updated** if the headline numbers moved: the
+      public README's win-rate table (`release/public-overlay/README.md`) and
+      the project's external directory entry,
+      [slaythespire.dev/projects/spire-mentor](https://slaythespire.dev/projects/spire-mentor/)
+      — a PR to `src/content/projects/spire-mentor.md` in
+      [`ptrlrd/slaythespire-dev`](https://github.com/ptrlrd/slaythespire-dev)
+      (first added in its PR #8, 2026-10-26). Say which runs a number comes
+      from (n, sims, date), as that entry does.
 
 ### Overflow headroom
 

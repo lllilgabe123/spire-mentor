@@ -585,7 +585,7 @@ fn enrich_card(
     );
     let star = loc.get(&format!("{cid}.star_cost")).map(int_or_str);
     let upgraded = truthy(card.get("upgraded").unwrap_or(&Value::Null));
-    let cost_missing = card.get("cost").map_or(true, Value::is_null);
+    let cost_missing = card.get("cost").is_none_or(Value::is_null);
     let mcost = if cost_missing {
         manifest_cost(&cid, loc, upgraded)
     } else {
@@ -1014,7 +1014,7 @@ pub fn enrich(mut step: Value, ctx: &EnrichCtx<'_>) -> Value {
             if let Some(Value::Array(cards)) = state.get_mut("cards") {
                 for card in cards.iter_mut() {
                     enrich_card(card, false, false, &character, ctx);
-                    if card.get("card_cost").map_or(true, Value::is_null) {
+                    if card.get("card_cost").is_none_or(Value::is_null) {
                         let cid = id_tail(card);
                         let upgraded = truthy(card.get("upgraded").unwrap_or(&Value::Null));
                         if let Some(mcost) = manifest_cost(&cid, loc, upgraded) {
@@ -1189,7 +1189,7 @@ pub fn enrich(mut step: Value, ctx: &EnrichCtx<'_>) -> Value {
                                 "index": o.get("index").cloned().unwrap_or(Value::Null),
                                 "option_id": o.get("option_id").cloned().unwrap_or(Value::Null),
                                 "name": resolve(name_src, loc),
-                                "is_enabled": o.get("is_enabled").map_or(true, truthy),
+                                "is_enabled": o.get("is_enabled").is_none_or(truthy),
                             })
                         })
                         .collect()

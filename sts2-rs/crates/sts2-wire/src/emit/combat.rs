@@ -1053,6 +1053,41 @@ pub fn combat_state_to_value(state: &CombatState) -> Result<Value, EmitError> {
     }
     d.insert("encounter".to_owned(), Value::Array(enc));
 
+    // Co-op teammates, in the shape `$.allies` parses. Omitted when solo,
+    // so every single-player state emits the dict it always did.
+    // A whole seat (the wire carried its hand) round-trips whole.
+    if !state.allies.is_empty() {
+        let seats = !state.coop.stash.is_empty();
+        let mut allies = Vec::with_capacity(state.allies.len());
+        for (i, a) in state.allies.iter().enumerate() {
+            let mut m = obj();
+            set(&mut m, "hp", a.current_hp);
+            set(&mut m, "max_hp", a.max_hp);
+            set(&mut m, "block", a.block);
+            if seats {
+                let path = format!("$.allies[{i}]");
+                set(&mut m, "class", class_str_from_character(a.character));
+                set(&mut m, "energy", i32::from(a.energy));
+                set(&mut m, "max_energy", i32::from(a.max_energy));
+                m.insert(
+                    "powers".to_owned(),
+                    powers_to_value(
+                        &state.coop.stash[i].powers,
+                        &state.powers,
+                        &format!("{path}.powers"),
+                    )?,
+                );
+                m.insert(
+                    "hand".to_owned(),
+                    pile_to_value(state, &a.hand, &state.cards, &format!("{path}.hand"))?,
+                );
+                set(&mut m, "ended_turn", state.coop.to_play & (1 << i) == 0);
+            }
+            allies.push(Value::Object(m));
+        }
+        d.insert("allies".to_owned(), Value::Array(allies));
+    }
+
     // --- rng / ascension ---
     let mut rng = obj();
     // We can't recover the original seed from the in-process RNG, so

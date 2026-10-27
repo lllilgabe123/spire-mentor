@@ -1370,6 +1370,17 @@ fn softmax_sample<R: Rng>(rng: &mut R, priorities: &[i16], n_actions: usize) -> 
     n_actions - 1
 }
 
+/// How a simulated co-op teammate plays (`sts2_core::coop::TeammatePolicy`):
+/// the rollout heuristic, from an RNG seeded by the caller so the teammate's
+/// turn is a pure function of the state. Like a rollout it plays every card
+/// it can afford, which is what a teammate who has not ended their turn
+/// usually does.
+pub fn teammate_policy(state: &CombatState, actions: &[Action], seed: u64) -> usize {
+    use rand::SeedableRng;
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(seed ^ 0x7EA3_4A7E_5EA7_0000);
+    pick_rollout_action(&mut rng, state, actions)
+}
+
 /// Fused coverage gate + rollout-policy pick for the per-rollout-step
 /// hot path (perf-investigation 2026-07-04). Behaviorally identical to
 ///
