@@ -20,7 +20,9 @@
 //! In a whole co-op fight ([`CoopState::full`]) the teammates also run their own
 //! share of every turn start and turn end (`run_seat_stage`), between ours and
 //! the side-wide step that follows it, and their relics hear the side's turn
-//! hooks (`each_teammate`).
+//! hooks (`each_teammate`). Every per-player step walks the run's player
+//! order ([`CoopState::seat_index`]): a teammate ahead of us runs theirs
+//! before ours (`run_seats_ahead`).
 
 use std::sync::OnceLock;
 
@@ -69,6 +71,232 @@ pub struct CoopState {
     /// The shared turn pipeline returns at the end of the stage instead of
     /// running on into the side's next step (`run_seat_stage`).
     pub seat_run: Option<SeatRun>,
+    /// True while [`each_player`] runs a monster effect for the teammates, so
+    /// a helper that fans out on its own does not fan out again. False at rest.
+    pub fanning: bool,
+    /// The relics of each player who died in a [`Self::full`] fight, by seat
+    /// id, until they are revived (C# `Player.DeactivateHooks`: a dead
+    /// player's relics hear nothing). An entry also marks the seat as out of
+    /// the fight ([`is_out`]).
+    pub benched: SmallVec<[(u8, RelicStore); 1]>,
+    /// Our place in the run's player order (C# `CombatState.Players`), which
+    /// every per-player step of a turn walks: `allies[..seat_index]` set up,
+    /// auto-play, end their turn and take a monster's effect before us, the
+    /// rest after. The seats share the run's shuffle stream, so the order
+    /// decides who draws what. 0, us first, unless the wire says otherwise.
+    pub seat_index: u8,
+}
+
+/// How many teammates come before us in the run's player order
+/// ([`CoopState::seat_index`]).
+fn seats_ahead(state: &CombatState) -> usize {
+    usize::from(state.coop.seat_index).min(state.allies.len())
+}
+
+/// C# `CombatState.Players.Count`: us and every teammate, dead or alive.
+#[must_use]
+pub fn player_count(state: &CombatState) -> i32 {
+    1 + i32::try_from(state.allies.len()).unwrap_or(0)
+}
+
+/// C# `MultiplayerScalingModel.GetMultiplayerScaling`, in tenths: 1.1 in act
+/// 1, 1.2 in act 2, 1.2 in act 3 (1.3 for its boss). `act_index` is 1-based
+/// here, C#'s `CurrentActIndex` 0-based.
+fn scaling_tenths(state: &CombatState) -> i32 {
+    match state.act_index {
+        0 | 1 => 11,
+        2 => 12,
+        _ if state.is_boss => 13,
+        _ => 12,
+    }
+}
+
+/// `x × players × scaling`, truncated like C#'s `(int)` cast. Identity solo.
+#[must_use]
+pub fn scale_for_players(state: &CombatState, x: i32) -> i32 {
+    let n = player_count(state);
+    if n <= 1 {
+        return x;
+    }
+    let scaled = i64::from(x) * i64::from(n) * i64::from(scaling_tenths(state)) / 10;
+    i32::try_from(scaled).unwrap_or(i32::MAX)
+}
+
+/// The multiplier C# `MultiplayerScalingModel.ModifyBlockMultiplicative`
+/// puts on an enemy's powered or move block, as `(num, den)`; `None` solo.
+/// v0.111.0 drops the act factor for two players (`count <= 2 ? count : …`);
+/// a recorded two-player fight showed 5 move block landing as 10, not 11.
+#[must_use]
+pub fn enemy_block_scaling(state: &CombatState) -> Option<(i32, i32)> {
+    let n = player_count(state);
+    if n <= 1 {
+        return None;
+    }
+    if n <= 2 && state.game_version >= crate::GameVersion::V0_111_0 {
+        return Some((n, 1));
+    }
+    Some((n * scaling_tenths(state), 10))
+}
+
+/// C# `PowerCmd.Apply`: a power with `ShouldScaleInMultiplayer` landing on an
+/// enemy is scaled by the player count (`GetScaledAmountForMultiplayer`, its
+/// own formula for Artifact, Plating, Skittish and Slippery, `amount ×
+/// players × scaling` for the rest), truncated to an int. Identity solo.
+#[must_use]
+pub fn scale_enemy_power(
+    state: &CombatState,
+    target: crate::CreatureUid,
+    kind: PowerKind,
+    amount: i32,
+) -> i32 {
+    let n = player_count(state);
+    if n <= 1 || !state.enemy_uids.contains(&target) {
+        return amount;
+    }
+    match kind {
+        PowerKind::Artifact => amount + n - 1,
+        PowerKind::Plating => ((n - 1) * 2 + 1) * amount,
+        // `amount × (1 + (n − 1) × 0.5)`.
+        PowerKind::Skittish => amount * (n + 1) / 2,
+        PowerKind::Slippery => amount * n,
+        PowerKind::CurlUp
+        | PowerKind::Flutter
+        | PowerKind::HardenedShell
+        | PowerKind::Plow
+        | PowerKind::Rampart
+        | PowerKind::Reattach
+        | PowerKind::Regen
+        | PowerKind::Shriek => scale_for_players(state, amount),
+        _ => amount,
+    }
+}
+
+/// Whether the seated player died and is out of a [`CoopState::full`] fight:
+/// no turn, no targets, no hooks, until a win revives them.
+#[must_use]
+pub fn is_out(state: &CombatState) -> bool {
+    state.player.current_hp <= 0
+        && state
+            .coop
+            .benched
+            .iter()
+            .any(|(s, _)| *s == state.coop.seated)
+}
+
+/// The seated player has just died, past the prevention ladder (Fairy,
+/// Lizard Tail). C# `CreatureCmd.Kill` strips their powers; the fight is lost
+/// only when every player is dead (`CreatureCmd.cs:450`). Otherwise, in a
+/// [`CoopState::full`] fight, `HandlePlayerDeath` removes all their cards and
+/// zeroes their energy and stars, their orbs clear and their relics go quiet
+/// (`CreatureCmd.cs:545-556`, `CombatManager.cs:926-942`).
+///
+/// Returns whether the fight is lost (and marks it so).
+pub fn seated_player_died(state: &mut CombatState) -> bool {
+    crate::combat_loop::clear_player_powers_on_death(state);
+    let others_alive = state.allies.iter().any(|a| a.current_hp > 0);
+    if !state.coop.full || !others_alive || !has_seats(state) {
+        state.is_over = true;
+        state.player_won = false;
+        return true;
+    }
+    let p = &mut state.player;
+    p.hand.clear();
+    p.draw.clear();
+    p.discard.clear();
+    p.exhaust.clear();
+    p.play.clear();
+    p.energy = 0;
+    p.stars = 0;
+    for orb in &mut p.orbs.slots {
+        *orb = crate::orbs::Orb::Empty;
+    }
+    let relics = std::mem::take(&mut state.relics);
+    let seat = state.coop.seated;
+    state.coop.benched.push((seat, relics));
+    false
+}
+
+/// C# `Player.ReviveBeforeCombatEnd`: a won fight brings every dead player
+/// back at 1 HP, their relics awake again, before the combat-end hooks.
+pub(crate) fn revive_the_dead(state: &mut CombatState) {
+    if state.coop.benched.is_empty() {
+        return;
+    }
+    for (seat, relics) in std::mem::take(&mut state.coop.benched) {
+        if seat == state.coop.seated {
+            state.player.current_hp = state.player.current_hp.max(1);
+            state.relics = relics;
+        } else if let Some(i) = state.coop.stash.iter().position(|s| s.seat == seat) {
+            state.allies[i].current_hp = state.allies[i].current_hp.max(1);
+            state.coop.stash[i].relics = relics;
+        }
+    }
+    state.sync_player_creature();
+}
+
+/// The won fight's victory and combat-end relic hooks for every unseated
+/// player in a [`CoopState::full`] fight (C# walks every player's relics).
+pub(crate) fn teammates_hear_the_win(state: &mut CombatState) {
+    if !state.coop.full || !has_seats(state) {
+        return;
+    }
+    for ally in 0..state.allies.len() {
+        if state.coop.stash.get(ally).is_none() {
+            continue;
+        }
+        swap_seat(state, ally);
+        let _ = crate::relic_effects::dispatch_after_combat_victory(state);
+        let _ = crate::relic_effects::dispatch_after_combat_end(state);
+        swap_seat(state, ally);
+    }
+}
+
+/// Run a monster effect on every player it reaches, in the run's player order
+/// ([`CoopState::seat_index`]): the seated player and each living teammate
+/// seated in turn, when the enemy turn reaches them
+/// ([`teammates_threatened`]). C# monsters target every living player
+/// (`targets` = all opponents); none picks one at random.
+///
+/// Wrap only the part aimed at the players: a self-buff in the same move runs
+/// once, outside. Nested calls run `body` once, for whoever is seated, so a
+/// monster debuff helper can fan out by itself and still be called from inside
+/// a wider wrapped block. A teammate's death is not the fight's.
+pub fn each_player(state: &mut CombatState, mut body: impl FnMut(&mut CombatState)) {
+    if state.coop.fanning {
+        body(state);
+        return;
+    }
+    let fan = !state.coop.seat_pass
+        && state.coop.seat_run.is_none()
+        && !state.allies.is_empty()
+        && teammates_threatened(state);
+    state.coop.fanning = true;
+    // In the run's player order: `None` is us.
+    let ahead = if fan { seats_ahead(state) } else { 0 };
+    let after = if fan { ahead..state.allies.len() } else { 0..0 };
+    let order = (0..ahead).map(Some).chain([None]).chain(after.map(Some));
+    for seat in order {
+        if state.is_over {
+            break;
+        }
+        match seat {
+            None => {
+                if !is_out(state) {
+                    body(state);
+                }
+            }
+            Some(ally) => {
+                if state.allies[ally].current_hp <= 0 {
+                    continue;
+                }
+                swap_seat(state, ally);
+                body(state);
+                forgive_teammate_death(state);
+                swap_seat(state, ally);
+            }
+        }
+    }
+    state.coop.fanning = false;
 }
 
 /// A teammate's share of the turn pipeline, run with them seated. C# runs each
@@ -93,13 +321,21 @@ pub enum SeatRun {
     TurnEnd,
 }
 
-/// Powers whose instance belongs to the PLAYER who applied it rather than to
-/// the creature it sits on: C# keeps one instance per applier
-/// (`InstancedPerApplier`) and reacts only to that player's cards
-/// (`cardPlay.Card.Owner == Applier.Player`).
+/// Enemy powers whose instance belongs to one PLAYER rather than to the
+/// creature it sits on: Strangle and Oblivion to the player who applied them
+/// (C# `InstancedPerApplier`, reacting only to `cardPlay.Card.Owner ==
+/// Applier.Player`); Sandpit and WitheringPresence to the player they target
+/// (C# `base.Target`, one instance per opponent). The seat is the one seated
+/// when the instance was created.
 #[must_use]
 pub const fn tracks_applier_seat(kind: PowerKind) -> bool {
-    matches!(kind, PowerKind::Strangle | PowerKind::Oblivion)
+    matches!(
+        kind,
+        PowerKind::Strangle
+            | PowerKind::Oblivion
+            | PowerKind::Sandpit
+            | PowerKind::WitheringPresence
+    )
 }
 
 /// Record that the seated player applied the fresh power `id`. A no-op solo
@@ -114,6 +350,29 @@ pub fn stamp_power_seat(state: &mut CombatState, id: NonZeroU32, kind: PowerKind
         .power_seat
         .retain(|(p, _)| *p != id && powers.get_by_id(*p).is_some());
     state.coop.power_seat.push((id, state.coop.seated));
+}
+
+/// The seat power `id` belongs to ([`tracks_applier_seat`]); 0 when unrecorded.
+#[must_use]
+pub fn seat_of_power(state: &CombatState, id: NonZeroU32) -> u8 {
+    state
+        .coop
+        .power_seat
+        .iter()
+        .find(|(p, _)| *p == id)
+        .map_or(0, |(_, seat)| *seat)
+}
+
+/// Run `body` with seat `seat` seated (as is, if it already is). A no-op for
+/// a seat that is not at the table.
+pub fn with_seat(state: &mut CombatState, seat: u8, body: impl FnOnce(&mut CombatState)) {
+    if seat == state.coop.seated {
+        body(state);
+    } else if let Some(i) = state.coop.stash.iter().position(|s| s.seat == seat) {
+        swap_seat(state, i);
+        body(state);
+        swap_seat(state, i);
+    }
 }
 
 /// Whether the seated player applied power `id`. A power with no recorded
@@ -405,6 +664,43 @@ pub fn register_teammate_policy(policy: TeammatePolicy) {
     let _ = TEAMMATE_POLICY.set(policy);
 }
 
+/// Answers a seated teammate's choice from outside the engine: the teammate
+/// (`ally`), the options on offer and the legal `ResolveChoice` actions, to the
+/// `ResolveChoice` to take, or `None` to leave it to the [`TeammatePolicy`].
+/// The answer need not be one of `actions`: those list a multi-pick choice's
+/// single picks only, where the game may take several cards at once.
+/// Replaying a recorded co-op fight answers each pick as the game logged it.
+pub type SeatChooser =
+    Box<dyn FnMut(&CombatState, usize, &[crate::ChoiceOption], &[Action]) -> Option<Action>>;
+
+thread_local! {
+    static SEAT_CHOOSER: std::cell::RefCell<Option<SeatChooser>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `body` with `chooser` answering the teammates' choices on this thread
+/// (the previous chooser, if any, is restored afterwards).
+pub fn with_seat_chooser<R>(chooser: SeatChooser, body: impl FnOnce() -> R) -> R {
+    let previous = SEAT_CHOOSER.with(|c| c.replace(Some(chooser)));
+    let out = body();
+    SEAT_CHOOSER.with(|c| *c.borrow_mut() = previous);
+    out
+}
+
+/// The installed [`SeatChooser`]'s answer, if one is installed and answers.
+fn scripted_pick(
+    state: &CombatState,
+    ally: usize,
+    options: &[crate::ChoiceOption],
+    actions: &[Action],
+) -> Option<Action> {
+    SEAT_CHOOSER
+        .with(|c| {
+            let mut chooser = c.try_borrow_mut().ok()?;
+            chooser.as_mut()?(state, ally, options, actions)
+        })
+        .filter(|a| matches!(a, Action::ResolveChoice { .. }))
+}
+
 /// Upper bound on one teammate's actions, against a policy that never runs
 /// out of free plays.
 const MAX_TEAMMATE_ACTIONS: usize = 40;
@@ -468,20 +764,34 @@ pub fn teammates_threatened(state: &CombatState) -> bool {
     state.coop.full || state.coop.threat_round == Some(state.round)
 }
 
-/// Run `stage` for every living teammate, in seat order, each seated in turn.
-/// Called from the seated player's own turn pipeline at the point the stage
-/// ends for them, so the players' stages run back to back before the side
-/// step that follows (C# finishes a phase over every player first).
+/// Run `stage` for every living teammate after us in the run's player order
+/// ([`CoopState::seat_index`]), each seated in turn. Called from the seated
+/// player's own turn pipeline at the point the stage ends for them, so the
+/// players' stages run back to back before the side step that follows (C#
+/// finishes a phase over every player first, `CombatManager.cs:424-607`).
+/// The teammates ahead of us ran theirs from [`run_seats_ahead`].
 ///
 /// A teammate's choices are answered on the spot by the registered
 /// [`TeammatePolicy`] (the first option without one): their stage must be
 /// over before the seats swap back. A no-op outside a [`CoopState::full`]
 /// fight, and never nested.
 pub(crate) fn run_seat_stage(state: &mut CombatState, stage: SeatRun) {
+    let after = seats_ahead(state)..state.allies.len();
+    run_seats(state, stage, after);
+}
+
+/// [`run_seat_stage`] for the teammates ahead of us in the run's player order,
+/// called where the stage begins for us.
+pub(crate) fn run_seats_ahead(state: &mut CombatState, stage: SeatRun) {
+    let ahead = 0..seats_ahead(state);
+    run_seats(state, stage, ahead);
+}
+
+fn run_seats(state: &mut CombatState, stage: SeatRun, allies: std::ops::Range<usize>) {
     if !state.coop.full || state.coop.seat_run.is_some() || !has_seats(state) {
         return;
     }
-    for ally in 0..state.allies.len() {
+    for ally in allies {
         if state.is_over {
             return;
         }
@@ -541,11 +851,71 @@ pub(crate) fn each_teammate(state: &mut CombatState, mut body: impl FnMut(&mut C
 }
 
 /// A seated teammate's own death is not the fight's: C# loses only when every
-/// player is dead (`CreatureCmd.cs:450`).
-fn forgive_teammate_death(state: &mut CombatState) {
-    if state.is_over && !state.player_won && state.player.current_hp <= 0 {
+/// player is dead (`CreatureCmd.cs:450`). On the advisor's board only: a full
+/// fight settles every death in [`seated_player_died`], which already knows
+/// whether anyone is left, and undoing its loss would leave every player dead
+/// in a fight that never ends.
+pub(crate) fn forgive_teammate_death(state: &mut CombatState) {
+    if !state.coop.full && state.is_over && !state.player_won && state.player.current_hp <= 0 {
         state.is_over = false;
     }
+}
+
+/// KnowledgeDemon's CURSE_OF_KNOWLEDGE in a [`CoopState::full`] fight: every
+/// living teammate picks their own curse from `options` (C# runs each
+/// target's `ChooseCurse` together), answered on the spot by the teammate
+/// policy (the first option without one). Our own pick stays the open choice.
+pub(crate) fn teammates_choose_curse(
+    state: &mut CombatState,
+    counter: u8,
+    options: &[crate::ChoiceOption],
+) {
+    if !state.coop.full || !has_seats(state) || options.is_empty() {
+        return;
+    }
+    let policy = TEAMMATE_POLICY.get().copied();
+    for ally in 0..state.allies.len() {
+        if state.is_over {
+            return;
+        }
+        if state.allies[ally].current_hp <= 0 || state.coop.stash.get(ally).is_none() {
+            continue;
+        }
+        swap_seat(state, ally);
+        let actions: SmallVec<[Action; 16]> = (0..options.len())
+            .map(|i| Action::ResolveChoice {
+                selection: smallvec::smallvec![u8::try_from(i).unwrap_or(0)],
+            })
+            .collect();
+        let seed = (u64::from(state.round) << 16) ^ ((ally as u64) << 8) ^ 0xC0;
+        let scripted = match scripted_pick(state, ally, options, &actions) {
+            Some(Action::ResolveChoice { selection }) => selection.first().map(|&i| usize::from(i)),
+            _ => None,
+        };
+        let pick = scripted
+            .unwrap_or_else(|| policy.map_or(0, |p| p(state, &actions, seed)))
+            .min(options.len() - 1);
+        crate::apply_monster_curse(state, counter, options[pick].card_id);
+        forgive_teammate_death(state);
+        swap_seat(state, ally);
+    }
+}
+
+/// Apply `action` as the teammate in `allies[ally]`: seat them, apply it (a
+/// card index is into THEIR hand), answer any choice it opens on the spot the
+/// way their stages do, and seat us again. For replaying a recorded co-op
+/// fight, where the game's log says who played what and in which order.
+/// Returns what [`crate::apply`] returned.
+///
+/// # Panics
+/// If `ally` is out of range.
+pub fn apply_as(state: &mut CombatState, ally: usize, action: Action) -> crate::StepResult {
+    swap_seat(state, ally);
+    let result = crate::apply(state, action);
+    settle_seat_choices(state, ally);
+    forgive_teammate_death(state);
+    swap_seat(state, ally);
+    result
 }
 
 /// Upper bound on the picks one teammate's stage may need.
@@ -565,8 +935,16 @@ fn settle_seat_choices(state: &mut CombatState, ally: usize) {
             break;
         }
         let seed = (u64::from(state.round) << 16) ^ ((ally as u64) << 8) ^ step as u64;
-        let pick = policy.map_or(0, |p| p(state, &actions, seed).min(actions.len() - 1));
-        crate::apply(state, actions[pick].clone());
+        let options = state
+            .pending_choice
+            .as_ref()
+            .map(|pc| pc.options.clone())
+            .unwrap_or_default();
+        let action = scripted_pick(state, ally, &options, &actions).unwrap_or_else(|| {
+            let pick = policy.map_or(0, |p| p(state, &actions, seed));
+            actions[pick.min(actions.len() - 1)].clone()
+        });
+        crate::apply(state, action);
     }
     debug_assert!(
         state.pending_choice.is_none() || state.is_over,

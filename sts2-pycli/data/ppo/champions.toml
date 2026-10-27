@@ -40,11 +40,11 @@
 #             column it never trained on (GH #545).
 
 [ironclad]
-onnx = "ppo_fullrun_ironclad_a10_it700.onnx"
-ckpt = "ppo_fullrun_ironclad_a10_it700.pt"
-sha256 = "0b091ad6a0c08ddb1668052041cb6b815d961ae3aed2813cf0fcb66e95ca8de4"
-gate = "PROMOTED 2026-10-23 BY USER DECISION over a FAILED pooled gate, on the A10 objective (\"our main goal is improvement at A10 because that's what pro players want\"). A10 x 1000 paired seeds (panel 131,000,000): 12.2% -> 19.1%, +6.90pp, McNemar exact two-sided p=8.7e-07; A9 estimate from those runs +5.60pp p=0.0023. True A9 x 400 (panel 131,100,000): 33.8% -> 44.8%, +11.0pp, p=1.6e-04. Pooled A0-A10 x 200 (panel 131,200,000): 74.68% -> 76.27%, +1.59pp, p=0.107 -- FAILS the pre-registered p<0.01 rule; worst level A1 -3.00pp passes the -5.0pp guard; A10 +8.00pp p=0.014; seed-clustered p=0.20. 0 errored rows in 7,200. All arms vs the deployed ppo_fullrun_ironclad_plr_it550_v0111vocab, one binary (src_hash 457d7a9d3b9823a2), net_greedy, 1000/4000, --act1 roll, potion-swap OFF, torch .pt. Recipe: true resume it550 -> it700 with --ascension-weights 10:1 (A10 only), --plr-replay-p 0, --iterations 700 (LR re-anneal 0.45 -> 0.30); trained with STS2_RUNAI_POTION_SWAP=1, served OFF. ATTRIBUTES NOTHING: A10-only weighting, PLR off, the horizon/LR re-anneal and training under the newer #816 rl2 playout / #771 last-boss combat search are confounded. See ppo_fullrun_ironclad_a10_it700.provenance.md and docs/experiments/2026-10-22-ironclad-a10-continuation.md."
-features = ""
+onnx = "ppo_fullrun_ironclad_cardmods_it850.onnx"
+ckpt = "ppo_fullrun_ironclad_cardmods_it850.pt"
+sha256 = "a89010583715c6b68595ee918e2e8ecc698f36d5e4b048426e5fbec7973f3a86"
+gate = "PASSED its pre-registered A10 gate 2026-10-27; promoted by user decision. A10 x 1000 paired seeds (panel 133,000,000): 21.7% -> 28.1%, +6.40pp, discordant 163 candidate-only / 99 champion-only, McNemar exact two-sided p=9.2e-05 (rule: delta>0 and p<0.01). A9 estimate from those runs 48.7% -> 55.4%, +6.70pp, p=2.9e-04. True A9 x 400 (panel 133,100,000, readout only): 49.5% -> 51.2%, +1.75pp, p=0.60. 0 errored rows in 2,800. Both arms vs the deployed ppo_fullrun_ironclad_a10_it700, one binary (src_hash aa7acaa26a2bf981), net_greedy, 1000/4000, shipped GH #830 Ironclad search, --act1 roll, potion-swap OFF, torch .pt, each arm featurized at its own checkpoint cfg. Standard eval (playbook 2.6, 4000/16000 = the advisor budget, A10 x 400, seeds 91,000,000): 30.00% A10 / 56.50% A9-est vs the outgoing net 26.75% / 52.25% (paired +3.25pp, p=0.27, different wheels). Recipe: true resume a10_it700 -> it850, A10-only, PLR off, features card_mods,reward_upgrade (cont_proj widened 25->26 slots with zero columns), LR re-anneal 0.42 -> 0.30, trained under the GH #830 search with STS2_RUNAI_POTION_SWAP=1, served OFF. ATTRIBUTES NOTHING: the two encoder features, 150 more A10 iterations, the LR re-open and training under the #830 search are confounded. See ppo_fullrun_ironclad_cardmods_it850.provenance.md and docs/experiments/2026-10-27-ironclad-a10-cardmods.md."
+features = "card_mods,reward_upgrade"
 
 [silent]
 onnx = "ppo_fullrun_silent_cont_it300_v0111vocab.onnx"

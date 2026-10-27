@@ -6128,6 +6128,10 @@ impl CombatState {
         // Niche cursor is unaffected. Identity for every other species
         // (bead `sts2-rs-8mpo1`).
         let hp = species.finalize_spawn_max_hp(hp, taken, self.ascension);
+        // C# `CreateCreature` → `ScaleMonsterHpForMultiplayer`: every monster
+        // created in a multiplayer fight, summons included, after the unique-HP
+        // roll.
+        let hp = crate::coop::scale_for_players(self, hp);
         self.creatures.push(Creature {
             id,
             current_hp: hp,
@@ -6182,7 +6186,15 @@ impl CombatState {
         for &(kind, base) in species.on_spawn_self_buffs() {
             let amount =
                 species.on_spawn_self_buff_amount(kind, base, self.ascension, self.game_version);
-            crate::card_effects::apply_power_to_creature(self, uid, kind, amount);
+            if crate::coop::tracks_applier_seat(kind) {
+                // Co-op: one instance per player it targets (Aeonglass's
+                // WitheringPresence, `foreach opponent`).
+                crate::coop::each_player(self, |state| {
+                    crate::card_effects::apply_power_to_creature(state, uid, kind, amount);
+                });
+            } else {
+                crate::card_effects::apply_power_to_creature(self, uid, kind, amount);
+            }
         }
         // Bead `sts2-rs-ybtmu`: per-species static on-spawn powers the
         // monster lands on its opponents (the player) — C# `AfterAddedToRoom`
@@ -6191,11 +6203,16 @@ impl CombatState {
         // Creature uid; a no-op if the player creature is not yet wired.
         let opponent_debuffs = species.on_spawn_opponent_debuffs();
         if !opponent_debuffs.is_empty() {
-            if let Some(player_uid) = self.player.creature_uid {
-                for &(kind, amount) in opponent_debuffs {
-                    crate::card_effects::apply_power_to_creature(self, player_uid, kind, amount);
+            // Co-op: on every player (`GetOpponentsOf(Creature)`).
+            crate::coop::each_player(self, |state| {
+                if let Some(player_uid) = state.player.creature_uid {
+                    for &(kind, amount) in opponent_debuffs {
+                        crate::card_effects::apply_power_to_creature(
+                            state, player_uid, kind, amount,
+                        );
+                    }
                 }
-            }
+            });
         }
         // Bead `sts2-rs-caz92`: per-species static on-spawn block grant
         // mirrors C# `CreatureCmd.GainBlock` inside `AfterAddedToRoom`.
@@ -10476,7 +10493,16 @@ fn resolve_monster_curse_select(state: &mut CombatState, pc: &PendingChoice, sel
     let Some(opt) = pc.options.get(sel as usize) else {
         return;
     };
-    if let Some((kind, amount)) = knowledge_demon_curse_power(opt.card_id, counter) {
+    apply_monster_curse(state, counter, opt.card_id);
+}
+
+/// The seated player takes KnowledgeDemon's curse `card_id` of set `counter`.
+pub(crate) fn apply_monster_curse(
+    state: &mut CombatState,
+    counter: u8,
+    card_id: crate::cards::CardId,
+) {
+    if let Some((kind, amount)) = knowledge_demon_curse_power(card_id, counter) {
         apply_player_power_legacy(state, kind, amount);
     }
 }
@@ -13390,6 +13416,14 @@ pub(crate) fn push_card_play_actions(state: &CombatState, out: &mut SmallVec<[Ac
 pub fn legal_actions(state: &CombatState) -> SmallVec<[Action; 16]> {
     let mut out: SmallVec<[Action; 16]> = SmallVec::new();
     if state.is_over {
+        return out;
+    }
+    // Co-op: a dead player is ready to end the turn and does nothing else
+    // (C# `PlayerCmd.EndTurn` for a player who dies on their side's turn).
+    if crate::coop::is_out(state) && state.pending_choice.is_none() {
+        if state.phase == CombatPhase::PlayerPlayPhase {
+            out.push(Action::EndTurn);
+        }
         return out;
     }
     if let Some(pc) = state.pending_choice.as_ref() {

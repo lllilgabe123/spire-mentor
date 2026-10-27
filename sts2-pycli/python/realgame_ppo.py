@@ -149,9 +149,10 @@ class PpoDecision:
     metrics: dict[str, Any]
     responses: list[dict[str, Any]]  # bridge action dict per candidate (same order)
     labels: list[str]  # human labels for annotations/logging, same order
-    #: Who actually decided, when it was not the net. Surfaces that replicate
-    #: engine behaviour instead of ranking (``auto_front``) name themselves
-    #: here so :func:`decision_note` can say so in the HUD/corpus note.
+    #: Who actually decided, when it was not the net. A rule that overrides
+    #: the net's ranking (today: the event-page walk-away filter, GH #487)
+    #: names itself here so :func:`decision_note` can say so in the HUD/corpus
+    #: note.
     source_note: str = ""
     #: How many cards ONE reply must name. 1 for every surface whose reply is
     #: a single index; >1 only for a deck mutation the world requires to be

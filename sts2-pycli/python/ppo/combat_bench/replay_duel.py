@@ -8,7 +8,8 @@ log. The pairing unit is the fight: same deck, relics, belt, HP, roster and
 opening hand; the RNG diverges only once the two lines differ.
 
     python -m ppo.combat_bench.replay_duel --out <dir> [--room elite] \\
-        [--encounters A,B] [--arms B0=1000 B2=4000] [--workers 32]
+        [--encounters A,B] [--arms B0=1000 B2=4000] [--workers 32] \\
+        [--files names.json] [--env K=V ...]
 
 `fights.jsonl`: one line per fight with `human` and one record per arm, plus
 `sync` (the fight's first desync while replaying the human's own line, `null`
@@ -175,7 +176,7 @@ def loss(died: bool, dmg: int, hp_before: int) -> int:
 
 
 def file_rows(
-    path: str, room: str, encounters: set[str] | None, arms: dict[str, int]
+    path: str, room: str, encounters: set[str] | None, arms: dict[str, int], rep: int = 0
 ) -> list[dict[str, Any]]:
     """Every finished fight of `room` in replay `path`, human vs each arm."""
     from ppo.turnplan.pro import fight_turns, room_type
@@ -207,7 +208,9 @@ def file_rows(
             base["sync_turns"] = sum(t["status"] == "legal" for t in turns)
             h = human_trace(rec)
             base["human"] = h | {"L": loss(h["died"], h["dmg"], base["hp_before"])}
-            seed = zlib.crc32(f"{base['file']}:{base['combat_id']}".encode()) % (2**31)
+            key = f"{base['file']}:{base['combat_id']}" + (f":{rep}" if rep else "")
+            seed = zlib.crc32(key.encode()) % (2**31)
+            base["rep"] = rep
             for name, sims in arms.items():
                 p = pilot_trace(rec, sims, seed)
                 base[name] = p | {"L": loss(p["died"], p["dmg"], base["hp_before"])}
@@ -219,12 +222,20 @@ def file_rows(
     return rows
 
 
-def _proc(path: str, room: str, enc: set[str] | None, arms: dict[str, int], conn: Any) -> None:
+def _proc(
+    path: str,
+    room: str,
+    enc: set[str] | None,
+    arms: dict[str, int],
+    conn: Any,
+    env: dict[str, str] | None = None,
+    rep: int = 0,
+) -> None:
     from ppo.combat_bench import agents
 
-    agents.apply_env({})  # the deployed search: no inherited engine seams
+    agents.apply_env(env or {})  # the deployed search plus `--env`: no inherited engine seams
     try:
-        out: dict[str, Any] = {"rows": file_rows(path, room, enc, arms)}
+        out: dict[str, Any] = {"rows": file_rows(path, room, enc, arms, rep)}
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException as e:
@@ -245,12 +256,34 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--workers", type=int, default=os.cpu_count() or 1)
     ap.add_argument("--file-timeout-s", type=float, default=3600.0)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument(
+        "--files",
+        default=None,
+        help="JSON list of replay file names: play only these (e.g. one uploader group)",
+    )
+    ap.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="K=V",
+        help="engine env for the workers (e.g. STS2_RUNAI_PRIOR_NET=off); all others are scrubbed",
+    )
+    ap.add_argument(
+        "--rep",
+        type=int,
+        default=0,
+        help="seed rep: 0 = the original per-fight seed, k > 0 a fresh one (same for every arm)",
+    )
     args = ap.parse_args(sys.argv[1:] if argv is None else argv)
+    env = dict(kv.split("=", 1) for kv in args.env)
     arms = {a.split("=")[0]: int(a.split("=")[1]) for a in args.arms}
     enc = set(args.encounters.split(",")) if args.encounters else None
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     files, census = pro.select_files(pro.ROOT, "IRONCLAD", set(args.ascension))
+    if args.files:
+        keep = set(json.loads(Path(args.files).read_text(encoding="utf-8")))
+        files = [f for f in files if Path(f["file"]).name in keep]
     files = files[: args.limit]
     (out / "selection.json").write_text(
         json.dumps({"args": vars(args), "census": census, "files": files}, indent=1) + "\n"
@@ -268,7 +301,9 @@ def main(argv: list[str] | None = None) -> int:
         log.write(line + "\n")
         log.flush()
 
-    say(f"{len(files)} files ({census}), {len(done)} done; arms {arms}; room {args.room}")
+    say(
+        f"{len(files)} files ({census}), {len(done)} done; arms {arms}; room {args.room}; env {env}"
+    )
     ctx = get_context("spawn")
     running: dict[Any, tuple[Any, str, float]] = {}
     n = n_rows = 0
@@ -305,7 +340,9 @@ def main(argv: list[str] | None = None) -> int:
                     break
                 recv, send = ctx.Pipe(duplex=False)
                 proc = ctx.Process(
-                    target=_proc, args=(f["file"], args.room, enc, arms, send), daemon=True
+                    target=_proc,
+                    args=(f["file"], args.room, enc, arms, send, env, args.rep),
+                    daemon=True,
                 )
                 proc.start()
                 send.close()

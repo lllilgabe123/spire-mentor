@@ -63,8 +63,11 @@ use super::{apply_power_to_player_via_legacy_surface, apply_signed_power_to_play
 /// Bead `sts2-rs-noisebot-shuffle`.
 fn noisebot_noise_effect(state: &mut CombatState, _owner: CreatureUid) {
     use sts2_core::card_effects::PileKind;
-    let _ = crate::cards::status::spawn_dazed(state, PileKind::Discard);
-    let _ = crate::cards::status::spawn_dazed_into_draw_random(state);
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        let _ = crate::cards::status::spawn_dazed(state, PileKind::Discard);
+        let _ = crate::cards::status::spawn_dazed_into_draw_random(state);
+    });
 }
 
 /// Guardbot GUARD_MOVE: give 15 block to every alive Fabricator on the
@@ -104,9 +107,12 @@ fn guardbot_guard_effect(state: &mut CombatState, _owner: CreatureUid) {
 /// than routing overflow to discard; the card count (4 Burn) is faithful.
 fn mecha_knight_flamethrower_effect(state: &mut CombatState, _owner: CreatureUid) {
     use sts2_core::card_effects::PileKind;
-    for _ in 0..4 {
-        let _ = crate::cards::status::spawn_burn(state, PileKind::Hand);
-    }
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        for _ in 0..4 {
+            let _ = crate::cards::status::spawn_burn(state, PileKind::Hand);
+        }
+    });
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -379,15 +385,25 @@ fn turret_operator_reload_effect(state: &mut CombatState, owner: CreatureUid) {
 /// `PowerKind::Hex` stack is tracked here. Behavioral wiring is tracked by
 /// `sts2-rs-l7k3d`.
 fn spectral_knight_hex_effect(state: &mut CombatState, owner: CreatureUid) {
+    // Co-op: each player's Hex records this knight.
+    sts2_core::coop::each_player(state, |state| {
+        spectral_knight_hex_effect_seated(state, owner);
+    });
+}
+
+/// [`spectral_knight_hex_effect`] for the seated player alone.
+fn spectral_knight_hex_effect_seated(state: &mut CombatState, owner: CreatureUid) {
     apply_power_to_player_via_legacy_surface(state, PowerKind::Hex, 2);
     // C# `HexPower.AfterDeath` (`HexPower.cs:37-43`) removes the power when
     // its APPLIER dies — stamp the applier so the death path
     // (`remove_hex_from_dead_applier`) can drop it (sweep seed 4170:
     // killing the SpectralKnight left the player permanently Hexed in Rust).
+    // The seated player's own Hex (co-op: each player has one).
+    let mine = state.player_power_uids();
     if let Some(p) = state
         .powers
         .iter_mut()
-        .filter(|p| p.kind == PowerKind::Hex)
+        .filter(|p| p.kind == PowerKind::Hex && mine.iter().any(|u| u.0 == p.id))
         .last()
     {
         p.applier = Some(owner);
@@ -453,9 +469,12 @@ fn slimed_berserker_leeching_hug_effect(state: &mut CombatState, owner: Creature
 /// Bead `sts2-rs-mq5im`.
 fn slimed_berserker_vomit_ichor_effect(state: &mut CombatState, _owner: CreatureUid) {
     use sts2_core::card_effects::PileKind;
-    for _ in 0..10 {
-        let _ = crate::cards::status::spawn_slimed(state, PileKind::Discard);
-    }
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        for _ in 0..10 {
+            let _ = crate::cards::status::spawn_slimed(state, PileKind::Discard);
+        }
+    });
 }
 
 /// Stabbot STAB applies `Frail(1)` to the player after its attack.
@@ -649,15 +668,18 @@ fn aeonglass_increasing_intensity_effect(state: &mut CombatState, owner: Creatur
     let count_after = count_before + 1;
     aeonglass_set_wither_upgrade_count(state, count_after);
     // 3. Add `wither_amount` Withers, each matched to the new upgrade count.
-    for _ in 0..wither_amount {
-        let card_uid = crate::cards::status::spawn_wither(state, PileKind::Discard);
-        for _ in 0..count_after {
-            if let Some(card) = state.cards.get_mut(card_uid.0.get() as usize - 1) {
-                let next = card.combat_var(VarKey::WitherFakeUpgradeLevel) + 1;
-                card.set_combat_var(VarKey::WitherFakeUpgradeLevel, next);
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        for _ in 0..wither_amount {
+            let card_uid = crate::cards::status::spawn_wither(state, PileKind::Discard);
+            for _ in 0..count_after {
+                if let Some(card) = state.cards.get_mut(card_uid.0.get() as usize - 1) {
+                    let next = card.combat_var(VarKey::WitherFakeUpgradeLevel) + 1;
+                    card.set_combat_var(VarKey::WitherFakeUpgradeLevel, next);
+                }
             }
         }
-    }
+    });
     // 4. Grant self Strength = base + AdditionalStrength(count_before).
     sts2_core::card_effects::apply_power_to_creature(
         state,
@@ -2037,6 +2059,14 @@ fn magi_knight_power_shield_effect(state: &mut CombatState, owner: CreatureUid) 
 /// the registered `after_applied_for_power` hook fires immediately, downgrading
 /// all upgraded cards and marking them for re-upgrade on power removal.
 fn magi_knight_dampen_effect(state: &mut CombatState, owner: CreatureUid) {
+    // Co-op: each player's Dampen records this knight and downgrades their cards.
+    sts2_core::coop::each_player(state, |state| {
+        magi_knight_dampen_effect_seated(state, owner);
+    });
+}
+
+/// [`magi_knight_dampen_effect`] for the seated player alone.
+fn magi_knight_dampen_effect_seated(state: &mut CombatState, owner: CreatureUid) {
     // Ensure the dampen power handlers are registered (idempotent via Once guard).
     static INSTALL: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     let () = INSTALL.get_or_init(|| {
@@ -2685,9 +2715,12 @@ fn test_subject_burning_growl_effect(state: &mut CombatState, owner: CreatureUid
         test_subject::BURNING_GROWL_BURN_COUNT_DEADLY,
         test_subject::BURNING_GROWL_BURN_COUNT,
     );
-    for _ in 0..burns {
-        let _ = crate::cards::status::spawn_burn(state, PileKind::Discard);
-    }
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        for _ in 0..burns {
+            let _ = crate::cards::status::spawn_burn(state, PileKind::Discard);
+        }
+    });
     let strength = crate::ascension_scaling::scaled_buff(
         state.ascension,
         state.game_version,
@@ -2806,6 +2839,8 @@ pub(crate) fn adaptable_after_death(state: &mut CombatState, owner: CreatureUid)
     } else {
         test_subject::third_form_hp(state.ascension)
     };
+    // `Creature.ScaleHpForMultiplayer(baseRespawnHp, …)` (TestSubject.cs:342).
+    let form_hp = sts2_core::coop::scale_for_players(state, form_hp);
 
     // Revive: set max_hp and current_hp to the new form HP, clear block.
     // C# `Revive(baseRespawnHp)`:

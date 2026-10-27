@@ -197,9 +197,12 @@ const THE_OBSCURA_ILLUSION_SLOT: u8 = 0;
 /// was shown but no card was generated).
 fn chomper_screech_effect(state: &mut CombatState, _owner: CreatureUid) {
     use sts2_core::card_effects::PileKind;
-    for _ in 0..3 {
-        let _ = crate::cards::status::spawn_dazed(state, PileKind::Discard);
-    }
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        for _ in 0..3 {
+            let _ = crate::cards::status::spawn_dazed(state, PileKind::Discard);
+        }
+    });
 }
 
 /// `HunterKiller` TENDERIZING_GOOP_MOVE — `HunterKiller.cs:54`
@@ -221,7 +224,10 @@ fn hunter_killer_goop_effect(state: &mut CombatState, _owner: CreatureUid) {
 /// noted on this effect_fn).
 fn wriggler_wriggle_effect(state: &mut CombatState, owner: CreatureUid) {
     use sts2_core::card_effects::PileKind;
-    let _ = crate::cards::status::spawn_infection(state, PileKind::Discard);
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        let _ = crate::cards::status::spawn_infection(state, PileKind::Discard);
+    });
     apply_power_to_creature(state, owner, PowerKind::Strength, 2);
 }
 
@@ -356,7 +362,10 @@ fn the_insatiable_liquify_ground_effect(state: &mut CombatState, owner: Creature
     use sts2_core::card_effects::PileKind;
     // C# `TheInsatiable.cs:121` applies SandpitPower(4) to `base.Creature`
     // (the boss itself), not the player. Bead `sts2-rs-ybtmu`.
-    apply_power_to_creature(state, owner, PowerKind::Sandpit, 4);
+    // Co-op: one Sandpit per player, each targeting them (`foreach target`).
+    sts2_core::coop::each_player(state, |state| {
+        apply_power_to_creature(state, owner, PowerKind::Sandpit, 4);
+    });
     // C# `LiquifyMove` adds all 6 FranticEscape via
     // `CardPileCmd.AddGeneratedCardToCombat(card, pile, addedByPlayer:false,
     // CardPilePosition.Random)` (TheInsatiable.cs:127-133). `Random` resolves
@@ -373,14 +382,17 @@ fn the_insatiable_liquify_ground_effect(state: &mut CombatState, owner: Creature
     // were a plain back-`push` (zero RNG), leaving `run_rng.shuffle` 6 draws
     // short of C# and scrambling the draw order (the DRAW_ORDER divergence the
     // all-acts coverage sweep flagged for THE_INSATIABLE_BOSS).
-    for _ in 0..3 {
-        let uid = crate::cards::status::spawn_frantic_escape(state, PileKind::Draw);
-        state.insert_card_into_draw_pile(uid, true);
-    }
-    for _ in 0..3 {
-        let uid = crate::cards::status::spawn_frantic_escape(state, PileKind::Discard);
-        state.insert_card_into_discard_pile(uid, true);
-    }
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        for _ in 0..3 {
+            let uid = crate::cards::status::spawn_frantic_escape(state, PileKind::Draw);
+            state.insert_card_into_draw_pile(uid, true);
+        }
+        for _ in 0..3 {
+            let uid = crate::cards::status::spawn_frantic_escape(state, PileKind::Discard);
+            state.insert_card_into_discard_pile(uid, true);
+        }
+    });
 }
 
 /// `KnowledgeDemon` PONDER — `KnowledgeDemon.cs:208-217` (`PonderMove`):
@@ -391,7 +403,8 @@ fn the_insatiable_liquify_ground_effect(state: &mut CombatState, owner: Creature
 /// Single-player sim → heal 30 (× player-count collapses to ×1), mirroring
 /// `waterfall_giant_siphon_effect`. The heal was previously dropped.
 fn knowledge_demon_ponder_effect(state: &mut CombatState, owner: CreatureUid) {
-    state.creature_heal(owner, 30);
+    // `30 * Players.Count`.
+    state.creature_heal(owner, 30 * sts2_core::coop::player_count(state));
     let amount = crate::ascension_scaling::scaled_buff(
         state.ascension,
         state.game_version,
@@ -559,6 +572,25 @@ fn decimillipede_reattach_effect(state: &mut CombatState, owner: CreatureUid) {
 /// PILE_COUNT impact — but its PRESENCE is observable in `monsters[*].powers`,
 /// so it must be modelled for state parity (bead `sts2-rs-ybtmu`).
 fn thieving_hopper_thievery_effect(state: &mut CombatState, owner: CreatureUid) {
+    // Co-op: one card from every living player (`foreach (target in targets)`),
+    // then one Swipe stack per stolen card.
+    let mut stolen = 0;
+    sts2_core::coop::each_player(state, |state| {
+        if thievery_steal_from_seated(state, owner) {
+            stolen += 1;
+        }
+    });
+    // `ThievingHopper.cs:234-236`: one `SwipePower` stack per stolen card. The
+    // spawn-time EscapeArtist is already present, so this lands at `powers[1]`,
+    // keeping EscapeArtist at `powers[0]` (matches the C# snapshot order).
+    for _ in 0..stolen {
+        apply_power_to_creature(state, owner, PowerKind::Swipe, 1);
+    }
+}
+
+/// THIEVERY's steal from the seated player's Draw and Discard piles. Returns
+/// whether a card was taken.
+fn thievery_steal_from_seated(state: &mut CombatState, owner: CreatureUid) -> bool {
     use crate::cards::spec_index::rarity_for_card_id_in;
     use crate::cards::CardRarity;
     use sts2_core::cards::{CardType, EnchantmentId};
@@ -584,7 +616,7 @@ fn thieving_hopper_thievery_effect(state: &mut CombatState, owner: CreatureUid) 
         })
         .collect();
     if candidates.is_empty() {
-        return;
+        return false;
     }
 
     // `_stealPriorities` (`ThievingHopper.cs:27-65`): Imbued cards are
@@ -656,13 +688,11 @@ fn thieving_hopper_thievery_effect(state: &mut CombatState, owner: CreatureUid) 
         (c.card_id, c.upgraded)
     };
     let _ = sts2_core::card_effects::remove_card_from_any_pile(state, stolen);
-    state.record_swipe_steal(owner, stolen_card_id, stolen_upgraded);
-
-    // `ThievingHopper.cs:234-236`: one `SwipePower` stack per stolen card.
-    // Exactly one card is stolen per THIEVERY, so apply a single stack. The
-    // spawn-time EscapeArtist is already present, so this lands at `powers[1]`,
-    // keeping EscapeArtist at `powers[0]` (matches the C# snapshot order).
-    apply_power_to_creature(state, owner, PowerKind::Swipe, 1);
+    // The run deck is seat 0's; a teammate's deck lives only for the fight.
+    if state.coop.seated == 0 {
+        state.record_swipe_steal(owner, stolen_card_id, stolen_upgraded);
+    }
+    true
 }
 
 /// `ThievingHopper` FLUTTER_MOVE — `ThievingHopper.cs:266`
@@ -841,6 +871,8 @@ fn tough_egg_hatch_effect(state: &mut CombatState, owner: CreatureUid) {
         // this branch used to ignore ToughEnemies).
         state.run_rng.niche.next_int_exclusive(min, max)
     };
+    // `Creature.ScaleHpForMultiplayer` (ToughEgg.cs:172).
+    let hp = sts2_core::coop::scale_for_players(state, hp);
     if let Some(c) = state.creatures.iter_mut().find(|c| c.id == owner.0) {
         c.max_hp = hp;
         c.current_hp = hp;
@@ -860,8 +892,11 @@ fn tough_egg_hatch_effect(state: &mut CombatState, owner: CreatureUid) {
 /// wrong count, wrong pile. C# is the source of truth.
 fn myte_infest_effect(state: &mut CombatState, _owner: CreatureUid) {
     use sts2_core::card_effects::PileKind;
-    let _ = crate::cards::status::spawn_toxic(state, PileKind::Hand);
-    let _ = crate::cards::status::spawn_toxic(state, PileKind::Hand);
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        let _ = crate::cards::status::spawn_toxic(state, PileKind::Hand);
+        let _ = crate::cards::status::spawn_toxic(state, PileKind::Hand);
+    });
 }
 
 /// `Entomancer` PHEROMONE_SPIT effect. Per C#
@@ -6940,5 +6975,129 @@ mod tests {
             5,
             "CURL_AND_GROW applies Strength(5) to self"
         );
+    }
+}
+
+/// Co-op: the moves that target every player one instance or one card at a
+/// time (`docs/plans/2026-10-26-coop-multiseat-engine.md`, step 3).
+#[cfg(test)]
+mod coop_target_tests {
+    use super::*;
+    use sts2_core::cards::CardId;
+
+    /// Us (one Strike to draw) and one teammate seat (one Defend to draw) in
+    /// a whole co-op fight, round 2, and one `species` monster.
+    fn coop_board(species: MonsterKind) -> (CombatState, CreatureUid) {
+        crate::cards::dispatch::install_default_registry();
+        sts2_core::register_card_factory(crate::cards::spec_index::card_pod_from_id);
+        let mut state = CombatState::default();
+        state.player.current_hp = 50;
+        state.player.max_hp = 50;
+        state.init_player_creature();
+        let owner = state.spawn_enemy(species);
+        state.allies.push(sts2_core::PlayerCombatState {
+            current_hp: 40,
+            max_hp: 60,
+            ..sts2_core::PlayerCombatState::default()
+        });
+        let factory = sts2_core::lookup_card_factory().expect("factory");
+        for (seat, id) in [(0, CardId::StrikeIronclad), (1, CardId::DefendSilent)] {
+            let mut card = factory(id, false).expect("card");
+            let uid = sts2_core::CardUid::new(u32::try_from(state.cards.len() + 1).expect("fits"))
+                .expect("nz");
+            card.uid = uid;
+            state.cards.push(card);
+            if seat == 0 {
+                state.player.draw.push(uid);
+            } else {
+                state.allies[0].draw.push(uid);
+            }
+        }
+        sts2_core::coop::open_seats(&mut state);
+        state.coop.full = true;
+        state.round = 2;
+        (state, owner)
+    }
+
+    /// `owner`'s instances of `kind`, as (amount, seat).
+    fn instances(state: &CombatState, owner: CreatureUid, kind: PowerKind) -> Vec<(i32, u8)> {
+        let c = state
+            .creatures
+            .iter()
+            .find(|c| c.id == owner.0)
+            .expect("owner");
+        c.powers
+            .iter()
+            .filter_map(|u| state.powers.get_by_id(u.0))
+            .filter(|p| p.kind == kind)
+            .map(|p| (p.amount, sts2_core::coop::seat_of_power(state, p.id)))
+            .collect()
+    }
+
+    /// THIEVERY steals a card from every living player and takes one Swipe
+    /// stack per card; only our steal touches the run deck.
+    #[test]
+    fn thievery_steals_from_every_player() {
+        let (mut state, owner) = coop_board(MonsterKind::ThievingHopper);
+        thieving_hopper_thievery_effect(&mut state, owner);
+        assert!(state.player.draw.is_empty(), "our Strike is gone");
+        assert!(state.allies[0].draw.is_empty(), "their Defend is gone");
+        assert_eq!(
+            instances(&state, owner, PowerKind::Swipe)
+                .iter()
+                .map(|p| p.0)
+                .sum::<i32>(),
+            2
+        );
+        assert_eq!(
+            state.swipe_stolen.len(),
+            1,
+            "only our card leaves the run deck"
+        );
+    }
+
+    /// LIQUIFY puts one Sandpit per player on the boss; a teammate's running
+    /// out kills the teammate, not us, and the fight goes on.
+    #[test]
+    fn each_player_has_their_own_sandpit() {
+        let (mut state, owner) = coop_board(MonsterKind::TheInsatiable);
+        the_insatiable_liquify_ground_effect(&mut state, owner);
+        assert_eq!(
+            instances(&state, owner, PowerKind::Sandpit),
+            vec![(4, 0), (4, 1)]
+        );
+
+        let theirs = state
+            .powers
+            .iter()
+            .find(|p| {
+                p.kind == PowerKind::Sandpit && sts2_core::coop::seat_of_power(&state, p.id) == 1
+            })
+            .map(|p| p.id)
+            .expect("their Sandpit");
+        if let Some(p) = state.powers.get_mut_by_id(theirs) {
+            p.amount = 1;
+        }
+        sts2_core::hooks::dispatch_after_side_turn_start(
+            &mut state,
+            &sts2_core::hooks::TurnSideCtx {
+                side: sts2_core::Side::Enemy,
+            },
+        );
+        assert_eq!(state.allies[0].current_hp, 0, "the pit took the teammate");
+        assert_eq!(state.player.current_hp, 50);
+        assert!(!state.is_over);
+        assert_eq!(instances(&state, owner, PowerKind::Sandpit), vec![(3, 0)]);
+    }
+
+    /// Aeonglass spawns with one WitheringPresence per player it targets.
+    #[test]
+    fn each_player_has_their_own_withering_presence() {
+        let (mut state, _) = coop_board(MonsterKind::Nibbit);
+        let owner = state.spawn_enemy(MonsterKind::Aeonglass);
+        let mut wp = instances(&state, owner, PowerKind::WitheringPresence);
+        wp.sort_unstable();
+        assert_eq!(wp.len(), 2);
+        assert_eq!(wp.iter().map(|p| p.1).collect::<Vec<_>>(), vec![0, 1]);
     }
 }

@@ -54,12 +54,110 @@ internal static class SimCombatLog
     private static readonly Regex HeaderRe = new(
         @"^Rd (\d+) \((\w+) turn\)", RegexOptions.Compiled);
 
+    /// <summary>
+    /// `player_choice` rows not yet sent, each with the History entry count
+    /// at the moment of the choice: Drain puts a row before the first entry
+    /// recorded after it. Choices are not History entries; they arrive by
+    /// event (<see cref="RecordChoice"/>), possibly off the main thread.
+    /// </summary>
+    private static readonly List<(int At, Dictionary<string, object?> Row)> _choices = new();
+
+    private static readonly object _choicesLock = new();
+
     /// <summary>Forget everything (a new run / a restored snapshot).</summary>
     internal static void Reset()
     {
         _sent = 0;
         _openMoveId = null;
         _openMoveMonster = null;
+        lock (_choicesLock)
+        {
+            // A choice made before the new combat's History began (an
+            // opening Toolbox pick) still belongs to it.
+            for (int i = 0; i < _choices.Count; i++)
+            {
+                _choices[i] = (0, _choices[i].Row);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A player's choice mid-combat, as the game syncs it between peers (C#
+    /// `PlayerChoiceSynchronizer.PlayerChoiceReceived`, raised for ours and
+    /// for every teammate's): who chose, the per-player choice id, the
+    /// result's type (`CombatCard`, `CanonicalCard`, `Index`, ...) and what
+    /// was picked, cards as `{id, upgraded}` in the order chosen. Lets a
+    /// recorded co-op fight replay every seat's picks. Never throws.
+    /// </summary>
+    internal static void RecordChoice(
+        string? owner, uint choiceId, string type,
+        List<Dictionary<string, object?>> cards, List<int>? indexes, string? player)
+    {
+        try
+        {
+            if (CombatManager.Instance?.IsInProgress != true)
+            {
+                // A rest-site Smith or an event pick: not the fight's.
+                return;
+            }
+            CombatState? state = CombatManager.Instance.DebugOnlyGetState();
+            int at = CombatManager.Instance?.History?.Entries?.Count() ?? 0;
+            var row = new Dictionary<string, object?>
+            {
+                ["round"] = state?.RoundNumber,
+                ["side"] = state == null ? null : state.CurrentSide == CombatSide.Player ? "player" : "enemy",
+                ["text"] = cards.Count > 0
+                    ? $"{owner} chose {string.Join(", ", cards.Select(c => c["id"]))}"
+                    : $"{owner} chose {type} {string.Join(", ", indexes ?? new List<int>())}{player}",
+                ["source"] = null,
+                ["kind"] = "player_choice",
+                ["owner"] = owner,
+                ["choice_id"] = choiceId,
+                ["choice_type"] = type,
+                ["cards"] = cards,
+                ["indexes"] = indexes,
+                ["player"] = player,
+            };
+            lock (_choicesLock)
+            {
+                _choices.Add((at, row));
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"[SimCombatLog] RecordChoice failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>A card as a `player_choice` row names it.</summary>
+    internal static Dictionary<string, object?> ChoiceCard(string? id, bool upgraded) =>
+        new()
+        {
+            ["id"] = id,
+            ["upgraded"] = upgraded,
+        };
+
+    /// <summary>The buffered choice rows made before History entry
+    /// <paramref name="before"/>, removed from the buffer, oldest first.</summary>
+    private static List<Dictionary<string, object?>> TakeChoices(int before)
+    {
+        var rows = new List<Dictionary<string, object?>>();
+        lock (_choicesLock)
+        {
+            for (int i = 0; i < _choices.Count;)
+            {
+                if (_choices[i].At <= before)
+                {
+                    rows.Add(_choices[i].Row);
+                    _choices.RemoveAt(i);
+                }
+                else
+                {
+                    i++;
+                }
+            }
+        }
+        return rows;
     }
 
     /// <summary>
@@ -85,6 +183,7 @@ internal static class SimCombatLog
             }
             for (int i = _sent; i < entries.Count; i++)
             {
+                rows.AddRange(TakeChoices(i));
                 Dictionary<string, object?>? row = Map(entries[i]);
                 if (row != null)
                 {
@@ -92,6 +191,7 @@ internal static class SimCombatLog
                 }
             }
             _sent = entries.Count;
+            rows.AddRange(TakeChoices(entries.Count));
         }
         catch (Exception ex)
         {
@@ -149,6 +249,13 @@ internal static class SimCombatLog
                 row["card"] = e.CardPlay?.Card?.Id.Entry;
                 row["upgraded"] = e.CardPlay?.Card?.IsUpgraded ?? false;
                 row["auto_played"] = e.CardPlay?.IsAutoPlay ?? false;
+                // Co-op: whose card and at what, so a recorded fight can be
+                // replayed seat by seat. `play_index` > 0 is a repeat of the
+                // same play (Echo Form, Burst), not a new one.
+                row["owner"] = NetIdOf(() => e.CardPlay?.Card?.Owner?.NetId);
+                row["target"] = Who(e.CardPlay?.Target);
+                row["target_index"] = EnemyIndex(e.CardPlay?.Target);
+                row["play_index"] = e.CardPlay?.PlayIndex ?? 0;
                 return row;
 
             case CardPlayFinishedEntry e:
@@ -191,6 +298,8 @@ internal static class SimCombatLog
             case PotionUsedEntry e:
                 row["kind"] = "potion";
                 row["potion"] = e.Potion?.Id.Entry;
+                row["owner"] = NetIdOf(() => e.Potion?.Owner?.NetId);
+                row["target_index"] = EnemyIndex(e.Target);
                 return row;
 
             case EnergySpentEntry e:
@@ -247,7 +356,42 @@ internal static class SimCombatLog
             ["kind"] = creature.IsPlayer ? "player" : "monster",
             ["id"] = creature.ModelId.Entry,
             ["uid"] = null,
+            // Matches `combat_id` on the board's creatures (co-op replay).
+            ["combat_id"] = creature.CombatId,
         });
+    }
+
+    /// <summary>A player's network id, as a string (a `ulong` does not
+    /// survive every JSON reader). Matches `net_id` on the combat board.</summary>
+    private static string? NetIdOf(Func<ulong?> netId)
+    {
+        try
+        {
+            return netId()?.ToString(CultureInfo.InvariantCulture);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The position of <paramref name="creature"/> among the combat's
+    /// enemies, or null for a player, a pet or no target.</summary>
+    private static int? EnemyIndex(Creature? creature)
+    {
+        if (creature == null)
+        {
+            return null;
+        }
+        try
+        {
+            int i = CombatManager.Instance?.DebugOnlyGetState()?.Enemies.ToList().IndexOf(creature) ?? -1;
+            return i >= 0 ? i : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private static Dictionary<string, object?> CardSource(string id, bool upgraded) =>

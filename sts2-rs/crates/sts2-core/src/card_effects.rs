@@ -1026,6 +1026,8 @@ fn apply_power_to_creature_inner(
         PowerAmountObserverPhase::Before,
     );
     let amount = pipe_power_amount_through_modify_chain(state, None, target_uid, kind, amount);
+    // C# `PowerCmd.Apply` scales some enemy powers by the player count.
+    let amount = crate::coop::scale_enemy_power(state, target_uid, kind, amount);
     if amount <= 0 {
         return;
     }
@@ -1516,6 +1518,8 @@ pub fn apply_power_to_creature_with_applier(
         PowerAmountObserverPhase::Before,
     );
     let amount = pipe_power_amount_through_modify_chain(state, applier, target_uid, kind, amount);
+    // C# `PowerCmd.Apply` scales some enemy powers by the player count.
+    let amount = crate::coop::scale_enemy_power(state, target_uid, kind, amount);
     if amount <= 0 {
         return;
     }

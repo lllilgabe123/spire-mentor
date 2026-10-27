@@ -240,7 +240,7 @@ Sent once per card-play decision (~4x/s during combat).
 | `available_actions` | string[] | `["PLAY","END_TURN"]` plus `"POTION"` iff any potion slot has `can_use=true`. |
 | `round` | int | `CombatState.RoundNumber`. |
 | `room_type` | string | The live `RunState.CurrentRoom.RoomType` (`Monster`\|`Elite`\|`Boss`\|`Event`\|...), same enum string the headless `RunContext` emits as `context.room_type`. The client maps `"Elite"` onto the engine's `is_elite` flag (an eval-net feature). Defaults to `"Combat"` when no room is known. |
-| `allies` | object[] | **New (co-op phase 3).** One entry per OTHER player in the run, as this peer simulates them; empty in single-player. Each: `character` (string id), `hp` / `max_hp` / `block` (int), `is_dead` (bool), `energy` / `max_energy` (int), `powers` (Power[]), `hand` (Card[], serialized without legality), `ended_turn` (bool, `CombatManager.IsPlayerReadyToEndTurn`). Every peer runs every player's draws, so the teammate's hand is real data even though the game's UI only shows its size. Monster attacks hit every player (`TargetingAllOpponents`), so `enemies[].intents` damage is already ours. **Absent** in every mod build before the field. |
+| `allies` | object[] | **New (co-op phase 3).** One entry per OTHER player in the run, as this peer simulates them; empty in single-player. Each: `character` (string id), `hp` / `max_hp` / `block` (int), `is_dead` (bool), `energy` / `max_energy` (int), `powers` (Power[]), `hand` (Card[], serialized without legality), `ended_turn` (bool, `CombatManager.IsPlayerReadyToEndTurn`); since the co-op replay fields also `net_id` (string), `draw_pile` / `discard_pile` / `exhaust_pile` / `play_pile` (Pile, as ours), `relics` (Relic[]) and `stars` (int), and `player.net_id` names us. Every peer runs every player's draws, so the teammate's hand is real data even though the game's UI only shows its size. Monster attacks hit every player (`TargetingAllOpponents`), so `enemies[].intents` damage is already ours. **Absent** in every mod build before the field. |
 | `player.stars` | int | **Regent only** (same condition as headless `RunSimulator.CombatPlayState`: `pcs.Stars >= 0` and character `REGENT`). The star economy for star-cost cards; the client hoists it to the headless dialect's top-level `stars`. |
 
 ### `map_select`
@@ -655,6 +655,36 @@ that caused it, and the kind's own fields (`dealer` / `receiver` / `unblocked` /
 `blocked` / `amount` / …). Creatures are `{kind, id, uid}` with the id C# prints
 (`IRONCLAD`, `Nibbit`) — never a display name: localization belongs to the
 workbench and it needs a stable key.
+
+Co-op replay fields: a `card_play_started` row also carries `owner` (the
+card's player as `net_id`, a string; `null` if unreadable), `target`
+(`{kind, id, uid}` or `null`), `target_index` (the target's position in the
+combat's enemies, `null` for a player, a pet or no target) and `play_index`
+(> 0 for a repeat of the same play — Echo Form, Burst — not a new one). A
+`potion` row carries `owner` and `target_index` the same way. Creatures on rows
+also carry `combat_id` (C# `Creature.CombatId`), matching `combat_id` on the
+board's enemies: a row's `target_index` is computed when the rows are drained,
+after C# may have dropped a killed target from its list.
+
+Also for replaying co-op fights: `player.seat_index` is our position in the
+run's player order (who sets up and draws first each turn); `coop_rng` (co-op
+only) is the `rng` block's shape and content, kept off `rng` because live the
+teammates draw from the shared streams between our decisions; a Bolas /
+Thrumming Hatchet card carries `combat_vars.return_if_played_round` (the round
+it was played this turn or last, from the game's History), the engine's
+`VarKey` wire name.
+
+A `player_choice` row is a pick a player made mid-combat (a Survivor discard,
+a Discovery card, a Toolbox pick), ours or a teammate's, as the game syncs it
+between peers (C# `PlayerChoiceSynchronizer.PlayerChoiceReceived`). It is not a
+History entry: it sits before the first entry recorded after the pick. Fields:
+`owner` (net id), `choice_id` (the per-player sequence number), `choice_type`
+(C# `PlayerChoiceType`: `CombatCard`, `CanonicalCard`, `DeckCard`,
+`MutableCard`, `Index`, `Player`), `cards` (`[{id, upgraded}]`, in the order
+picked; empty for a skip or a non-card choice), `indexes` (an `Index` choice)
+and `player` (a `Player` choice's net id). A teammate's pick lands when it
+arrives over the network, which can be a little before the play that asks for
+it.
 
 Rows are DRAINED, not resent: each request carries only what happened since the
 last one, and the drain resets itself when the history shrinks (the only way

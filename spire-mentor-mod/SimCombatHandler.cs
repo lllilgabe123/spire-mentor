@@ -745,6 +745,11 @@ public class SimCombatHandler : IRoomHandler, IHandler
                              ?? new List<Dictionary<string, object?>>(),
                 ["cards_played_this_turn"] = CountCardsPlayedThisTurn(combatState, creature),
                 ["bound_card_played_this_turn"] = BoundCardPlayedThisTurn(combatState, creature),
+                // Co-op: who we are on the combat log's card-play rows (`owner`).
+                ["net_id"] = player.NetId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                // Our place in the run's player order: who sets up, draws and
+                // flushes first each turn (they share the run's shuffle stream).
+                ["seat_index"] = runState?.Players.ToList().IndexOf(player) ?? 0,
             };
             try
             {
@@ -845,6 +850,20 @@ public class SimCombatHandler : IRoomHandler, IHandler
                             .ToList()
                         : new List<Dictionary<string, object?>>(),
                     ["ended_turn"] = SafeEndedTurn(other),
+                    // The rest of the seat, so a recorded fight can be replayed
+                    // as a whole co-op fight: every peer runs every player's draws.
+                    ["net_id"] = other.NetId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["draw_pile"] = SimStateExtractor.SerializePile(pcs?.DrawPile),
+                    ["discard_pile"] = SimStateExtractor.SerializePile(pcs?.DiscardPile),
+                    ["exhaust_pile"] = SimStateExtractor.SerializePile(pcs?.ExhaustPile),
+                    ["play_pile"] = SimStateExtractor.SerializePile(pcs?.PlayPile),
+                    ["relics"] = other.Relics.Select(SimStateExtractor.SerializeRelic).ToList(),
+                    ["stars"] = pcs?.Stars ?? 0,
+                    // Their belt, slot by slot as ours is: a replay plays a
+                    // teammate's logged potion from it.
+                    ["potions"] = other.PotionSlots
+                        .Select((potion, slot) => SimStateExtractor.SerializePotionSlot(potion, slot))
+                        .ToList(),
                 });
             }
             catch (Exception ex)

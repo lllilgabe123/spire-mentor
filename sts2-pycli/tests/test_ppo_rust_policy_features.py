@@ -45,11 +45,13 @@ _FIXTURE = (
 
 
 def _upgraded_card_reward_decision() -> tuple[dict, list[dict], dict]:
-    """A real recorded card-reward decision, with one option pre-upgraded.
+    """A real recorded card-reward decision, with one option pre-upgraded and
+    the first deck card and first option enchanted.
 
     ``reward_upgrade`` only moves the upgrade column of a card-reward option
-    token, so a decision without one cannot tell the two schemas apart — a
-    fabricated obs would risk asserting on a difference that is not there.
+    token and ``card_mods`` only the enchantment columns of card tokens, so a
+    decision without both cannot tell the schemas apart — a fabricated obs
+    would risk asserting on a difference that is not there.
     """
     if not _FIXTURE.exists():
         pytest.skip(f"sibling sts2-rs fixture missing: {_FIXTURE}")
@@ -63,6 +65,13 @@ def _upgraded_card_reward_decision() -> tuple[dict, list[dict], dict]:
                 **row["obs"],
                 # First option upgraded, rest not: the flag the feature reads.
                 "card_reward_option_upgraded": [i == 0 for i in range(len(ids))],
+                # First deck card and first option enchanted: what `card_mods` reads.
+                "deck_enchantments": [
+                    ["SWIFT", 2] if i == 0 else None for i in range(len(row["obs"]["deck"]))
+                ],
+                "card_reward_option_enchantments": [
+                    ["SWIFT", 2] if i == 0 else None for i in range(len(ids))
+                ],
             }
             return obs, row["actions"], row["metrics"]
     pytest.skip("no card-reward decision in the parity fixture")

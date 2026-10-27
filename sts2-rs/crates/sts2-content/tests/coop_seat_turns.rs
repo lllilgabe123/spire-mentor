@@ -209,3 +209,44 @@ fn every_seat_starts_the_combat() {
     was.sort();
     assert_eq!(all, was, "their deck is all theirs");
 }
+
+/// Each seat's turn-start hand as positions in its own discard pile, after
+/// both piles (ten Strikes each) reshuffle from the one shared stream, with
+/// us at `seat_index` in the run's player order.
+fn reshuffled_hands(seat_index: u8) -> (Vec<usize>, Vec<usize>) {
+    let mut state = two_seat_fight(2, 0);
+    let ours = std::mem::take(&mut state.player.draw);
+    let mut theirs = std::mem::take(&mut state.allies[0].draw);
+    for uid in &mut theirs {
+        let i = uid.0.get() as usize - 1;
+        state.cards[i].card_id = CardId::StrikeIronclad;
+    }
+    state.player.discard.clone_from(&ours);
+    state.allies[0].discard.clone_from(&theirs);
+    state.coop.seat_index = seat_index;
+
+    let _ = sts2_core::combat_loop::start_player_turn(&mut state);
+
+    let positions = |hand: &[CardUid], pile: &[CardUid]| -> Vec<usize> {
+        hand.iter()
+            .map(|u| pile.iter().position(|p| p == u).expect("from the pile"))
+            .collect()
+    };
+    (
+        positions(&state.player.hand, &ours),
+        positions(&state.allies[0].hand, &theirs),
+    )
+}
+
+#[test]
+fn the_seat_ahead_in_the_player_order_shuffles_first() {
+    let (us_first, mate_second) = reshuffled_hands(0);
+    let (us_second, mate_first) = reshuffled_hands(1);
+
+    assert_ne!(us_first, mate_second, "two shuffles of the stream differ");
+    assert_eq!(
+        mate_first, us_first,
+        "seated second, the teammate shuffles first"
+    );
+    assert_eq!(us_second, mate_second);
+}

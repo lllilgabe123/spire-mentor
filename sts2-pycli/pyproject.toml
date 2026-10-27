@@ -265,6 +265,7 @@ known_first_party = [
   "run_stepper",
   "combat_mirror",
   "coop_coordination",
+  "coop_replay",
   "diag_leaf_saturation",
   "encoder_combat_surrogate",
   "eval_combat_surrogate_net",

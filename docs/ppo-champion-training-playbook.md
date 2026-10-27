@@ -897,6 +897,7 @@ the budget stops at 4×.
 | Ironclad `a10_it700` (pre-bundle, no prior) | 23.0% | 49.8% | 2026-10-23 |
 | Ironclad `a10_it700`, GH #830 default (knobs + BC prior in elite/boss; PGO wheel `4e5bb730d28e2976`) | 26.75% [22.65, 31.29] | 52.25% [47.36, 57.10] | 2026-10-26 |
 | Ironclad `a10_it700`, same wheel, prior off (`STS2_RUNAI_PRIOR_NET=off`) | 24.00% [20.07, 28.42] | 49.75% [44.88, 54.63] | 2026-10-26 |
+| Ironclad `cardmods_it850` candidate (`card_mods,reward_upgrade`; GH #830 default; PGO wheel `aa7acaa26a2bf981`) | 30.00% [25.72, 34.66] | 56.50% [51.60, 61.27] | 2026-10-27 |
 
 The first two Ironclad rows ran the knobs from the env line and no move
 prior, on older wheels; the 2026-10-23 row also ran on another host. The last

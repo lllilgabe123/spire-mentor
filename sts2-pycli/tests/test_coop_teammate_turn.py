@@ -207,3 +207,63 @@ def test_poison_counts_the_teammates_accelerant() -> None:
     after = _end_turn(wire)
     assert after["encounter"][0]["hp"] == hp - 5 - 4
     assert ("POISON", 3) in [(p["name"], p["amount"]) for p in after["encounter"][0]["powers"]]
+
+
+def test_a_full_fight_rides_the_wire_and_the_teammate_draws() -> None:
+    """``$.coop_full`` and a whole seat's piles, relics and stars round-trip, and
+    the engine then runs the teammate's own turn: their hand flushes at our end
+    of turn and they draw their next one from their own draw pile."""
+    wire = _mawler_with_mate(["DEFEND_SILENT"], [], [])
+    template = {k: v for k, v in wire["deck"]["hand"][1].items() if k != "stable_idx"}
+    mate = wire["allies"][0]
+    mate["draw_pile"] = [
+        dict(template, id="STRIKE_SILENT", stable_idx=200 + i, base_damage=6, base_block=0)
+        for i in range(6)
+    ]
+    mate["relics"] = [{"id": "ANCHOR"}]
+    wire["coop_full"] = True
+
+    again = sts2_rs.state_to_dict(sts2_rs.state_from_dict(wire))
+    assert again["coop_full"] is True
+    seat = again["allies"][0]
+    assert [c["id"] for c in seat["draw_pile"]] == ["STRIKE_SILENT"] * 6
+    assert [r["id"] for r in seat["relics"]] == ["ANCHOR"]
+
+    after = _end_turn(wire)
+    seat = after["allies"][0]
+    assert len(seat["hand"]) == 5, "their next hand, from their own draw pile"
+    assert {c["id"] for c in seat["hand"]} == {"STRIKE_SILENT"}
+    assert len(seat.get("draw_pile", [])) == 1
+
+
+def test_a_teammates_whole_seat_rides_from_the_mod_to_the_engine() -> None:
+    """The mod's teammate piles (``{"cards": [...]}``), relics and stars pass
+    through both adapters into the engine wire; absent on an older mod."""
+    board = _board()
+    relic = json.loads(FIXTURE.read_text(encoding="utf-8"))["state"]["run_state"]["relics"][0]
+    mate = board["allies"][0]
+    mate["draw_pile"] = {
+        "type": "Draw",
+        "count": 2,
+        "cards": [
+            _mod_card("STRIKE_SILENT", "Attack", "AnyEnemy"),
+            _mod_card("NEUTRALIZE", "Attack", "AnyEnemy"),
+        ],
+    }
+    mate["discard_pile"] = {"type": "Discard", "count": 0, "cards": []}
+    mate["relics"] = [dict(relic, id="RING_OF_THE_SNAKE", name="Ring of the Snake")]
+    mate["stars"] = 0
+
+    ally = translate(to_headless_combat_play(board))["allies"][0]
+    assert [c["id"] for c in ally["draw_pile"]] == ["STRIKE_SILENT", "NEUTRALIZE"]
+    assert ally["discard_pile"] == []
+    assert [r["id"] for r in ally["relics"]] == ["RING_OF_THE_SNAKE"]
+    uids = [c["stable_idx"] for c in ally["hand"] + ally["draw_pile"]]
+    assert len(set(uids)) == len(uids), "every card numbered once"
+    seat = sts2_rs.state_to_dict(
+        sts2_rs.state_from_dict(translate(to_headless_combat_play(board)))
+    )["allies"][0]
+    assert [c["id"] for c in seat["draw_pile"]] == ["STRIKE_SILENT", "NEUTRALIZE"]
+
+    old = translate(to_headless_combat_play(_board()))["allies"][0]
+    assert "draw_pile" not in old and "relics" not in old
