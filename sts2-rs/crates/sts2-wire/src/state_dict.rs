@@ -3348,6 +3348,7 @@ pub fn state_from_dict_impl(parsed: &ParsedState) -> WireResult<CoreCombatState>
         let mut belt = sts2_core::OrbSlots {
             slots: SmallVec::new(),
             capacity,
+            sized: true,
         };
         for po in orbs.iter().take(usize::from(capacity)) {
             belt.slots.push(match po.kind {

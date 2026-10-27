@@ -141,6 +141,11 @@ pub struct OrbSlots {
     /// `combat.orb_slots`. Grows via [`Self::add_slots`] when Capacitor
     /// or Signal Boost fires.
     pub capacity: u8,
+    /// The belt's size is real, not a fixture default: set by every
+    /// constructor that sizes it, the wire import, and Bulk Up. A Defect
+    /// whose belt is real and shrank to 0 (two Bulk Ups) channels nothing,
+    /// as in C#; only an unsized belt snaps to the 3-slot default.
+    pub sized: bool,
 }
 
 impl Default for OrbSlots {
@@ -151,6 +156,7 @@ impl Default for OrbSlots {
         Self {
             slots: SmallVec::new(),
             capacity: 0,
+            sized: false,
         }
     }
 }
@@ -174,6 +180,7 @@ impl OrbSlots {
             slots,
             #[allow(clippy::cast_possible_truncation)]
             capacity: cap.min(u8::MAX as usize) as u8,
+            sized: true,
         }
     }
 
@@ -192,6 +199,7 @@ impl OrbSlots {
     /// Add `n` extra empty slots. Mirrors `Capacitor`'s "gain N orb
     /// slots" power-on-play effect.
     pub fn add_slots(&mut self, n: usize) {
+        self.sized = true;
         for _ in 0..n {
             self.slots.push(Orb::Empty);
         }
@@ -378,6 +386,13 @@ pub fn channel_orb(state: &mut CombatState, orb: Orb) {
     // deck-build capacity setup still get the canonical 3-slot belt.
     if state.player.orbs.capacity == 0 {
         if state.player.character == Some(crate::potions::CharacterId::Defect) {
+            if state.player.orbs.sized {
+                // A real belt removed by Bulk Up: C# `TryEnqueue` fails and
+                // the orb is lost. Snapping back to 3 here made the search
+                // block with Frost it did not have (live Aeonglass loss,
+                // 2026-10-27: 98% "win" at 0 slots).
+                return;
+            }
             state.player.orbs = OrbSlots::with_default_capacity();
         } else {
             state.player.orbs.add_slots(1);

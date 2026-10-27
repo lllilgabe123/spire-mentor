@@ -630,6 +630,13 @@ def _add_foresight(
             advice["forecast_lines"] = list(advice.get("forecast_lines") or []) + tips
     except Exception as exc:
         logger.warning("fight tips failed: %s", exc)
+    try:
+        warn = realgame_wishlist.orb_slot_warning(
+            state, [str(c.get("id") or "") for c in state.get("hand") or [] if isinstance(c, dict)])
+        if warn:
+            advice["forecast_lines"] = list(advice.get("forecast_lines") or []) + [warn]
+    except Exception as exc:
+        logger.warning("orb slot warning failed: %s", exc)
     # Potion hoarding (your won Defect run ended four hard fights at 7-19 HP
     # with a potion still held; top beta players drink 60-99% of theirs).
     try:
@@ -1093,6 +1100,20 @@ def compute_screen_advice(
             advice["forecast_lines"] = combo + list(advice.get("forecast_lines") or [])
     except Exception as exc:
         logger.warning("combo watch failed: %s", exc)
+    # Personal build: Bulk Up offered to an orb deck (realgame_wishlist).
+    try:
+        if advice_for == "card_reward":
+            offered = [str(c.get("id") or "") for c in state.get("cards") or [] if isinstance(c, dict)]
+        elif advice_for == "shop":
+            offered = [str((o.get("item") or {}).get("id") or "") for o in state.get("options") or []
+                       if o.get("action") == "buy_card"]
+        else:
+            offered = []
+        warn = realgame_wishlist.orb_slot_warning(state, offered)
+        if warn:
+            advice["forecast_lines"] = [warn] + list(advice.get("forecast_lines") or [])
+    except Exception as exc:
+        logger.warning("orb slot warning failed: %s", exc)
     # Personal build: the cards worth hunting for this deck, on every screen;
     # the mod keeps the last one on the HUD through fights (realgame_wishlist).
     wish = realgame_wishlist.summary(state, character, policy)

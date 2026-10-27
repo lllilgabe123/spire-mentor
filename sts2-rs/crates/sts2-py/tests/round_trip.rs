@@ -958,6 +958,7 @@ fn round_trip_pads_the_orb_belt_to_capacity() {
                 sts2_core::Orb::Empty
             ],
             capacity: 3,
+            sized: true,
         };
 
         let dict = state_to_dict(py, &s).expect("to_dict must succeed");

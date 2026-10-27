@@ -19,6 +19,7 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+import re
 from typing import Any
 
 import realgame_ppo
@@ -45,6 +46,41 @@ def _pools() -> dict[str, list[list[str]]]:
     return _POOLS
 
 
+#: Cards that cost the Defect an orb slot (C# ``OrbCmd.RemoveSlots``). In a
+#: deck that leans on orbs they switch off its Frost / Focus cards: a live
+#: Aeonglass loss (2026-10-27) went to 0 slots after two Bulk Ups.
+ORB_SLOT_LOSS = {"BULK_UP"}
+_ORB_TEXT = re.compile(r"\b(Channel|Focus|Evoke|Orb)", re.I)
+ORB_DECK_MIN = 4
+
+
+def _deck_cards(state: dict[str, Any]) -> list[dict[str, Any]]:
+    deck = (state.get("player") or {}).get("deck") or (state.get("run_state") or {}).get("master_deck") or []
+    return [c for c in deck if isinstance(c, dict)]
+
+
+def orb_cards(state: dict[str, Any]) -> int:
+    """How many deck cards channel, evoke or use Focus (by card text)."""
+    return sum(1 for c in _deck_cards(state)
+               if str(c.get("id") or "").upper() not in ORB_SLOT_LOSS
+               and _ORB_TEXT.search(re.sub(r"\[/?[a-z]+\]", "", str(c.get("description") or ""))))
+
+
+def orb_slot_warning(state: dict[str, Any], offered: list[str]) -> str | None:
+    """A line when a card that removes an orb slot is offered (or in hand)
+    to a deck that relies on orbs."""
+    hit = [cid for cid in offered if cid.upper().removeprefix("CARD.") in ORB_SLOT_LOSS]
+    n = orb_cards(state)
+    if not hit or n < ORB_DECK_MIN:
+        return None
+    have = sum(1 for c in _deck_cards(state) if str(c.get("id") or "").upper() in ORB_SLOT_LOSS)
+    slots = state.get("orb_capacity")
+    bit = f" You have {slots} orb slot(s) now." if isinstance(slots, int) else ""
+    return (f"Careful: {_name(hit[0])} removes an orb slot, and {n} of your cards need orbs"
+            f"{f' (you already run {have})' if have else ''}.{bit} At 0 slots Frost, Focus and"
+            " channel cards do nothing.")
+
+
 def ranked_pool(state: dict[str, Any], character: str, policy: Any) -> list[tuple[str, str, float]] | None:
     """``[(card id, rarity, share), ...]`` best first, cut at "skip"; None
     when there is no pool or the net cannot score it."""
@@ -58,7 +94,10 @@ def ranked_pool(state: dict[str, Any], character: str, policy: Any) -> list[tupl
     probs, _value = policy.distribution(decision.obs, decision.actions, decision.metrics)
     skip = probs[-1]
     rows = sorted(((pool[i][0], pool[i][1], float(p)) for i, p in enumerate(probs[:-1])), key=lambda r: -r[2])
-    return [r for r in rows if r[2] > skip]
+    # The pick head scores cards one at a time; it does not see Bulk Up
+    # switching off an orb deck, so leave those out of the list.
+    banned = ORB_SLOT_LOSS if orb_cards(state) >= ORB_DECK_MIN else set()
+    return [r for r in rows if r[2] > skip and r[0] not in banned]
 
 
 def _name(cid: str) -> str:

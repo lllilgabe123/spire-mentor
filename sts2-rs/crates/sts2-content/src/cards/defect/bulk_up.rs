@@ -21,6 +21,7 @@ pub(crate) fn play_bulk_up(state: &mut CombatState, _t: Option<CreatureUid>) -> 
     // C# `Math.Min(Capacity, amount)` guard).
     let slots = &mut state.player.orbs;
     if slots.capacity > 0 {
+        slots.sized = true;
         slots.capacity -= 1;
         slots.slots.pop();
     }

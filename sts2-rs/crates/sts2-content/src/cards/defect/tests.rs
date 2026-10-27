@@ -1246,6 +1246,24 @@ fn othtc_bulk_up_remove_slots_no_op_when_capacity_zero() {
     );
 }
 
+#[test]
+fn bulk_up_to_zero_slots_then_channel_is_lost() {
+    // Live Aeonglass loss 2026-10-27: two Bulk Ups took a Defect's belt to
+    // 0, and the next Frost channel snapped the search back to 3 slots, so
+    // it blocked with orbs the game never gave. C# `TryEnqueue` fails at
+    // capacity 0 and the orb is lost.
+    install_pool();
+    let f = lookup(CardId::BulkUp).expect("card registered");
+    let (mut state, _) = fresh_state(CardId::BulkUp, 0, 0);
+    state.player.character = Some(sts2_core::potions::CharacterId::Defect);
+    state.player.orbs = sts2_core::OrbSlots::with_capacity(1);
+    let _ = f(&mut state, None);
+    assert_eq!(state.player.orbs.capacity(), 0);
+    orbs::channel_orb(&mut state, Orb::frost());
+    assert_eq!(state.player.orbs.capacity(), 0, "no snap back to 3 slots");
+    assert_eq!(state.player.orbs.filled_len(), 0, "the orb is lost");
+}
+
 /// Bead `sts2-rs-q1ljh`: upgraded BulkUp grants 3/3 Strength/Dexterity
 /// per C# `BulkUp.cs:OnUpgrade` `UpgradeValueBy(1m)` on both
 /// `StrengthPower` and `DexterityPower`. Orb-slot REMOVE stays at 1
