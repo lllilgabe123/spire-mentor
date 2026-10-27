@@ -562,6 +562,10 @@ def compute_combat_advice(
             except Exception as exc:
                 logger.warning("double-check failed: %s", exc)
         try:
+            realgame_turnplan.prefer_upgraded(advice, state)
+        except Exception as exc:
+            logger.warning("prefer-upgraded failed: %s", exc)
+        try:
             vfirst = realgame_turnplan.vulnerable_first(advice, state)
             if vfirst:
                 checked = f"{checked} · {vfirst}" if checked else vfirst

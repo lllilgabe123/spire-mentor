@@ -198,3 +198,36 @@ def vulnerable_first(advice: dict[str, Any], state: dict[str, Any]) -> str | Non
                       "label": option.get("label")}
     advice["pv"] = [option.get("label")]
     return f"{hand[i].get('name')} first: its Vulnerable makes {payoff.get('name')} give more Strength"
+
+
+def prefer_upgraded(advice: dict[str, Any], state: dict[str, Any], tie_q: float = 0.005) -> None:
+    """On a tie between two copies of the same card (Defend vs Defend+), keep
+    the best as the upgraded copy. The search scores copies separately and
+    can rank the plain one first by noise or on an exact tie (a won fight
+    where every move scores the same). Edits ``advice`` in place."""
+    best = advice.get("best") or {}
+    hand = [c for c in state.get("hand") or [] if isinstance(c, dict)]
+    ci = best.get("card_index")
+    if best.get("action") != "play" or not isinstance(ci, int) or not 0 <= ci < len(hand):
+        return
+    card = hand[ci]
+    if card.get("upgraded") or str(card.get("name") or "").endswith("+"):
+        return
+    options = advice.get("options") or []
+    mine = next((o for o in options if o.get("card_index") == ci and o.get("target_index") == best.get("target_index")), None)
+    if mine is None or mine.get("q") is None:
+        return
+    for o in options:
+        j = o.get("card_index")
+        if not isinstance(j, int) or j == ci or not 0 <= j < len(hand) or o.get("q") is None:
+            continue
+        other = hand[j]
+        same = str(other.get("id") or "") == str(card.get("id") or "") and o.get("target_index") == best.get("target_index")
+        upgraded = other.get("upgraded") or str(other.get("name") or "").endswith("+")
+        if same and upgraded and o["q"] >= mine["q"] - tie_q:
+            for x in options:
+                x["is_best"] = x is o
+            advice["best"] = {**best, "card_index": j, "label": o.get("label")}
+            if advice.get("pv"):
+                advice["pv"] = [o.get("label"), *advice["pv"][1:]]
+            return
