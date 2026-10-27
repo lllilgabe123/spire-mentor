@@ -16,6 +16,7 @@ ends the numbering there: past it the copy cannot say what you will pick.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -145,3 +146,55 @@ def setup_first(order: list[dict[str, int]], line: list[str], state: dict[str, A
             [*range(1, first + 1), r + 1, *range(first + 1, r + 1), *range(r + 2, len(steps) + 1)], 1)}
         for step, o in by_step.items():
             o["step"] = new_pos.get(step, step)
+
+
+#: Cards whose payoff counts the enemy's Vulnerable when played (Dominate:
+#: 1 Strength per Vulnerable, for the rest of the fight). The search scores
+#: the extra Strength only as far as it looks ahead, so on a long fight it
+#: played Dominate before Tremble and gave up 3 Strength (Terror Eel,
+#: 2026-10-27).
+COUNTS_VULNERABLE = {"DOMINATE"}
+_VULN = re.compile(r"Apply (\d+) Vulnerable", re.I)
+
+
+def _cost(card: dict[str, Any]) -> int:
+    for key in ("effective_cost", "cost"):
+        v = card.get(key)
+        if isinstance(v, int) and v >= 0:
+            return v
+    return 99
+
+
+def vulnerable_first(advice: dict[str, Any], state: dict[str, Any]) -> str | None:
+    """When the best play is Dominate and a card that applies Vulnerable to
+    the same enemy is also affordable this turn, recommend that card first.
+    Edits ``advice`` in place; returns a HUD line when it switched."""
+    best = advice.get("best") or {}
+    hand = [c for c in state.get("hand") or [] if isinstance(c, dict)]
+    ci = best.get("card_index")
+    if best.get("action") != "play" or not isinstance(ci, int) or not 0 <= ci < len(hand):
+        return None
+    payoff = hand[ci]
+    if str(payoff.get("id") or "").upper() not in COUNTS_VULNERABLE:
+        return None
+    energy = int(state.get("energy") or 0)
+    target = best.get("target_index")
+    picks = []
+    for i, c in enumerate(hand):
+        m = _VULN.search(re.sub(r"\[/?[a-z]+\]", "", str(c.get("description") or "")))
+        if i == ci or not m or _cost(c) + _cost(payoff) > energy:
+            continue
+        picks.append((int(m.group(1)), -_cost(c), i))
+    if not picks:
+        return None
+    _, _, i = max(picks)
+    option = next((o for o in advice.get("options") or []
+                   if o.get("card_index") == i and o.get("target_index") in (target, None)), None)
+    if option is None:
+        return None
+    for o in advice.get("options") or []:
+        o["is_best"] = o is option
+    advice["best"] = {"action": "play", "card_index": i, "target_index": option.get("target_index"),
+                      "label": option.get("label")}
+    advice["pv"] = [option.get("label")]
+    return f"{hand[i].get('name')} first: its Vulnerable makes {payoff.get('name')} give more Strength"

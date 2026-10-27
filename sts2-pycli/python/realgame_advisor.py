@@ -561,6 +561,12 @@ def compute_combat_advice(
                 )
             except Exception as exc:
                 logger.warning("double-check failed: %s", exc)
+        try:
+            vfirst = realgame_turnplan.vulnerable_first(advice, state)
+            if vfirst:
+                checked = f"{checked} · {vfirst}" if checked else vfirst
+        except Exception as exc:
+            logger.warning("vulnerable-first failed: %s", exc)
         _add_foresight(advice, state, real_wire, coop, share, cfg, sims)
         if checked:
             advice["forecast_lines"] = [checked, *(advice.get("forecast_lines") or [])]
