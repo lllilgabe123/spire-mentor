@@ -83,3 +83,21 @@ def lines(state: dict[str, Any], character: str, policy: Any, top: int = 3) -> l
     if rare:
         text += " · Rare: " + ", ".join(fmt(r) for r in rare)
     return [text + " (the run AI's top picks for this deck)"]
+
+
+def summary(state: dict[str, Any], character: str, policy: Any, per_rarity: int = 3) -> str | None:
+    """"Look for: Common: A, B, C · Uncommon: D, E, F · Rare: G, H" for the
+    always-on HUD line, or None when the pool cannot be ranked."""
+    try:
+        rows = ranked_pool(state, character, policy)
+    except Exception as exc:
+        logger.warning("wishlist failed: %s", exc)
+        return None
+    if not rows:
+        return None
+    parts = []
+    for rarity, n in (("Common", per_rarity), ("Uncommon", per_rarity), ("Rare", 2)):
+        names = [_name(r[0]) for r in rows if r[1] == rarity][:n]
+        if names:
+            parts.append(f"{rarity}: " + ", ".join(names))
+    return ("Look for: " + " · ".join(parts)) if parts else None

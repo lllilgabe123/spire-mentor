@@ -133,6 +133,11 @@ internal sealed class SimPathNode
 internal sealed class SimAdvice
 {
     public string? Note;
+
+    /// <summary>`advice.wishlist`: the run AI's cards to look for, by rarity,
+    /// for the current deck. Sent with every non-combat screen; the HUD keeps
+    /// the last one up through fights.</summary>
+    public string? Wishlist;
     public double? PWin;
     public bool LowConfidence;
     public SimBestAction? Best;
@@ -211,6 +216,7 @@ internal sealed class SimAdvice
         }
 
         advice.Note = ReadString(el, "note");
+        advice.Wishlist = ReadString(el, "wishlist");
         advice.PWin = ReadDouble(el, "p_win");
         advice.LowConfidence = ReadBool(el, "low_confidence") ?? false;
         advice.HandBack = ReadString(el, "hand_back");
@@ -464,6 +470,11 @@ internal sealed class SimHud
     /// combat's enemy list, as `target_index` is), -1 for none, and the
     /// marker drawn over its health bar ("▼ Strike"). Set with the card
     /// labels and cleared with them, so it never outlives its advice.</summary>
+    /// <summary>The always-on "Look for: Common ... · Rare ..." line under
+    /// the toolbar (from the last screen advice that carried one).</summary>
+    private string? _wishlistText;
+    private Label? _wishlistLabel;
+
     private int _targetIndex = -1;
     private string _targetText = "";
     private Label? _targetMarker;
@@ -582,6 +593,10 @@ internal sealed class SimHud
         if (!EnsureLayer())
         {
             return;
+        }
+        if (advice.Wishlist != null)
+        {
+            _wishlistText = advice.Wishlist; // kept on screen until the next one
         }
         EnsureCombatEndedSubscription();
         // THE Coach-style gate: nothing the advisor said reaches the screen
@@ -1950,6 +1965,41 @@ internal sealed class SimHud
         }
     }
 
+    /// <summary>
+    /// Put the "Look for" line at <paramref name="top"/> (where the advice
+    /// panel would start) and return the height it takes, so the panel and
+    /// the coach chip below it move down; 0 when there is nothing to show or
+    /// the HUD is hidden. Shown in every style and screen, fights included:
+    /// it is a standing shopping list, not the answer to the decision on screen.
+    /// </summary>
+    private float PlaceWishlist(float top)
+    {
+        if (string.IsNullOrEmpty(_wishlistText) || !HudVisible || _layer == null)
+        {
+            if (_wishlistLabel != null && GodotObject.IsInstanceValid(_wishlistLabel))
+            {
+                _wishlistLabel.Visible = false;
+            }
+            return 0f;
+        }
+        if (_wishlistLabel == null || !GodotObject.IsInstanceValid(_wishlistLabel))
+        {
+            _wishlistLabel = SmallLabel("", new Color(0.55f, 0.9f, 0.75f));
+            _wishlistLabel.Name = "SpireMentorWishlist";
+            _wishlistLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            _wishlistLabel.CustomMinimumSize = new Vector2(480f, 0f);
+            _wishlistLabel.Size = new Vector2(480f, 0f);
+            _wishlistLabel.MouseFilter = Control.MouseFilterEnum.Ignore;
+            _wishlistLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
+            _wishlistLabel.AddThemeConstantOverride("outline_size", 5);
+            _layer.AddChildSafely(_wishlistLabel);
+        }
+        _wishlistLabel.Text = _wishlistText;
+        _wishlistLabel.Position = new Vector2(PanelLeft, top);
+        _wishlistLabel.Visible = true;
+        return _wishlistLabel.Size.Y + 6f;
+    }
+
     private void RepositionPanels()
     {
         try
@@ -1966,6 +2016,7 @@ internal sealed class SimHud
             float panelTop = toolbarBottom.HasValue
                 ? Math.Max(top, toolbarBottom.Value + 8f)
                 : top + ChipToPanelGap;
+            panelTop += PlaceWishlist(panelTop);
             if (Math.Abs(_advicePanel.Position.Y - panelTop) > 0.5f)
             {
                 _advicePanel.Position = new Vector2(PanelLeft, panelTop);
