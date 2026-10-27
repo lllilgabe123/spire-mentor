@@ -36,6 +36,7 @@ SEEDS = (101, 102)
 CONFIRM_SEEDS = (103, 104)
 
 _pool = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="topup")
+_seed_pool = concurrent.futures.ThreadPoolExecutor(max_workers=16, thread_name_prefix="topup-seed")
 
 
 def _engine_action(option: dict[str, Any], wire_hand: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -55,15 +56,18 @@ def _engine_action(option: dict[str, Any], wire_hand: list[dict[str, Any]]) -> d
 
 def _score(sts2_rs: Any, cs: Any, action: dict[str, Any], sims: int, hidden_info: str | None,
            seeds: tuple[int, ...] = SEEDS) -> tuple[float, float] | None:
-    rows = []
-    for seed in seeds:
+    def one(seed: int) -> Any:
         kwargs: dict[str, Any] = {"sims": sims, "seed": seed}
         if hidden_info:
             kwargs["hidden_info"] = hidden_info
-        r = sts2_rs.mcts_score_action_forced(cs, action, **kwargs)
-        if r is None:
-            return None
-        rows.append(r)
+        return sts2_rs.mcts_score_action_forced(cs, action, **kwargs)
+
+    # Seeds side by side (same results, each seed is deterministic): the
+    # sts2_rs search releases the GIL. Own pool, so a _score running on
+    # `_pool` never waits on a slot in it.
+    rows = list(_seed_pool.map(one, seeds))
+    if any(r is None for r in rows):
+        return None
     return (sum(r["p_win"] for r in rows) / len(rows), sum(r["q"] for r in rows) / len(rows))
 
 
