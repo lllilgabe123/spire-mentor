@@ -890,6 +890,25 @@ def _searched_card_select_advice(
     (:meth:`AdvisorMirror.answer_card_select`). ``None`` for every reason not
     to answer; the caller then falls to the heuristic rung exactly as before.
     """
+    # Personal build: an "up to N" pile pick with cards already taken (the
+    # mod keeps offering the rest, `selected_count`). Continue only with the
+    # search's own remembered next pick; otherwise confirm what is taken.
+    taken = int(state.get("selected_count") or 0)
+    if taken > 0:
+        remembered = None
+        if mirror is not None:
+            remembered = mirror.next_remembered_pick(state.get("source_model"), state.get("cards") or [])
+        if remembered is None:
+            cards = state.get("cards") or []
+            return {
+                "note": f"combat MCTS · {taken} pick(s) done, confirm",
+                "options": [
+                    {"label": str(c.get("name") or c.get("id") or f"card {i}"), "is_best": False,
+                     "index": int(c.get("index", i)), "action": "choose"}
+                    for i, c in enumerate(cards)
+                ],
+                "best": {"action": "skip", "label": "confirm"},
+            }
     if mirror is None:
         return None
     return mirror.answer_card_select(state, cfg, sims)

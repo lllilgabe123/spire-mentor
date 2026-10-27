@@ -2226,7 +2226,13 @@ internal static class SimScreenAdvice
         (int minSelect, int maxSelect) = ReadSelectionBounds(screen);
         if (selected > 0)
         {
-            NConfirmButton? confirm = PendingConfirm(screen);
+            // An "up to N" pick from a combat pile (Neow's Fury: up to 2 from
+            // the discard) keeps offering the rest until N is reached; the
+            // advisor sends `skip` (confirm) itself once its searched picks
+            // are done (`selected_count`). Offering only "confirm" here cut
+            // every Neow's Fury to one card (2026-10-27).
+            bool wantsMore = selected < maxSelect && screen.GetType().Name == "NCombatPileCardSelectScreen";
+            NConfirmButton? confirm = wantsMore ? null : PendingConfirm(screen);
             if (confirm != null)
             {
                 string label = selected == 1 ? "confirm" : $"confirm ({selected} cards)";
@@ -2312,6 +2318,7 @@ internal static class SimScreenAdvice
             ["source_target_index"] = (object?)SimCardSelectContext.SourceTargetIndex!,
             ["source_upgraded"] = (object?)SimCardSelectContext.SourceUpgraded!,
             ["screen"] = screen.GetType().Name,
+            ["selected_count"] = Math.Max(0, selected),
             ["combat"] = (object?)SimCombatHandler.BuildEmbeddedCombatState(me)!,
         };
         SimStateExtractor.ApplyEnvelope(state, runState, me);
