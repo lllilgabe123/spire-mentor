@@ -36,7 +36,7 @@ it must never answer them.
 Usage::
 
     uv run python python/realgame_advisor.py [--host 127.0.0.1] [--port 9002]
-        [--sims 4000] [--boss-sims 16000] [--threads 1]
+        [--sims 16000] [--boss-sims 64000] [--threads 1]
         [--log-dir logs/realgame_advisor]
 """
 
@@ -2164,8 +2164,11 @@ def main(argv: list[str] | None = None) -> int:
     # depend on the player's core count, merged its trees by a different pick
     # rule, and dropped the single-tree lost-position override; no run-level
     # win rate was ever measured for it.
-    parser.add_argument("--sims", type=int, default=4000)
-    parser.add_argument("--boss-sims", type=int, default=16000)
+    # Personal build: 4x the search (2026-10-27). On 50 logged decisions vs
+    # a 128k reference, single-tree 16k lost 0.33 win pts/decision to 4k's
+    # 0.41 (median 1.0 s, worst 6.6 s); bosses at 64k take 6-12 s.
+    parser.add_argument("--sims", type=int, default=16000)
+    parser.add_argument("--boss-sims", type=int, default=64000)
     # Root-parallel workers (sts2_rs par_search: sims split across independent
     # trees). 1 = the run agent's single tree. More trees trade decision
     # fidelity to the measured agent for wall-clock; only for a box too slow
