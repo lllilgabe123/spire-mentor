@@ -81,10 +81,12 @@ def orb_slot_warning(state: dict[str, Any], offered: list[str]) -> str | None:
             " channel cards do nothing.")
 
 
-def ranked_pool(state: dict[str, Any], character: str, policy: Any) -> list[tuple[str, str, float]] | None:
+def ranked_pool(state: dict[str, Any], character: str, policy: Any,
+                pool_name: str | None = None) -> list[tuple[str, str, float]] | None:
     """``[(card id, rarity, share), ...]`` best first, cut at "skip"; None
-    when there is no pool or the net cannot score it."""
-    pool = _pools().get(character.lower())
+    when there is no pool or the net cannot score it. ``pool_name`` ranks
+    another pool for this character's deck ("colorless", "multiplayer")."""
+    pool = _pools().get(pool_name or character.lower())
     if not pool:
         return None
     fake = {**state, "type": "card_reward", "cards": [{"id": cid} for cid, _ in pool], "can_skip": True}
@@ -101,6 +103,7 @@ def ranked_pool(state: dict[str, Any], character: str, policy: Any) -> list[tupl
 
 
 def _name(cid: str) -> str:
+    cid = cid.removesuffix("_CARD")
     return cid.replace("_", " ").title().replace("Of The", "of the").replace(" Of ", " of ")
 
 
@@ -221,6 +224,21 @@ def summary(state: dict[str, Any], character: str, policy: Any, per_rarity: int 
                 parts.append(f"{rarity}: " + ", ".join(names))
         if parts:
             lines_out.append("Look for: " + " · ".join(parts))
+    # Colorless cards (shops' colorless slot, some events) and, in co-op,
+    # the multiplayer-only ones, ranked the same way for this deck.
+    extra = []
+    for pool_name, label, n in (("colorless", "Colorless (shop)", 3), ("multiplayer", "Co-op", 3)):
+        if pool_name == "multiplayer" and int(state.get("player_count") or 1) < 2:
+            continue
+        try:
+            rows_x = ranked_pool(state, character, policy, pool_name)
+        except Exception as exc:
+            logger.warning("%s wishlist failed: %s", pool_name, exc)
+            rows_x = None
+        if rows_x:
+            extra.append(f"{label}: " + ", ".join(_name(r[0]) for r in rows_x[:n]))
+    if extra:
+        lines_out.append(" · ".join(extra))
     try:
         relics = ranked_relics(state, character, policy)
     except Exception as exc:
