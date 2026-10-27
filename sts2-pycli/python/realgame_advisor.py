@@ -1981,12 +1981,6 @@ def _handle_advice_request(
         state["type"] = advice_for
         is_boss = (state.get("room_type") or "") == "Boss"
         sims = args.boss_sims if is_boss else args.sims
-        # Personal build: co-op fights add a teammate search per decision and
-        # the table waits on you; 16k/64k measured 8-11 s per move there
-        # (2026-10-27), so co-op keeps the old 4k/16k budget.
-        coop = state.get("coop") or {}
-        if coop.get("teammates") or int(coop.get("players") or state.get("player_count") or 1) > 1:
-            sims = max(1, sims // 4)
         fight_cfg = fight_search_cfg(cfg, state)
         # Personal build: root-parallel trees per decision (--threads /
         # --boss-threads). On 50 logged decisions 16k on 4 trees matched one
