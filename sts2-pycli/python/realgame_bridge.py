@@ -323,6 +323,47 @@ class RealGameBridgeClient:
     # Internal helpers
     # ----------------------------------------------------------------
 
+    def newer_pending(self, mtype: str) -> bool:
+        """Whether a complete ``mtype`` message is already queued behind the
+        one just received. Drains what the socket holds without blocking, so
+        nothing waits; the queued messages stay buffered for
+        :meth:`receive_state`, in order.
+
+        Personal build: the mod re-asks for advice on every board change, so
+        in co-op a teammate's turn queues one request per card they play and
+        the advisor answered each in turn (7 in a row, ~15 s behind the
+        board). A request with a newer one behind it is outdated.
+        """
+        if self._sock is None:
+            return False
+        try:
+            self._sock.setblocking(False)
+            while True:
+                try:
+                    chunk = self._sock.recv(65536)
+                except (BlockingIOError, InterruptedError):
+                    break
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                self._buffer += chunk
+        finally:
+            try:
+                self._sock.settimeout(self.timeout)
+            except OSError:
+                pass
+        needle = f'"{mtype}"'.encode()
+        for raw in self._buffer.split(b"\n")[:-1]:
+            if needle not in raw:
+                continue
+            try:
+                if json.loads(raw).get("type") == mtype:
+                    return True
+            except (ValueError, AttributeError):
+                continue
+        return False
+
     def _receive_line(self) -> str | None:
         """Read one newline-terminated line, buffering partial reads.
 

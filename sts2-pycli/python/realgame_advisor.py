@@ -1768,6 +1768,11 @@ def _serve_connected(
         warm_policy_async(policies, (msg.get("run_state") or {}).get("character"))
         control.note_message(msg)
 
+        if mtype == "advice_request" and client.newer_pending("advice_request"):
+            # Outdated: the board changed again (a teammate's next card) and a
+            # newer request is already queued; answer that one instead.
+            logger.info("advice: skipped request %s, a newer one is queued", msg.get("request_id"))
+            continue
         if mtype == "advice_request":
             _handle_advice_request(
                 client, cfg, args, log, wlog, msg, policies, tree, mirror, session, coach
