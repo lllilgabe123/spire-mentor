@@ -5,7 +5,10 @@ current deck, relics, HP and act. Offering it every Common, Uncommon and
 Rare of your character at once (one forward pass, a pretend card reward)
 ranks the whole pool for this deck; the top of each rarity is the shopping
 list shown on the map and in shops. Cards it would rank below "skip" are
-left out. Display only.
+left out. Relics are ranked the same way through its relic-pick head (only
+ones that drop from elites, chests and shops, minus those you hold), and a
+last line says when adding one yourself would match what the game could
+have dropped there. Display only.
 
 The pools (``cardpools.json.gz`` beside the pro-guide data) list each
 character's Common / Uncommon / Rare cards from the beta's card pool code.
@@ -85,19 +88,110 @@ def lines(state: dict[str, Any], character: str, policy: Any, top: int = 3) -> l
     return [text + " (the run AI's top picks for this deck)"]
 
 
+_RELICS: list[list[str]] | None = None
+
+#: Relic rarities that drop from elites, chests and shops (``Shop`` ones are
+#: sold only by the merchant). Ancient and Event relics come only from their
+#: own events, so they are never on the list.
+RELIC_RARITIES = ("Common", "Uncommon", "Rare", "Shop")
+
+
+def _relic_pool() -> list[list[str]]:
+    """``[[relic id, pool, rarity], ...]`` (``relicpools.json.gz``)."""
+    global _RELICS
+    if _RELICS is None:
+        _RELICS = []
+        d = _data_dir()
+        for path in (d / "relicpools.json.gz", d / "relicpools.json"):
+            try:
+                opener = gzip.open if path.suffix == ".gz" else open
+                with opener(path, "rt", encoding="utf-8") as f:
+                    _RELICS = json.load(f)
+                break
+            except OSError:
+                continue
+    return _RELICS
+
+
+def _owned_relics(state: dict[str, Any]) -> set[str]:
+    rs = state.get("run_state") or {}
+    out = set()
+    for r in list(rs.get("relics") or []) + list((state.get("player") or {}).get("relics") or []):
+        rid = r.get("id") if isinstance(r, dict) else r
+        if rid:
+            out.add(str(rid).upper().removeprefix("RELIC."))
+    return out
+
+
+def ranked_relics(state: dict[str, Any], character: str, policy: Any) -> dict[str, list[str]]:
+    """``{rarity: [relic id, ...]}`` best first for this deck, from the run
+    AI's relic-pick head, one pass per rarity (the net takes at most 160
+    options at once). Only relics your character can find that you do not
+    already hold."""
+    owned = _owned_relics(state)
+    out: dict[str, list[str]] = {}
+    for rarity in RELIC_RARITIES:
+        pool = [r[0] for r in _relic_pool()
+                if r[2] == rarity and r[1] in ("Shared", character.title()) and r[0] not in owned]
+        if not pool:
+            continue
+        fake = {**state, "type": "boss_relic", "options": [{"relic": {"id": rid}, "index": i} for i, rid in enumerate(pool)]}
+        decision = realgame_ppo._build_boss_relic(fake)
+        if decision is None:
+            continue
+        probs, _value = policy.distribution(decision.obs, decision.actions, decision.metrics)
+        out[rarity] = [rid for rid, _p in sorted(zip(pool, probs), key=lambda x: -x[1])]
+    return out
+
+
+def timing(state: dict[str, Any]) -> str:
+    """When a card or relic you add yourself matches what the game could
+    have dropped here. Rewards follow the room you are in: normal fights
+    give cards (Rares are rare there), elites a relic and better cards, the
+    boss a Rare card, chests a relic, the merchant anything."""
+    room = str(state.get("room_type") or "")
+    kind = str(state.get("type") or "")
+    if kind == "shop" or room == "Shop":
+        return "Now fits: any card or relic (shop)"
+    if room == "Elite":
+        return "Now fits: a relic + a card, Rare OK (elite reward)"
+    if room == "Boss":
+        return "Now fits: a Rare card (boss reward)"
+    if room == "Treasure":
+        return "Now fits: one relic (chest)"
+    if room == "Monster" and kind in ("card_reward", "combat_rewards", "rewards"):
+        return "Now fits: a Common/Uncommon card (fight reward)"
+    return "Natural times: cards after a fight (Rare after elite/boss) · relics after an elite, chest or shop"
+
+
 def summary(state: dict[str, Any], character: str, policy: Any, per_rarity: int = 3) -> str | None:
-    """"Look for: Common: A, B, C · Uncommon: D, E, F · Rare: G, H" for the
-    always-on HUD line, or None when the pool cannot be ranked."""
+    """The always-on HUD block: "Look for: Common: A, B, C · Uncommon: ... ·
+    Rare: ...", a relic line, and when adding one would look natural. None
+    when the pool cannot be ranked."""
     try:
         rows = ranked_pool(state, character, policy)
     except Exception as exc:
         logger.warning("wishlist failed: %s", exc)
+        rows = None
+    lines_out = []
+    if rows:
+        parts = []
+        for rarity, n in (("Common", per_rarity), ("Uncommon", per_rarity), ("Rare", 2)):
+            names = [_name(r[0]) for r in rows if r[1] == rarity][:n]
+            if names:
+                parts.append(f"{rarity}: " + ", ".join(names))
+        if parts:
+            lines_out.append("Look for: " + " · ".join(parts))
+    try:
+        relics = ranked_relics(state, character, policy)
+    except Exception as exc:
+        logger.warning("relic wishlist failed: %s", exc)
+        relics = {}
+    parts = [f"{rarity}: " + ", ".join(_name(r) for r in relics[rarity][:n])
+             for rarity, n in (("Common", 2), ("Uncommon", 2), ("Rare", 2), ("Shop", 1)) if relics.get(rarity)]
+    if parts:
+        lines_out.append("Relics: " + " · ".join(parts))
+    if not lines_out:
         return None
-    if not rows:
-        return None
-    parts = []
-    for rarity, n in (("Common", per_rarity), ("Uncommon", per_rarity), ("Rare", 2)):
-        names = [_name(r[0]) for r in rows if r[1] == rarity][:n]
-        if names:
-            parts.append(f"{rarity}: " + ", ".join(names))
-    return ("Look for: " + " · ".join(parts)) if parts else None
+    lines_out.append(timing(state))
+    return "\n".join(lines_out)

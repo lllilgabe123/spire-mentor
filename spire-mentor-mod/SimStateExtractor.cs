@@ -124,6 +124,10 @@ public static class SimStateExtractor
         // `FilePathIdentifier` says the same thing but is protected.
         msg["act_name"] = SafeString(() => runState?.Act?.Id.Entry) ?? "";
         msg["floor"] = runState?.TotalFloor ?? 0;
+        // The room you are in on every screen (combat sets its own), so the
+        // advisor can tell an elite's reward from a normal fight's.
+        if (!msg.ContainsKey("room_type"))
+            msg["room_type"] = SafeString(() => runState?.CurrentRoom?.RoomType.ToString()) ?? "";
         msg["mod_version"] = MainFile.ModVersion;
         // Which game build is running ("v0.107.1" / "v0.111.0"): the advisor
         // builds its engine for it and refuses a build it does not support.
