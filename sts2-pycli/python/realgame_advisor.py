@@ -575,7 +575,14 @@ def compute_combat_advice(
                 checked = f"{checked} · {vfirst}" if checked else vfirst
         except Exception as exc:
             logger.warning("vulnerable-first failed: %s", exc)
+        try:
+            pnote = realgame_turnplan.stat_power_note(advice, state)
+        except Exception as exc:
+            pnote = None
+            logger.warning("stat-power note failed: %s", exc)
         _add_foresight(advice, state, real_wire, coop, share, cfg, sims, mate_jobs)
+        if pnote:
+            advice["forecast_lines"] = [*(advice.get("forecast_lines") or []), pnote]
         if checked:
             advice["forecast_lines"] = [checked, *(advice.get("forecast_lines") or [])]
         # Personal build: number this turn's plays (1, 2, 3...) by playing

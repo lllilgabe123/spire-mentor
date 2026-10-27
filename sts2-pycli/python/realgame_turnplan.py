@@ -231,3 +231,40 @@ def prefer_upgraded(advice: dict[str, Any], state: dict[str, Any], tie_q: float 
             if advice.get("pv"):
                 advice["pv"] = [o.get("label"), *advice["pv"][1:]]
             return
+
+
+#: A Power that gains a permanent stat. Inside the search's tie band its
+#: fight-long payoff may be under-scored (Footwork lost to a third Defend that
+#: blocked 1 more of a 13 hit, 2026-10-27). Switching to it was checked on 38
+#: logged turns with independent searches: 0 better, 3 worse, 35 same, so it
+#: is a note for the player, not a switch.
+_STAT_POWER = re.compile(r"Gain (\d+) (Strength|Dexterity|Focus)\b", re.I)
+
+
+def stat_power_note(advice: dict[str, Any], state: dict[str, Any], band: float = 0.02) -> str | None:
+    """A HUD line when a permanent Strength/Dexterity/Focus Power scores
+    within ``band`` of the best with no lower win chance. Read-only."""
+    best = advice.get("best") or {}
+    hand = [c for c in state.get("hand") or [] if isinstance(c, dict)]
+    options = advice.get("options") or []
+    mine = next((o for o in options if o.get("is_best")), None)
+    if mine is None or mine.get("q") is None:
+        return None
+    ci = best.get("card_index")
+    if isinstance(ci, int) and 0 <= ci < len(hand) and str(hand[ci].get("type")) == "Power":
+        return None
+    picks = []
+    for o in options:
+        j = o.get("card_index")
+        if not isinstance(j, int) or not 0 <= j < len(hand) or o is mine or o.get("q") is None:
+            continue
+        c = hand[j]
+        text = re.sub(r"\[/?[a-z]+\]", "", str(c.get("description") or ""))
+        if (str(c.get("type")) == "Power" and _STAT_POWER.search(text) and "Orb Slot" not in text
+                and o["q"] >= mine["q"] - band and (o.get("p_win") or 0) >= (mine.get("p_win") or 0) - 0.005):
+            picks.append((o["q"], o))
+    if not picks:
+        return None
+    _, o = max(picks, key=lambda x: x[0])
+    return (f"About equal: {o.get('label')} instead. The search rates it even with {mine.get('label')}, "
+            "and its stat lasts the whole fight (worth more in a long fight)")
