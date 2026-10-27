@@ -3656,13 +3656,44 @@ impl<P: Policy> Mcts<P> {
             return Ok(self.legalize_root_action(rescued));
         }
         if let Some(won) = self.root_proven_win_action() {
-            return Ok(self.legalize_root_action(won));
+            if !self.sure_win_keeps_more_hp(&won) {
+                return Ok(self.legalize_root_action(won));
+            }
         }
         self.refresh_root_stats();
         let idx = pick_from_root_stats(&self.tree.root_state, &self.config, &self.root_stats)
             .ok_or(SearchError::TerminalRoot)?;
         let action = self.root_stats[idx].0.clone();
         Ok(self.legalize_root_action(action))
+    }
+
+    /// A proven win says the fight is won, not at what HP. True when some
+    /// other root child won EVERY one of at least
+    /// [`SURE_WIN_MIN_VISITS`] playouts and its mean value beats the
+    /// proven child's by more than `tie_eps`: every move wins and that one
+    /// keeps more HP, so the statistics decide. A live Tunneler turn ended
+    /// with Shrug It Off in hand into 19 damage because End turn was the
+    /// child solved first (Shrug It Off: 1134/1134 wins, Q 1.174 vs 1.142).
+    /// A sibling with any loss, or rigged stats with no wins, never
+    /// outranks the proof (rule 2's coin-flip case).
+    fn sure_win_keeps_more_hp(&self, won: &Action) -> bool {
+        let node = self.tree.node(self.tree.root);
+        let mean = |c: &MctsNode| {
+            #[allow(clippy::cast_precision_loss)]
+            if c.visits == 0 { 0.0 } else { c.value_sum / c.visits as f32 }
+        };
+        let mut won_q = None;
+        let mut sure_best = f32::NEG_INFINITY;
+        for (edge, cid) in &node.children {
+            let c = self.tree.node(*cid);
+            let action = edge.resolve(&self.tree.root_state);
+            if action.as_ref() == Some(won) {
+                won_q = Some(mean(c));
+            } else if c.visits >= SURE_WIN_MIN_VISITS && c.wins == c.visits {
+                sure_best = sure_best.max(mean(c));
+            }
+        }
+        won_q.is_some_and(|q| sure_best > q + self.config.tie_eps.max(0.0))
     }
 
     /// [`Self::pick_root_action`] rule 2: a solver-proven winning root
@@ -6747,6 +6778,10 @@ pub fn boss_win_carry(
 /// instead of a plain argmax. Returns an index into `root_stats`; `None`
 /// when it is empty.
 #[must_use]
+/// Playouts a root child must have won without a single loss before its
+/// higher mean can outrank a proven win (see `Mcts::sure_win_keeps_more_hp`).
+pub const SURE_WIN_MIN_VISITS: u32 = 200;
+
 pub fn pick_from_root_stats(
     root_state: &CombatState,
     config: &MctsConfig,
@@ -10390,6 +10425,25 @@ mod tests {
             );
             assert_eq!(mcts.search_n(0), picked);
         }
+    }
+
+    /// Rule 2's HP exception: every playout of a sibling won and it keeps
+    /// more HP (higher mean by more than `tie_eps`), so it beats the proof.
+    #[test]
+    fn sure_win_with_more_hp_beats_a_proven_win() {
+        let (mut mcts, actions) = searched_pick_fixture(MctsConfig::default(), false);
+        let mut stats = vec![(10_u32, -0.9_f32); actions.len()];
+        stats[0] = (1134, 1.174);
+        stats[2] = (873, 1.142);
+        rig_root_stats(&mut mcts, &stats);
+        let ids: Vec<NodeId> = mcts.tree.node(mcts.tree.root).children.iter().map(|(_, c)| *c).collect();
+        mcts.tree.node_mut(ids[0]).wins = 1134;
+        mcts.tree.node_mut(ids[2]).proven_win = true;
+        assert_eq!(mcts.pick_root_action().expect("non-terminal root"), actions[0]);
+        // One loss and the proof stands again.
+        mcts.tree.node_mut(ids[0]).wins = 1133;
+        mcts.tree.node_mut(ids[0]).losses = 1;
+        assert_eq!(mcts.pick_root_action().expect("non-terminal root"), actions[2]);
     }
 
     /// Rule 5a (FINDINGS §5 guard 3): band-winning EndTurn with 22
