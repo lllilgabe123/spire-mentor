@@ -1316,20 +1316,29 @@ def _translate_ally(ally: dict[str, Any], index: int) -> dict[str, Any]:
     for key in ("draw_pile", "discard_pile", "exhaust_pile", "play_pile"):
         if isinstance(ally.get(key), list):
             out[key] = _soft_translate_list(ally[key], _translate_card, f"{path}.{key}")
+    # A teammate's relic or potion the engine does not model (Dowsing Rod on
+    # v0.111.0) drops just that item, as our own relics do; raising here
+    # failed every fight request for the whole co-op run.
     if isinstance(ally.get("relics"), list):
-        out["relics"] = [
-            _translate_relic(r, f"{path}.relics[{i}]") for i, r in enumerate(ally["relics"])
-        ]
+        out["relics"] = _soft_translate_list(ally["relics"], _translate_relic, f"{path}.relics")
     if isinstance(ally.get("stars"), int):
         out["stars"] = ally["stars"]
     if isinstance(ally.get("potions"), list):
-        out["potions"] = [
-            _translate_potion(p.get("name"), f"{path}.potions[{i}]")
-            if isinstance(p, dict)
-            else None
-            for i, p in enumerate(ally["potions"])
-        ]
+        out["potions"] = [_soft_ally_potion(p, f"{path}.potions[{i}]") for i, p in enumerate(ally["potions"])]
     return out
+
+
+def _soft_ally_potion(raw: Any, path: str) -> Any:
+    """One teammate belt slot; an unmodelled potion becomes an empty slot so
+    the belt keeps its positions."""
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return _translate_potion(raw.get("name"), path)
+    except UnsupportedStateError as e:
+        _log.info("adapter: soft-dropping %s: %s", path, e)
+        _record_drop(path)
+        return None
 
 
 def _wire_game_version(state: dict[str, Any]) -> str | None:
