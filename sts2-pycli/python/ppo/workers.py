@@ -182,6 +182,7 @@ def play_one(
 
     terminal: Terminal | None = None
     search_stats: dict[str, Any] | None = None
+    forced_stats: dict[str, Any] | None = None
     if policy == "expert":
         for out in env.expert_run():
             if isinstance(out, Decision):
@@ -263,6 +264,20 @@ def play_one(
                 decisions[-1]["search_value"] = diag["search_value"]
             out = env.step(idx)
         terminal = out
+    elif policy == "net_forced":
+        # The forced-pick counterfactual (`ppo.forced_pick`): greedy net, with
+        # engine-card picks at card rewards forced per `search["arm"]`.
+        from ppo.forced_pick import ForcedPick
+
+        pol = _net_policy(ckpt_path)
+        forcer = ForcedPick(seed=seed, **(search or {}))
+        out = env.reset()
+        while isinstance(out, Decision):
+            idx = forcer.choose(pol, out)
+            record(out, idx)
+            out = env.step(idx)
+        terminal = out
+        forced_stats = forcer.stats()
     else:
         raise ValueError(f"unknown policy {policy!r}")
     if terminal is None:  # expert_run always ends with a Terminal
@@ -297,6 +312,7 @@ def play_one(
         # mid-campaign would change this.
         "py_src": python_source_digest(),
         **({"search_stats": search_stats} if search_stats is not None else {}),
+        **({"forced_stats": forced_stats} if forced_stats is not None else {}),
     }
 
 

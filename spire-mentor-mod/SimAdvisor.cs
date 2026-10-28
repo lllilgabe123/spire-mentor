@@ -1209,6 +1209,7 @@ internal sealed class SimAdvisor
             // workbench's log panel renders for a live game, in the same shape
             // the Rust engine emits for a simulated one. Display only; the
             // advisor ignores it.
+            WatchPlayerChoices();
             state["combat_log"] = SimCombatLog.Drain();
             state["capabilities"] = ModCapabilities();
             SimCoop.Attach(state);
@@ -2524,6 +2525,72 @@ internal sealed class SimAdvisor
     /// advice_request (PROTOCOL.md section 5): coach 2 = chips plus the v5.1
     /// recap / autopsy records.</summary>
     private static Dictionary<string, object> ModCapabilities() => new() { ["coach"] = 2 };
+
+    /// <summary>The run's choice synchronizer <see cref="WatchPlayerChoices"/>
+    /// listens to; a new run brings a new one.</summary>
+    private static PlayerChoiceSynchronizer? _choiceSync;
+
+    /// <summary>
+    /// Log every player's mid-combat choice onto the combat log
+    /// (<see cref="SimCombatLog.RecordChoice"/>): the synchronizer raises
+    /// `PlayerChoiceReceived` for our picks and for each teammate's as they
+    /// arrive, so a recorded co-op fight can replay them. Subscribes once per
+    /// run (the old run's synchronizer goes with it). Called before every
+    /// drain; never throws.
+    /// </summary>
+    private static void WatchPlayerChoices()
+    {
+        try
+        {
+            PlayerChoiceSynchronizer? sync = RunManager.Instance?.PlayerChoiceSynchronizer;
+            if (sync == null || ReferenceEquals(sync, _choiceSync))
+            {
+                return;
+            }
+            _choiceSync = sync;
+            sync.PlayerChoiceReceived += (player, choiceId, result) =>
+            {
+                var cards = new List<Dictionary<string, object?>>();
+                try
+                {
+                    foreach (CardModel c in result.canonicalCards ?? new())
+                    {
+                        cards.Add(SimCombatLog.ChoiceCard(c.Id.Entry, c.IsUpgraded));
+                    }
+                    foreach (var c in result.combatCards ?? new())
+                    {
+                        CardModel? card = c.ToCardModelOrNull();
+                        cards.Add(SimCombatLog.ChoiceCard(card?.Id.Entry, card?.IsUpgraded ?? false));
+                    }
+                    foreach (var c in result.deckCards ?? new())
+                    {
+                        CardModel card = c.ToCardModel(player);
+                        cards.Add(SimCombatLog.ChoiceCard(card.Id.Entry, card.IsUpgraded));
+                    }
+                    foreach (var c in result.mutableCards ?? new())
+                    {
+                        cards.Add(SimCombatLog.ChoiceCard(c.Id?.Entry, c.CurrentUpgradeLevel > 0));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"[SimAdvisor] Could not read a player choice's cards: {ex.Message}");
+                }
+                var invariant = System.Globalization.CultureInfo.InvariantCulture;
+                SimCombatLog.RecordChoice(
+                    player.NetId.ToString(invariant),
+                    choiceId,
+                    result.type.ToString(),
+                    cards,
+                    result.indexes?.ToList(),
+                    result.playerId?.ToString(invariant));
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"[SimAdvisor] Could not watch player choices: {ex.Message}");
+        }
+    }
 
     /// <summary>
     /// An inbound `coach` record (BridgeServer.CoachReceived, socket thread):

@@ -125,14 +125,20 @@ fn fuzzy_wurm_inhale_effect(state: &mut sts2_core::CombatState, owner: sts2_core
 /// C# turn-0 discard carried an extra `SLIMED` that Rust lacked.
 fn slime_goop_one_effect(state: &mut sts2_core::CombatState, _owner: sts2_core::CreatureUid) {
     use sts2_core::card_effects::PileKind;
-    let _ = crate::cards::status::spawn_slimed(state, PileKind::Discard);
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        let _ = crate::cards::status::spawn_slimed(state, PileKind::Discard);
+    });
 }
 
 fn slime_goop_two_effect(state: &mut sts2_core::CombatState, _owner: sts2_core::CreatureUid) {
     use sts2_core::card_effects::PileKind;
-    for _ in 0..2 {
-        let _ = crate::cards::status::spawn_slimed(state, PileKind::Discard);
-    }
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        for _ in 0..2 {
+            let _ = crate::cards::status::spawn_slimed(state, PileKind::Discard);
+        }
+    });
 }
 
 /// Bead `sts2-rs-rnzuw` (o1mwv C.4): ShrinkerBeetle SHRINK_MOVE applies
@@ -156,6 +162,12 @@ fn shrinker_beetle_shrink_effect(
     state: &mut sts2_core::CombatState,
     owner: sts2_core::CreatureUid,
 ) {
+    // Co-op: each player gets their own Shrink, stamped with this beetle.
+    sts2_core::coop::each_player(state, |state| shrink_seated(state, owner));
+}
+
+/// [`shrinker_beetle_shrink_effect`] for the seated player alone.
+fn shrink_seated(state: &mut sts2_core::CombatState, owner: sts2_core::CreatureUid) {
     // Infinite (Single) stack: leave an existing instance untouched.
     let already = state.player.powers.iter().any(|puid| {
         state

@@ -291,6 +291,12 @@ pub struct ParsedState {
     /// fight). HP and block always; with `hand` the teammate is a whole seat
     /// whose remaining plays the engine simulates (`sts2_core::coop`).
     pub allies: Vec<ParsedAlly>,
+    /// `$.coop_full`: a whole co-op fight (`sts2_core::coop::CoopState::full`),
+    /// every seat playing its own turns, rather than the advisor's board.
+    pub coop_full: bool,
+    /// `$.coop_seat_index`: our place in the run's player order
+    /// (`sts2_core::coop::CoopState::seat_index`); 0 when absent.
+    pub coop_seat_index: u8,
 }
 
 /// One co-op teammate on the wire (`$.allies[i]`).
@@ -307,6 +313,17 @@ pub struct ParsedAlly {
     /// The teammate's hand, in the player hand's card shape. `None` when the
     /// producer sent only HP and block: such a teammate is not simulated.
     pub hand: Option<Vec<ParsedCard>>,
+    /// A whole seat's other piles, in the player's pile order, and their
+    /// relics and stars: what a full co-op fight (`$.coop_full`) needs to
+    /// play their turns on. Empty when the producer sent only the hand.
+    pub draw_pile: Vec<ParsedCard>,
+    pub discard_pile: Vec<ParsedCard>,
+    pub exhaust_pile: Vec<ParsedCard>,
+    pub play_pile: Vec<ParsedCard>,
+    pub relics: Vec<ParsedRelic>,
+    pub stars: i32,
+    /// Their potion belt, as `$.player.potions`: null for an empty slot.
+    pub potions: Vec<Option<PotionKind>>,
     /// They pressed end turn already: nothing of theirs is left to simulate.
     pub ended_turn: bool,
 }
@@ -848,6 +865,15 @@ pub fn parse_state_dict<V: WireValue>(d: &V) -> WireResult<ParsedState> {
     let deck = parse_deck(&deck_dict)?;
 
     let allies = parse_allies(d)?;
+    let coop_full = match extract_optional(d, "coop_full") {
+        Some(_) => extract_bool(d, "$", "coop_full")?,
+        None => false,
+    };
+    let coop_seat_index = match extract_optional(d, "coop_seat_index") {
+        Some(_) => u8::try_from(extract_i64(d, "$", "coop_seat_index")?)
+            .map_err(|_| schema_err("$", "`coop_seat_index` must fit in u8"))?,
+        None => 0,
+    };
 
     let enc_val = get_item(d, "$", "encounter")?;
     let enc_list = as_list(&enc_val, "$.encounter")?;
@@ -887,7 +913,69 @@ pub fn parse_state_dict<V: WireValue>(d: &V) -> WireResult<ParsedState> {
         intent_damage_known,
         intent_amounts,
         allies,
+        coop_full,
+        coop_seat_index,
     })
+}
+
+/// A relic list (`$.player.relics`, `$.allies[i].relics`).
+/// A potion belt (`$.player.potions`, `$.allies[i].potions`): string ids, null
+/// for an empty slot.
+fn parse_potion_list<V: WireValue>(value: &V, path: &str) -> WireResult<Vec<Option<PotionKind>>> {
+    let list = as_list(value, path)?;
+    let mut potions = Vec::with_capacity(list.len());
+    for (i, p) in list.iter().enumerate() {
+        let pp = format!("{path}[{i}]");
+        if p.is_null() {
+            potions.push(None);
+            continue;
+        }
+        let id = p
+            .as_str()
+            .ok_or_else(|| schema_err(&pp, "expected null or string id"))?;
+        let kind = potion_kind_from_python_name(&id).ok_or_else(|| unsupported(pp.clone(), &id))?;
+        potions.push(Some(kind));
+    }
+    Ok(potions)
+}
+
+fn parse_relic_list<V: WireValue>(value: &V, path: &str) -> WireResult<Vec<ParsedRelic>> {
+    let relics_list = as_list(value, path)?;
+    let mut relics = Vec::with_capacity(relics_list.len());
+    for (i, r) in relics_list.iter().enumerate() {
+        let rp = format!("{path}[{i}]");
+        let rd = as_dict(r, &rp)?;
+        let id = extract_str(&rd, &rp, "id")?;
+        let kind = relic_kind_from_python_name(&id).ok_or_else(|| unsupported(rp.clone(), &id))?;
+        let counter = match extract_optional(&rd, "counter") {
+            Some(v) => Some(
+                v.as_i64()
+                    .and_then(|n| i32::try_from(n).ok())
+                    .ok_or_else(|| schema_err(&rp, "`counter` must be an integer or null"))?,
+            ),
+            None => None,
+        };
+        // ToyBox wax/melt state. Optional so older producers (and every
+        // wire written before RunSimulator.cs started emitting them) parse
+        // unchanged; absent means "not wax, not melted".
+        let flag = |key: &str| -> WireResult<bool> {
+            match extract_optional(&rd, key) {
+                Some(v) => v
+                    .as_bool()
+                    .ok_or_else(|| schema_err(&rp, &format!("`{key}` must be a bool or null"))),
+                None => Ok(false),
+            }
+        };
+        let is_wax = flag("is_wax")?;
+        let is_melted = flag("is_melted")?;
+        relics.push(ParsedRelic {
+            kind,
+            counter,
+            is_wax,
+            is_melted,
+        });
+    }
+    Ok(relics)
 }
 
 fn parse_allies<V: WireValue>(d: &V) -> WireResult<Vec<ParsedAlly>> {
@@ -926,6 +1014,20 @@ fn parse_allies<V: WireValue>(d: &V) -> WireResult<Vec<ParsedAlly>> {
             Some(_) => extract_bool(&a, &path, "ended_turn")?,
             None => false,
         };
+        let pile = |key: &str| -> WireResult<Vec<ParsedCard>> {
+            match extract_optional(&a, key) {
+                Some(v) => parse_pile(&v, &format!("{path}.{key}")),
+                None => Ok(Vec::new()),
+            }
+        };
+        let relics = match extract_optional(&a, "relics") {
+            Some(v) => parse_relic_list(&v, &format!("{path}.relics"))?,
+            None => Vec::new(),
+        };
+        let potions = match extract_optional(&a, "potions") {
+            Some(v) => parse_potion_list(&v, &format!("{path}.potions"))?,
+            None => Vec::new(),
+        };
         let ally = ParsedAlly {
             hp: extract_i32(&a, &path, "hp")?,
             max_hp: extract_i32(&a, &path, "max_hp")?,
@@ -935,6 +1037,13 @@ fn parse_allies<V: WireValue>(d: &V) -> WireResult<Vec<ParsedAlly>> {
             max_energy: opt_i32("max_energy")?,
             powers,
             hand,
+            draw_pile: pile("draw_pile")?,
+            discard_pile: pile("discard_pile")?,
+            exhaust_pile: pile("exhaust_pile")?,
+            play_pile: pile("play_pile")?,
+            relics,
+            stars: opt_i32("stars")?,
+            potions,
             ended_turn,
         };
         if ally.energy < 0 || ally.max_energy < 0 {
@@ -990,62 +1099,13 @@ fn parse_player<V: WireValue>(d: &V) -> WireResult<ParsedPlayer> {
     }
 
     // Relics
-    let relics_val = get_item(d, path, "relics")?;
-    let relics_list = as_list(&relics_val, "$.player.relics")?;
-    let mut relics = Vec::with_capacity(relics_list.len());
-    for (i, r) in relics_list.iter().enumerate() {
-        let rp = format!("$.player.relics[{i}]");
-        let rd = as_dict(r, &rp)?;
-        let id = extract_str(&rd, &rp, "id")?;
-        let kind = relic_kind_from_python_name(&id).ok_or_else(|| unsupported(rp.clone(), &id))?;
-        let counter = match extract_optional(&rd, "counter") {
-            Some(v) => Some(
-                v.as_i64()
-                    .and_then(|n| i32::try_from(n).ok())
-                    .ok_or_else(|| schema_err(&rp, "`counter` must be an integer or null"))?,
-            ),
-            None => None,
-        };
-        // ToyBox wax/melt state. Optional so older producers (and every
-        // wire written before RunSimulator.cs started emitting them) parse
-        // unchanged; absent means "not wax, not melted".
-        let flag = |key: &str| -> WireResult<bool> {
-            match extract_optional(&rd, key) {
-                Some(v) => v
-                    .as_bool()
-                    .ok_or_else(|| schema_err(&rp, &format!("`{key}` must be a bool or null"))),
-                None => Ok(false),
-            }
-        };
-        let is_wax = flag("is_wax")?;
-        let is_melted = flag("is_melted")?;
-        relics.push(ParsedRelic {
-            kind,
-            counter,
-            is_wax,
-            is_melted,
-        });
-    }
+    let relics = parse_relic_list(&get_item(d, path, "relics")?, "$.player.relics")?;
 
     // Powers
     let powers = parse_powers(&get_item(d, path, "powers")?, "$.player.powers")?;
 
     // Potions
-    let potions_val = get_item(d, path, "potions")?;
-    let potions_list = as_list(&potions_val, "$.player.potions")?;
-    let mut potions: Vec<Option<PotionKind>> = Vec::with_capacity(potions_list.len());
-    for (i, p) in potions_list.iter().enumerate() {
-        let pp = format!("$.player.potions[{i}]");
-        if p.is_null() {
-            potions.push(None);
-            continue;
-        }
-        let id = p
-            .as_str()
-            .ok_or_else(|| schema_err(&pp, "expected null or string id"))?;
-        let kind = potion_kind_from_python_name(&id).ok_or_else(|| unsupported(pp.clone(), &id))?;
-        potions.push(Some(kind));
-    }
+    let potions = parse_potion_list(&get_item(d, path, "potions")?, "$.player.potions")?;
 
     let potion_slots = match extract_optional(d, "potion_slots") {
         Some(v) => Some(
@@ -4209,10 +4269,65 @@ pub fn state_from_dict_impl(parsed: &ParsedState) -> WireResult<CoreCombatState>
             state.cards.push(card);
             state.allies[i].hand.push(uid);
         }
+        // The rest of a whole seat, for a full co-op fight: their piles in
+        // the order the player's load, their stars and their relics.
+        for (key, pile) in [
+            ("draw_pile", &a.draw_pile),
+            ("discard_pile", &a.discard_pile),
+            ("exhaust_pile", &a.exhaust_pile),
+            ("play_pile", &a.play_pile),
+        ] {
+            for (j, pc) in pile.iter().enumerate() {
+                let path = format!("$.allies[{i}].{key}[{j}]");
+                let uid = u32::try_from(state.cards.len() + 1)
+                    .ok()
+                    .and_then(CardUid::new)
+                    .ok_or_else(|| schema_err(&path, "uid overflow"))?;
+                state.cards.push(build_card(pc, uid, &path)?);
+                let seat = &mut state.allies[i];
+                match key {
+                    "draw_pile" => seat.draw.push(uid),
+                    "discard_pile" => seat.discard.push(uid),
+                    "exhaust_pile" => seat.exhaust.push(uid),
+                    _ => seat.play.push(uid),
+                }
+            }
+        }
+        state.allies[i].stars = i8::try_from(a.stars).unwrap_or(i8::MAX);
+        if !a.potions.is_empty() {
+            state.allies[i].potion_slots = u8::try_from(a.potions.len()).unwrap_or(u8::MAX);
+        }
+        for k in a.potions.iter().flatten() {
+            if state.allies[i].potions.len() < state.allies[i].potions.capacity() {
+                state.allies[i].potions.push(*k);
+            }
+        }
+        let mut relics = Vec::with_capacity(a.relics.len());
+        for r in &a.relics {
+            let raw = state
+                .relics
+                .iter()
+                .chain(state.coop.stash.iter().flat_map(|s| s.relics.iter()))
+                .chain(relics.iter())
+                .map(|r: &Relic| r.id.get())
+                .max()
+                .unwrap_or(0)
+                + 1;
+            relics.push(Relic {
+                id: NonZeroU32::new(raw).expect("non-zero relic id"),
+                kind: r.kind,
+                counter: r.counter.unwrap_or(0),
+                is_wax: r.is_wax,
+                is_melted: r.is_melted,
+            });
+        }
+        state.coop.stash[i].relics.extend(relics);
         if !a.ended_turn && a.hp > 0 {
             state.coop.to_play |= 1 << i;
         }
     }
+    state.coop.full = parsed.coop_full && !state.coop.stash.is_empty();
+    state.coop.seat_index = parsed.coop_seat_index;
 
     Ok(state)
 }

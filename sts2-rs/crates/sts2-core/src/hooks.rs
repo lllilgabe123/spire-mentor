@@ -2310,12 +2310,10 @@ fn apply_dealhploss(
                     prevented = crate::relic_effects::dispatch_should_die_late(state) || prevented;
                 }
                 if !prevented || state.player.current_hp <= 0 {
-                    state.is_over = true;
-                    state.player_won = false;
                     // C# `RemoveAllPowersAfterDeath` on player death — this is
                     // the path the Constrict/Poison/Thorns end-of-turn
                     // self-damage takes (bead `sts2-rs-2e9q2`).
-                    crate::combat_loop::clear_player_powers_on_death(state);
+                    let _ = crate::coop::seated_player_died(state);
                 }
             }
         }
@@ -10576,9 +10574,7 @@ fn after_damage_received_lanes(
                 prevented = crate::relic_effects::dispatch_should_die_late(state) || prevented;
             }
             if !prevented || state.player.current_hp <= 0 {
-                state.is_over = true;
-                state.player_won = false;
-                crate::combat_loop::clear_player_powers_on_death(state);
+                let _ = crate::coop::seated_player_died(state);
             }
             return;
         }
@@ -12193,6 +12189,14 @@ pub fn modify_block(state: &CombatState, base_block: i32, ctx: &BlockCtx) -> i32
         DamageMul::ONE
     };
     let mul = power_mul.compose(relic_mul);
+    // C# `MultiplayerScalingModel.ModifyBlockMultiplicative`: an enemy's powered
+    // or move block grows with the player count.
+    let mul = match (ctx.target, crate::coop::enemy_block_scaling(state)) {
+        (CreatureRef::Enemy(_), Some((num, den))) if ctx.props.is_powered() => {
+            mul.compose(DamageMul::new(i64::from(num), i64::from(den)))
+        }
+        _ => mul,
+    };
 
     // Step 3: single floor at end via div_euclid.
     let after_mul = mul.apply(after_add);
@@ -14440,6 +14444,12 @@ pub(crate) fn withering_presence_after_card_played(state: &mut CombatState, _ctx
                     .powers
                     .get_by_id(pu.0)
                     .filter(|p| p.kind == PowerKind::WitheringPresence)
+                    // Co-op: only the instance that targets the card's player
+                    // (`cardPlay.Card.Owner == Target.Player`), heard once.
+                    .filter(|p| {
+                        crate::coop::actor_is_seated(state)
+                            && crate::coop::applied_by_seated(state, p.id)
+                    })
                     .map(|p| p.id)
             })?;
             Some((c.id, pid))
@@ -17035,18 +17045,26 @@ fn dispatch_after_side_turn_start_body(state: &mut CombatState, ctx: &TurnSideCt
                     .creatures
                     .iter()
                     .find(|c| c.id == uid.0 && c.current_hp > 0)
-                    .and_then(|c| {
-                        c.powers.iter().copied().find(|pu| {
-                            state
-                                .powers
-                                .iter()
-                                .any(|p| p.id == pu.0 && p.kind == PowerKind::Sandpit)
-                        })
+                    .map(|c| {
+                        // Co-op: one instance per targeted player.
+                        c.powers
+                            .iter()
+                            .copied()
+                            .filter(|pu| {
+                                state
+                                    .powers
+                                    .iter()
+                                    .any(|p| p.id == pu.0 && p.kind == PowerKind::Sandpit)
+                            })
+                            .map(|pu| (pu, *uid))
+                            .collect::<SmallVec<[(PowerUid, CreatureUid); 2]>>()
                     })
-                    .map(|pu| (pu, *uid))
             })
+            .flatten()
             .collect();
         for (pu, _owner) in sandpits {
+            // The player this instance targets (co-op; seat 0 solo).
+            let target = crate::coop::seat_of_power(state, pu.0);
             let mut expired = false;
             if let Some(pow) = state.powers.get_mut_by_id(pu.0) {
                 pow.amount = pow.amount.saturating_sub(1);
@@ -17070,13 +17088,13 @@ fn dispatch_after_side_turn_start_body(state: &mut CombatState, ctx: &TurnSideCt
                 // is unpreventable — Fairy and LizardTail do not get a vote.
                 // Contrast the damage path above and the Gambit path, which
                 // both use the UNFORCED `Kill` and therefore do.
-                if state.player.current_hp > 0 {
-                    state.player.current_hp = 0;
-                    state.sync_creature_current_hp_from_player();
-                    state.is_over = true;
-                    state.player_won = false;
-                    crate::combat_loop::clear_player_powers_on_death(state);
-                }
+                crate::coop::with_seat(state, target, |state| {
+                    if state.player.current_hp > 0 {
+                        state.player.current_hp = 0;
+                        state.sync_creature_current_hp_from_player();
+                        let _ = crate::coop::seated_player_died(state);
+                    }
+                });
             }
         }
     }

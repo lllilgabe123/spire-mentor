@@ -31,7 +31,7 @@ move.</sub>
 ### AI
 
 - MCTS-based combat  
-- PPO / reinforcement-learning-based run-level AI, trained over many weeks, with the best win rates of any STS2 AI I'm aware of (e.g. Ironclad champion `a10_it700`: 96% A0, 56% A9, 27% A10 in the simulator at 8,000 sims per decision)  
+- PPO / reinforcement-learning-based run-level AI, trained over many weeks, with the best win rates of any STS2 AI I'm aware of (e.g. Ironclad champion `cardmods_it850`: 30% A10 in the simulator at the advisor's 4,000 sims per decision, 16,000 in boss fights; its predecessor won 96% at A0 at 8,000)  
 - **non-clairvoyant** / using chance nodes, i.e. it doesn’t cheat by exploiting the RNG or using information like which card it’s about to draw
 
 ### UI / workbench
@@ -61,35 +61,53 @@ More performance benchmarks: [benchmarks page](https://tfriedel.github.io/spire-
 method and commands:
 [`sts2-rs/docs/perf/2026-10-14-benchmarks.md`](sts2-rs/docs/perf/2026-10-14-benchmarks.md).
 
-**Win rates of the current champions** (8,000 sims per decision, 
-measured October 2026; 200 runs per cell at A0–A8, 500 at A9–A10):
+**Win rates of the current champions** (8,000 sims per decision,
+measured October 2026; 200 runs per cell at A0–A8, 500 at A9–A10;
+except the first Ironclad row, see below):
 
 | Character | A0 | A4 | A8 | A9 | A10 | Mean A0–A10 | Promotion gate (vs previous champion) |
 |---|---|---|---|---|---|---|---|
-| Ironclad | 96.0% | 95.0% | 84.5% | 56.4% | 27.2% | **83.6%** | pooled +1.6 pp, p = 0.11 (missed); promoted on A10: +6.9 pp, p = 9e-7 |
+| Ironclad `cardmods_it850` (4,000/16,000 sims, 400 runs) | – | – | – | 56.5%* | 30.0% | – | A10: +6.4 pp, p = 9e-5 |
+| Ironclad, previous champion `a10_it700` | 96.0% | 95.0% | 84.5% | 56.4% | 27.2% | **83.6%** | pooled +1.6 pp, p = 0.11 (missed); promoted on A10: +6.9 pp, p = 9e-7 |
 | Defect | 93.0% | 90.5% | 70.0% | 39.2% | 22.0% | **76.1%** | +5.5 pp, p = 2e-6 |
 | Silent | 78.5% | 67.5% | 55.5% | 20.0% | 9.0% | **59.9%** | +5.6 pp, p = 7e-7, all 11 levels up |
 | Regent | 67.5% | 66.0% | 43.5% | 15.6% | 6.2% | **53.8%** | +4.6 pp, p = 1e-4 |
 | Necrobinder | 66.5% | 62.5% | 44.5% | 13.8% | 5.6% | **51.7%** | +6.8 pp, p = 6e-10, all 11 levels up |
 
+The current Ironclad champion, `cardmods_it850` (promoted 27 October 2026),
+has so far been measured only at A10, on a different budget from the rest of
+the table: 400 runs at the advisor's 4,000 sims per decision (16,000 in boss
+fights), on a separate seed panel. It won 30.0% (95% interval 25.7–34.7%).
+\*The A9 cell is an estimate from those same A10 runs, not an A9 sweep: A10
+is A9 plus a second final boss, so a run that beats the first one has won the
+A9 run's last fight; 56.5% did (51.6–61.3%). On the same seeds and budget the
+previous champion won 26.75% at A10 (52.25% A9 estimate). A0–A8 have not been
+re-run for the new net; the previous champion's row, at 8,000 sims, is kept
+below it. Record:
+[`docs/experiments/2026-10-27-ironclad-a10-cardmods.md`](docs/experiments/2026-10-27-ironclad-a10-cardmods.md).
+
 Win rates for every ascension level are in the
-[docs](https://tfriedel.github.io/spire-mentor/#ai). The table mixes two dates
-and two generations of combat search: the Ironclad row was re-measured on 26
-October 2026 with the current champion (`a10_it700`) and the combat search the
+[docs](https://tfriedel.github.io/spire-mentor/#ai). The table mixes dates
+and generations of combat search: the previous Ironclad row was re-measured on 26
+October 2026 with that champion (`a10_it700`) and the combat search the
 run agent has shipped for Ironclad since 26 October (a gated layer of search
 settings plus a move prior in elite and boss fights, on top of the learned
 playout net it has used since 18 October), on that day's engine; the other four
 rows are from the 11–13 October 2026 sweep, on the engine of that time. Those
 four keep the same champions, but their combat search has used a learned
 playout net of its own since 21 October, and their rows have not been re-run
-since. Same seeds and protocol; comparisons between the Ironclad row and the
-others are descriptive. Write-ups:
+since. The 8,000-sim rows share seeds and protocol; comparisons between the
+Ironclad rows and the others are descriptive. Write-ups:
 [`docs/experiments/2026-10-26-ironclad-release-winrates.md`](docs/experiments/2026-10-26-ironclad-release-winrates.md)
 and [`docs/experiments/2026-10-11-release-winrates.md`](docs/experiments/2026-10-11-release-winrates.md).
 The last column is each champion's own promotion gate, at the gates' cheaper
 1,000/4,000-sim budget, from its provenance file in `sts2-pycli/data/ppo/`.
-Ironclad's `a10_it700` missed the pooled significance bar and was promoted on
-its A10 result
+Ironclad's last two champions were gated on A10 alone.
+`cardmods_it850` passed a pre-registered A10 gate, 21.7% → 28.1% on 1,000
+paired seeds
+([`ppo_fullrun_ironclad_cardmods_it850.provenance.md`](sts2-pycli/data/ppo/ppo_fullrun_ironclad_cardmods_it850.provenance.md));
+`a10_it700` missed the pooled significance bar and was promoted on its A10
+result
 ([`ppo_fullrun_ironclad_a10_it700.provenance.md`](sts2-pycli/data/ppo/ppo_fullrun_ironclad_a10_it700.provenance.md)).
 
 ## The browser workbench

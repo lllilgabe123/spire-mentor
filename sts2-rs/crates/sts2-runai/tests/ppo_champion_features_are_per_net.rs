@@ -50,8 +50,10 @@ const EVERY_CHARACTER: [CharacterId; 5] = [
 /// `STS2_PPO_FEATURES=reward_upgrade` cannot discriminate for a champion that
 /// legitimately declares that same feature. Ironclad left this list on
 /// 2026-08-28 (`ppo_fullrun_ironclad_underdocks_it200`); Silent left it on
-/// 2026-09-08 (`ppo_fullrun_silent_cont_it300`).
-const DEFAULT_SCHEMA_CHAMPIONS: [CharacterId; 5] = [
+/// 2026-09-08 (`ppo_fullrun_silent_cont_it300`). Both came back on
+/// 2026-09-13 (GH #723, below); Ironclad left again on 2026-10-27
+/// (`ppo_fullrun_ironclad_cardmods_it850`, see [`FEATURE_CHAMPIONS`]).
+const DEFAULT_SCHEMA_CHAMPIONS: [CharacterId; 4] = [
     CharacterId::Defect,
     CharacterId::Regent,
     CharacterId::Necrobinder,
@@ -60,19 +62,23 @@ const DEFAULT_SCHEMA_CHAMPIONS: [CharacterId; 5] = [
     // checkpoint carried no cfg, so `NetPolicy` fell back to the default
     // schema and collected every trajectory with the feature off. Serving
     // them on meant feeding two nets a column they had never seen.
-    CharacterId::Ironclad,
     CharacterId::Silent,
 ];
 
-/// The champions `champions.toml` records with `features = "reward_upgrade"`.
+/// The champions `champions.toml` records with a non-empty `features`, and the
+/// set each one declares.
 ///
-/// **Empty since 2026-09-13** — see the note above. While it is empty the
-/// silent-env test's positive direction is carried by
-/// [`an_explicit_model_override_still_reads_the_environment`], which exercises
-/// the same `Features::parse` path through the override lane. Repopulating
-/// this list restores the stronger end-to-end check, and is the point at which
-/// the pair below regains its full strength.
-const REWARD_UPGRADE_CHAMPIONS: [CharacterId; 0] = [];
+/// Empty from 2026-09-13 (GH #723) until 2026-10-27, when Ironclad's
+/// `ppo_fullrun_ironclad_cardmods_it850` became the first champion actually
+/// TRAINED at a non-default schema (`card_mods,reward_upgrade`, both features
+/// in its checkpoint cfg and exported to every collection worker).
+const FEATURE_CHAMPIONS: [(CharacterId, Features); 1] = [(
+    CharacterId::Ironclad,
+    Features {
+        reward_upgrade: true,
+        card_mods: true,
+    },
+)];
 
 /// Neither list may go empty, and together they must still cover every
 /// character.
@@ -94,16 +100,15 @@ fn assert_the_lists_still_discriminate() {
         "no champion declares the default schema any more, so the hostile-env \
          test below can no longer tell 'the manifest won' from 'the env leaked'"
     );
-    // NOTE: `REWARD_UPGRADE_CHAMPIONS` is deliberately allowed to be empty
-    // (GH #723 emptied it). An empty list costs the silent-env test its
-    // positive case, which is why the doc comment there now points at the
-    // override-lane test instead of claiming coverage it no longer has. It is
-    // NOT allowed to go empty silently, so the exemption is spelled out here
-    // rather than expressed as a missing assertion.
+    assert!(
+        !FEATURE_CHAMPIONS.is_empty(),
+        "no champion declares a feature any more, so the silent-env test below \
+         has lost its positive case; move it to an override-lane exemplar"
+    );
     for character in EVERY_CHARACTER {
         assert!(
             DEFAULT_SCHEMA_CHAMPIONS.contains(&character)
-                || REWARD_UPGRADE_CHAMPIONS.contains(&character),
+                || FEATURE_CHAMPIONS.iter().any(|(c, _)| *c == character),
             "{character:?} is in neither list, so nothing below covers it"
         );
     }
@@ -113,14 +118,10 @@ fn assert_the_lists_still_discriminate() {
 /// the manifest still wins for every champion the manifest says is
 /// default-schema.
 ///
-/// **[`REWARD_UPGRADE_CHAMPIONS`] are deliberately absent.** Their champions
-/// genuinely declare `reward_upgrade` (Ironclad since 2026-08-28, Silent since
-/// 2026-09-08), so under this env value "the manifest won" and "the env
-/// leaked" produce the same answer and asserting it here would prove nothing.
-/// The discriminating direction for them is
-/// [`the_manifest_supplies_a_feature_the_environment_never_mentions`], which
-/// runs with the env SILENT — between them the two pin env-independence for
-/// all five.
+/// [`FEATURE_CHAMPIONS`] are checked here too, but only where their declared
+/// set differs from the hostile value: where it is equal, "the manifest won"
+/// and "the env leaked" give the same answer and the assertion would prove
+/// nothing. The silent-env test below covers them in every case.
 ///
 /// One test function per env value, not five: the var is process-global and
 /// `Features::active` memoises on first read. That is safe only because
@@ -159,6 +160,17 @@ fn a_committed_champion_ignores_a_hostile_process_wide_feature_flag() {
              would notice."
         );
     }
+    for (character, declared) in FEATURE_CHAMPIONS {
+        if declared == Features::active() {
+            continue;
+        }
+        assert_eq!(
+            features_for(character),
+            declared,
+            "{character:?}'s committed champion declares {declared:?} in \
+             champions.toml, but resolved to the environment's feature set"
+        );
+    }
 }
 
 /// The other direction: with the environment SILENT, every champion must
@@ -170,12 +182,9 @@ fn a_committed_champion_ignores_a_hostile_process_wide_feature_flag() {
 /// opposite cause: identical graph, identical shapes, a prior running
 /// backwards on upgraded card rewards.
 ///
-/// **Since GH #723 no champion declares a feature**, so the
-/// `REWARD_UPGRADE_CHAMPIONS` loop below is currently a no-op and the positive
-/// direction — "a declared feature survives to the serving call" — is carried
-/// by [`an_explicit_model_override_still_reads_the_environment`]. What remains
-/// here is still load-bearing: it is what would catch the env leaking into all
-/// five now that the default schema is unanimous.
+/// The [`FEATURE_CHAMPIONS`] loop is the positive direction: "a declared
+/// feature survives to the serving call". The default-schema loop catches the
+/// opposite: a manifest value reaching a champion that never declared it.
 ///
 /// If a future promotion changes which champions declare features, this
 /// assertion is *supposed* to fail — it is a prompt to revisit both halves,
@@ -195,17 +204,14 @@ fn the_manifest_supplies_a_feature_the_environment_never_mentions() {
          that the manifest is what supplied the feature below"
     );
 
-    for character in REWARD_UPGRADE_CHAMPIONS {
+    for (character, declared) in FEATURE_CHAMPIONS {
         assert_eq!(
             features_for(character),
-            Features {
-                reward_upgrade: true,
-                card_mods: false,
-            },
-            "{character:?}'s champion declares features=\"reward_upgrade\" in \
-             champions.toml, but resolved to the default schema with the \
-             environment silent — the manifest value is being dropped, and the \
-             net would be served observations it never trained on."
+            declared,
+            "{character:?}'s champion declares {declared:?} in champions.toml, \
+             but resolved to something else with the environment silent — the \
+             manifest value is being dropped, and the net would be served \
+             observations it never trained on."
         );
     }
 

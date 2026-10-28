@@ -3475,6 +3475,10 @@ public class RunSimulator
             // again on every Power card (delta exactly -7, invariant across
             // which card was played).
             ["PERMAFROST"] = LatchField("Permafrost", "_activatedThisCombat"),
+            // First-HP-loss-this-combat draw 3; the engine latches it on
+            // Relic.counter too. Rebuilt unspent, a co-op replay drew the 3
+            // again on the next hit.
+            ["CENTENNIAL_PUZZLE"] = LatchField("CentennialPuzzle", "_usedThisCombat"),
         };
 
     private static System.Reflection.FieldInfo? LatchField(string typeName, string fieldName)

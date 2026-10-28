@@ -4,8 +4,8 @@
  "band": "matched",
  "brain": "ppo",
  "champion_label": "Take Flame Barrier",
- "champion_prob": 0.6547,
+ "champion_prob": 0.9136,
  "margin": 0.0,
  "your_label": "Take Flame Barrier",
- "your_prob": 0.6547
+ "your_prob": 0.9136
 }

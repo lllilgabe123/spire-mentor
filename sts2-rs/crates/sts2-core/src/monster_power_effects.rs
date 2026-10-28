@@ -608,6 +608,16 @@ fn vital_spark_after_card_entered_combat(
 
 /// C# `VitalSparkPower.AfterRemoved`: clear every ally card's Tainted affliction.
 fn vital_spark_after_removed(state: &mut CombatState, _old_owner: CreatureUid) -> EffectResult {
+    // Co-op: every player's cards.
+    let mut result = EffectResult::NotImplemented;
+    crate::coop::each_player(state, |state| {
+        result = vital_spark_after_removed_seated(state);
+    });
+    result
+}
+
+/// [`vital_spark_after_removed`] for the seated player's cards.
+fn vital_spark_after_removed_seated(state: &mut CombatState) -> EffectResult {
     use crate::card_afflictions::CardAfflictionKind;
     let uids = all_player_card_uids(state);
     for uid in uids {

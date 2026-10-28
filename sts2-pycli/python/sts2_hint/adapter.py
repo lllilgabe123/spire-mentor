@@ -850,6 +850,19 @@ def _translate_card(raw: dict[str, Any], path: str, *, hand: bool = False) -> di
     if isinstance(rider, str) and rider:
         spec["tinker_time_rider"] = rider
 
+    # Per-instance combat scratch the producer disclosed (the engine's
+    # `VarKey` wire names, e.g. Bolas / Thrumming Hatchet's
+    # `return_if_played_round`). Integers only; absent otherwise.
+    combat_vars = raw.get("combat_vars")
+    if isinstance(combat_vars, dict):
+        clean = {
+            k: v
+            for k, v in combat_vars.items()
+            if isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool)
+        }
+        if clean:
+            spec["combat_vars"] = clean
+
     return spec
 
 
@@ -1298,6 +1311,24 @@ def _translate_ally(ally: dict[str, Any], index: int) -> dict[str, Any]:
     )
     out["hand"] = _soft_translate_list(ally["hand"], _hand_translator, f"{path}.hand")
     out["ended_turn"] = bool(ally.get("ended_turn"))
+    # The rest of the seat, when the producer sent it (a recorded fight to be
+    # replayed as a whole co-op fight); omitted otherwise.
+    for key in ("draw_pile", "discard_pile", "exhaust_pile", "play_pile"):
+        if isinstance(ally.get(key), list):
+            out[key] = _soft_translate_list(ally[key], _translate_card, f"{path}.{key}")
+    if isinstance(ally.get("relics"), list):
+        out["relics"] = [
+            _translate_relic(r, f"{path}.relics[{i}]") for i, r in enumerate(ally["relics"])
+        ]
+    if isinstance(ally.get("stars"), int):
+        out["stars"] = ally["stars"]
+    if isinstance(ally.get("potions"), list):
+        out["potions"] = [
+            _translate_potion(p.get("name"), f"{path}.potions[{i}]")
+            if isinstance(p, dict)
+            else None
+            for i, p in enumerate(ally["potions"])
+        ]
     return out
 
 

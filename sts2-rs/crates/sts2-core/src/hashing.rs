@@ -369,6 +369,7 @@ fn hash_scalars<H: Hasher>(state: &CombatState, h: &mut H) {
     if state.coop.full {
         0x30u8.hash(h);
         state.coop.to_play.hash(h);
+        state.coop.seat_index.hash(h);
         for seat in &state.coop.stash {
             seat.seat.hash(h);
             (seat.relics.len() as u64).hash(h);
@@ -379,6 +380,10 @@ fn hash_scalars<H: Hasher>(state: &CombatState, h: &mut H) {
             seat.combat_log.chains_bound_card_played_this_turn.hash(h);
             seat.combat_log.doom_applied_by_player_this_turn.hash(h);
             seat.combat_log.osty_attacks_this_turn.hash(h);
+        }
+        for (seat, relics) in &state.coop.benched {
+            seat.hash(h);
+            (relics.len() as u64).hash(h);
         }
     }
     // Which seat applied each Strangle / Oblivion: it decides whose cards

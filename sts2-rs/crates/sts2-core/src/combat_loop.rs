@@ -359,7 +359,11 @@ pub fn start_combat(state: &mut CombatState) -> StepResult {
     // must MUTATE cards. Fired here, after the read-only dispatch, so the deck is
     // shuffled-and-present (Step 2 above) and any other before-combat listeners
     // have run.
-    crate::monster_power_effects::vital_spark_before_combat_start(state);
+    // Co-op: every player's Skills (C# walks each player's cards).
+    crate::coop::each_player(
+        state,
+        crate::monster_power_effects::vital_spark_before_combat_start,
+    );
     // Bead `sts2-rs-j87`: parallel relic-effects bus drain. The
     // `hooks::*` registry above carries the legacy power+relic
     // walk; the `relic_effects::*` channel carries the per-relic
@@ -751,6 +755,14 @@ pub fn start_player_turn(state: &mut CombatState) -> StepResult {
 /// Bead `sts2-rs-l2nz`: extracted so the resume path triggered from
 /// `apply(Action::ResolveChoice)` runs the same body.
 pub(crate) fn continue_player_turn_setup(state: &mut CombatState) -> StepResult {
+    // Co-op: the teammates ahead of us in the player order set up and draw
+    // first, from the shuffle stream the seats share.
+    crate::coop::run_seats_ahead(state, crate::coop::SeatRun::Setup);
+    // Co-op: a dead player skips `SetupPlayerTurn` (C# `CombatManager.cs:633`);
+    // the teammates' setups and the side's steps still run.
+    if crate::coop::is_out(state) && state.coop.seat_run.is_none() {
+        return run_turn_start_relic_tail(state, smallvec::SmallVec::new(), 0, false);
+    }
     // Step 5: clear block (round > 1) + fire after_block_cleared.
     // Python's `combat_player_states` walk is single-element at this
     // Phase-3 pin (allies omitted); we operate directly on
@@ -1812,6 +1824,8 @@ fn run_auto_pre_play(
     state: &mut CombatState,
     snapshot: smallvec::SmallVec<[crate::PowerUid; 8]>,
 ) -> StepResult {
+    // Co-op: the teammates ahead of us in the player order auto-play first.
+    crate::coop::run_seats_ahead(state, crate::coop::SeatRun::AutoPrePlay);
     // v0.111.0 `RunAutoPrePlayPhase` runs `CheckForEmptyHand` right here, on
     // entering AutoPrePlay and before any `AfterAutoPrePlayPhaseEntered*`
     // listener (decomp CombatManager.cs:868); v0.107.1 has no check at this
@@ -2328,6 +2342,8 @@ pub fn end_player_turn_phase_one(state: &mut CombatState) -> StepResult {
 
     debug_assert_eq!(state.phase, CombatPhase::PlayerPlayPhase);
 
+    // The teammates ahead of us in the player order enter AutoPostPlay first.
+    crate::coop::run_seats_ahead(state, crate::coop::SeatRun::AutoPostPlay);
     run_auto_post_play(state)
 }
 
@@ -2541,6 +2557,9 @@ fn end_player_turn_phase_one_after_auto_post_play_stampede(state: &mut CombatSta
 /// `before_turn_end` auto-play's surfaced card-select resolves — matching C#'s
 /// awaited ordering, where these steps run only once the selection completes.
 fn finish_end_player_turn_phase_one(state: &mut CombatState) -> StepResult {
+    // Co-op: the teammates ahead of us in the player order end their turn
+    // first (`crate::coop::run_seats_ahead`).
+    crate::coop::run_seats_ahead(state, crate::coop::SeatRun::TurnEnd);
     // Bead `sts2-rs-qjw41` (f933s follow-up): ChainsOfBindingPower
     // `BeforeTurnEnd` — clear `Bound` from every player card. C#
     // `ChainsOfBindingPower.cs` (v0.103.2) walks
@@ -4481,9 +4500,17 @@ fn open_monster_curse_select(state: &mut CombatState) {
         card_uid: None,
         source_pile: None,
     };
+    let options = vec![mk(crate::cards::CardId::Disintegration), mk(alt)];
+    // Co-op: the teammates pick theirs at once; ours stays the open choice,
+    // unless we are dead (C# `ChooseCurse` skips a dead target).
+    crate::coop::teammates_choose_curse(state, counter, &options);
+    if crate::coop::is_out(state) {
+        state.pending_curse_choice = None;
+        return;
+    }
     state.pending_choice = Some(crate::PendingChoice {
         kind: crate::ChoiceKind::MonsterCurseSelect,
-        options: vec![mk(crate::cards::CardId::Disintegration), mk(alt)],
+        options,
         min_select: 1,
         max_select: 1,
         can_skip: false,
@@ -4661,7 +4688,9 @@ fn perform_intent(
             if let Some(end) = result {
                 return end;
             }
-            hit_allies(state, dealer, damage, props);
+            if let Some(end) = hit_allies(state, dealer, damage, props) {
+                return end;
+            }
             // C# `VigorPower.AfterAttack` fires when the attack command
             // completes (before the move body's next line); consume the
             // attacker's one-shot Vigor here, ahead of `effect_fn`.
@@ -4694,7 +4723,9 @@ fn perform_intent(
             if let Some(end) = result {
                 return end;
             }
-            hit_allies(state, dealer, damage, props);
+            if let Some(end) = hit_allies(state, dealer, damage, props) {
+                return end;
+            }
             consume_attacker_vigor(state, enemy_uid);
             // `SuckPower.AfterAttack` is owner-generic in C# — it would fire
             // for a DeathBlow attacker too (the dealer dies AFTER the attack
@@ -4782,7 +4813,9 @@ fn perform_intent(
                 if let Some(end) = result {
                     return end;
                 }
-                hit_allies(state, dealer, damage, props);
+                if let Some(end) = hit_allies(state, dealer, damage, props) {
+                    return end;
+                }
                 if hp_before.is_some_and(|before| suck_hit_landed(state, before)) {
                     sucked_hits += 1;
                 }
@@ -5434,41 +5467,43 @@ pub fn effective_intent_of(state: &CombatState, creature: &crate::Creature) -> O
 ///
 /// C# `AttackCommand.FromMonster` targets every living player
 /// (`TargetingAllOpponents`), so each hit of an enemy attack reaches the
-/// teammates too. The engine models them only as HP and block — their powers,
-/// relics and reactions are not on the wire — so the hit runs the damage
-/// pipeline against `CreatureRef::Ally(i)` (the dealer's Strength / Weak still
-/// apply) and comes off their block, then their HP, with no hooks fired.
+/// teammates too, in seat order after us. Each teammate takes it seated, through
+/// the same [`apply_damage_to_player`] we do: the dealer's Strength / Weak and
+/// their own Vulnerable, block, Buffer, Thorns, HP-loss hooks and relics.
 ///
 /// Only when [`crate::coop::teammates_threatened`]: see there.
 /// And not while we hold `InterceptPower` — the teammate is Covered (C#
 /// `CoveredPower` zeroes the hit), and the hit is already charged to us twice
 /// by Intercept's own damage multiplier.
-fn hit_allies(state: &mut CombatState, dealer: CreatureRef, raw_damage: i32, props: ValueProps) {
+///
+/// A teammate's own death does not end the fight (C# loses only when every
+/// player is dead). Returns the fight's end if their reaction won it (Thorns on
+/// the last enemy).
+fn hit_allies(
+    state: &mut CombatState,
+    dealer: CreatureRef,
+    raw_damage: i32,
+    props: ValueProps,
+) -> Option<StepResult> {
     if state.allies.is_empty()
         || !crate::coop::teammates_threatened(state)
         || state.player_power_amount(crate::powers::PowerKind::Intercept) > 0
     {
-        return;
+        return None;
     }
     for i in 0..state.allies.len() {
+        if state.is_over {
+            break;
+        }
         if state.allies[i].current_hp <= 0 {
             continue;
         }
-        let ctx = DamageCtx {
-            dealer,
-            target: CreatureRef::Ally(u8::try_from(i).unwrap_or(u8::MAX)),
-            props,
-        };
-        let damage = hooks::modify_damage(state, raw_damage, &ctx).max(0);
-        let ally = &mut state.allies[i];
-        let absorbed = if props.contains(ValueProps::UNBLOCKABLE) {
-            0
-        } else {
-            damage.min(ally.block)
-        };
-        ally.block -= absorbed;
-        ally.current_hp = (ally.current_hp - (damage - absorbed)).max(0);
+        crate::coop::swap_seat(state, i);
+        let _ = apply_damage_to_player(state, dealer, raw_damage, props, None);
+        crate::coop::forgive_teammate_death(state);
+        crate::coop::swap_seat(state, i);
     }
+    state.is_over.then(|| check_combat_end(state))
 }
 
 pub fn apply_damage_to_player(
@@ -5478,6 +5513,10 @@ pub fn apply_damage_to_player(
     props: ValueProps,
     card: Option<crate::cards::CardId>,
 ) -> Option<StepResult> {
+    // Co-op: a dead player is never targeted (C# skips dead creatures).
+    if crate::coop::is_out(state) {
+        return None;
+    }
     let target_ref = CreatureRef::Player;
     let ctx = DamageCtx {
         dealer,
@@ -5873,11 +5912,12 @@ pub fn apply_damage_to_player(
             prevented = crate::relic_effects::dispatch_should_die_late(state) || prevented;
         }
         if !prevented || state.player.current_hp <= 0 {
-            state.is_over = true;
-            state.player_won = false;
-            // C# `RemoveAllPowersAfterDeath` on player death (bead `sts2-rs-2e9q2`).
-            clear_player_powers_on_death(state);
-            return Some(StepResult::CombatLost);
+            // C# `RemoveAllPowersAfterDeath` on player death (bead `sts2-rs-2e9q2`);
+            // in co-op the fight goes on while a teammate lives.
+            if crate::coop::seated_player_died(state) {
+                return Some(StepResult::CombatLost);
+            }
+            return None;
         }
     }
 
@@ -6409,7 +6449,7 @@ pub fn check_combat_end(state: &mut CombatState) -> StepResult {
     //
     // Bead `sts2-rs-p62n0`: walk `should_die_late` before the flip;
     // LizardTail-class listeners can heal the player and vote prevent.
-    if state.player.current_hp <= 0 {
+    if state.player.current_hp <= 0 && !crate::coop::is_out(state) {
         // C# `Hook.ShouldDie` (FairyInABottle) runs before `ShouldDieLate`
         // (LizardTail); check the Fairy first.
         let mut prevented = try_fairy_in_a_bottle_prevent_death(state);
@@ -6417,16 +6457,16 @@ pub fn check_combat_end(state: &mut CombatState) -> StepResult {
             prevented = crate::relic_effects::dispatch_should_die_late(state) || prevented;
         }
         if !prevented || state.player.current_hp <= 0 {
-            state.is_over = true;
-            state.player_won = false;
             // C# `RemoveAllPowersAfterDeath` on player death, before the
-            // combat-end teardown (bead `sts2-rs-2e9q2`).
-            clear_player_powers_on_death(state);
-            // Fire after_combat_end ONLY on player death — no victory hook.
-            hooks::dispatch_after_combat_end(state, &CombatLifecycleCtx::default());
-            // Bead `sts2-rs-j87`: parallel relic-effects bus drain.
-            let _ = crate::relic_effects::dispatch_after_combat_end(state);
-            return StepResult::CombatLost;
+            // combat-end teardown (bead `sts2-rs-2e9q2`); in co-op the fight
+            // goes on while a teammate lives.
+            if crate::coop::seated_player_died(state) {
+                // Fire after_combat_end ONLY on player death — no victory hook.
+                hooks::dispatch_after_combat_end(state, &CombatLifecycleCtx::default());
+                // Bead `sts2-rs-j87`: parallel relic-effects bus drain.
+                let _ = crate::relic_effects::dispatch_after_combat_end(state);
+                return StepResult::CombatLost;
+            }
         }
     }
 
@@ -6553,6 +6593,9 @@ pub fn check_combat_end(state: &mut CombatState) -> StepResult {
                 return StepResult::Advanced;
             }
         }
+        // Co-op: every dead player comes back at 1 HP first (C#
+        // `ReviveBeforeCombatEnd`, ahead of the combat-end hooks).
+        crate::coop::revive_the_dead(state);
         state.is_over = true;
         state.player_won = true;
         // Order matters: Python fires `after_combat_victory` BEFORE
@@ -6566,6 +6609,7 @@ pub fn check_combat_end(state: &mut CombatState) -> StepResult {
         // matches the legacy hooks call: victory THEN end.
         let _ = crate::relic_effects::dispatch_after_combat_victory(state);
         let _ = crate::relic_effects::dispatch_after_combat_end(state);
+        crate::coop::teammates_hear_the_win(state);
         return StepResult::CombatWon;
     }
 
@@ -8082,6 +8126,10 @@ pub(crate) fn finish_card_play(state: &mut CombatState, fin: CardPlayFinish) -> 
             let _ = crate::relic_effects::dispatch_after_card_played(state, &played_ctx);
         }
         hooks::dispatch_after_card_played(state, &hook_played_ctx);
+        // `Hook.AfterCardPlayed` reaches the card's enchantment on every play
+        // iteration, so a replayed Goopy card ticks once per play (GH #952).
+        // The first-play markers are idempotent.
+        crate::enchantment_hooks::dispatch_after_card_played(state, card_uid);
         // Bead `sts2-rs-wvpjv`: C# `OnPlayWrapper` (CardModel.cs:1472-1523)
         // calls `History.CardPlayFinished` once PER replay iteration, so each
         // replay adds its own `CardPlayFinishedEntry`. GoldAxe's
@@ -15282,6 +15330,80 @@ mod tests {
             state_for_enemy_turn_exec(1, MonsterKind::ShrinkerBeetle, Intent::Attack { damage: 6 });
         perform_intent(&mut solo, enemy_uid, attack);
         assert_eq!(solo.player.current_hp, 44);
+    }
+
+    /// A teammate holding `kind` × `amount`, as the wire loads a teammate's
+    /// powers (on their seat, no stash).
+    fn coop_with_mate_power(intent: Intent, kind: PowerKind, amount: i32) -> CombatState {
+        let mut state = coop_enemy_turn(intent, 0);
+        let pid = NonZeroU32::new(7101).expect("nz");
+        state.powers.push(Power {
+            id: pid,
+            kind,
+            amount,
+            counter: 0,
+            applier: None,
+            skip_next_tick: false,
+        });
+        state.allies[0].powers.push(PowerUid(pid));
+        state
+    }
+
+    /// The teammate takes a monster hit through the whole damage pipeline,
+    /// seated: their Buffer cancels it and their Thorns answer each hit.
+    #[test]
+    fn the_teammates_own_powers_meet_the_hit() {
+        let enemy_uid = CreatureUid(NonZeroU32::new(1).expect("nz"));
+
+        let attack = Intent::Attack { damage: 6 };
+        let mut buffered = coop_with_mate_power(attack, PowerKind::Buffer, 1);
+        perform_intent(&mut buffered, enemy_uid, Some(attack));
+        assert_eq!(buffered.allies[0].current_hp, 40, "Buffer cancels the hit");
+        assert_eq!(buffered.player.current_hp, 44, "ours lands");
+
+        let multi = Intent::MultiAttack { damage: 2, hits: 3 };
+        let mut thorny = coop_with_mate_power(multi, PowerKind::Thorns, 3);
+        perform_intent(&mut thorny, enemy_uid, Some(multi));
+        assert_eq!(thorny.allies[0].current_hp, 40 - 6);
+        assert_eq!(thorny.creatures[0].current_hp, 50 - 9, "3 Thorns per hit");
+        assert_eq!(thorny.coop.seated, 0, "we are seated again");
+    }
+
+    /// A teammate killed by a hit is out, but the fight goes on for us (C#
+    /// loses only when every player is dead).
+    #[test]
+    fn a_teammates_death_does_not_end_the_fight() {
+        let enemy_uid = CreatureUid(NonZeroU32::new(1).expect("nz"));
+        let attack = Intent::Attack { damage: 45 };
+        let mut state = coop_enemy_turn(attack, 0);
+        perform_intent(&mut state, enemy_uid, Some(attack));
+        assert_eq!(state.allies[0].current_hp, 0);
+        assert_eq!(state.player.current_hp, 5);
+        assert!(!state.is_over);
+    }
+
+    /// CURSE_OF_KNOWLEDGE in a whole co-op fight: the teammate takes their
+    /// pick at once (the first option, with no policy), and ours stays open.
+    #[test]
+    fn each_player_chooses_their_own_curse() {
+        let mut state = coop_enemy_turn(Intent::Attack { damage: 1 }, 0);
+        state.init_player_creature();
+        crate::coop::open_seats(&mut state);
+        state.coop.full = true;
+        state.pending_curse_choice = Some(0);
+
+        open_monster_curse_select(&mut state);
+
+        let pc = state.pending_choice.as_ref().expect("our pick is open");
+        assert_eq!(pc.kind, crate::ChoiceKind::MonsterCurseSelect);
+        crate::coop::swap_seat(&mut state, 0);
+        let theirs = state.player_power_uids();
+        crate::coop::swap_seat(&mut state, 0);
+        assert_eq!(theirs.len(), 1, "the teammate already carries their curse");
+        assert!(
+            state.player_power_uids().is_empty(),
+            "ours is still to choose"
+        );
     }
 
     /// Bead `sts2-rs-lam0b`: an enemy's `Vigor(6)` adds its bonus to the

@@ -234,6 +234,8 @@ pub fn spawn_roster(
     let n = roster.len();
     let mut uids: SmallVec<[CreatureUid; 8]> = SmallVec::with_capacity(n);
     for (i, &(kind, args, hp)) in roster.iter().enumerate() {
+        // C# `CreateCreature` → `ScaleMonsterHpForMultiplayer` (identity solo).
+        let hp = sts2_core::coop::scale_for_players(state, hp);
         let raw = u32::try_from(state.creatures.len() + 1).expect("creature arena fits in u32");
         let id = NonZeroU32::new(raw).expect("non-zero");
         state.creatures.push(Creature {
@@ -679,6 +681,9 @@ pub fn exit_combat(rs: &mut RunState, combat: &CombatState) {
     // accumulated value; fold it back onto the corresponding master-deck card
     // so the next combat starts boosted. Bead `sts2-rs-RP114`, GH #838.
     propagate_scaling_cards_to_master_deck(rs, combat);
+    // Goopy bumps the deck copy's enchantment amount on every play
+    // (`Goopy.AfterCardPlayed`: `DeckVersion.Enchantment.Amount++`), GH #952.
+    propagate_goopy_to_master_deck(rs, combat);
 
     // Flush the combat's RNG streams back to the run. C# uses ONE
     // `RunState.Rng` for the whole run, so a combat's advances to
@@ -889,6 +894,44 @@ fn propagate_scaling_cards_to_master_deck(rs: &mut RunState, combat: &CombatStat
                 let master = stat.get_mut(m);
                 *master = (*master).max(combat_base);
             }
+        }
+    }
+}
+
+/// Fold each Goopy deck card's combat-grown enchantment amount back onto its
+/// master-deck source (C# `Goopy.AfterCardPlayed` bumps `DeckVersion`'s
+/// amount too). GH #952.
+///
+/// Pairing follows [`propagate_scaling_cards_to_master_deck`]: no back-link,
+/// so instances pair by `card_id`. The arena starts with the master deck in
+/// reverse order, so the arena's Goopy cards read forward pair with the
+/// master's read backward. Clones generated mid-combat sit after the deck
+/// cards and stay unpaired, which matches C#: a clone has no `DeckVersion`.
+/// Only grows, like the scaler fold-back.
+fn propagate_goopy_to_master_deck(rs: &mut RunState, combat: &CombatState) {
+    use sts2_core::cards::{CardId, EnchantmentId};
+
+    let mut ids: SmallVec<[CardId; 2]> = SmallVec::new();
+    for c in &rs.master_deck {
+        if c.has_enchantment(EnchantmentId::Goopy) && !ids.contains(&c.card_id) {
+            ids.push(c.card_id);
+        }
+    }
+    for id in ids {
+        let mut grown = combat
+            .cards
+            .iter()
+            .filter(|c| c.card_id == id && c.has_enchantment(EnchantmentId::Goopy))
+            .map(|c| c.enchantment(EnchantmentId::Goopy));
+        for m in rs.master_deck.iter_mut().rev() {
+            if m.card_id != id || !m.has_enchantment(EnchantmentId::Goopy) {
+                continue;
+            }
+            let Some(amount) = grown.next() else {
+                break;
+            };
+            let master = m.enchantment(EnchantmentId::Goopy);
+            m.set_enchantment(EnchantmentId::Goopy, master.max(amount));
         }
     }
 }
@@ -2077,6 +2120,71 @@ mod tests {
             ga2.base_block, 7,
             "next combat's GA starts from the accumulated value"
         );
+    }
+
+    /// GH #952: Goopy's `AfterCardPlayed` also bumps the deck copy's amount
+    /// (`base.Card.DeckVersion.Enchantment.Amount++`, `Goopy.cs`), so the growth
+    /// outlasts the fight. Only the combat copies of master-deck cards fold
+    /// back: a clone generated mid-combat has no `DeckVersion`, so its own
+    /// growth stays in the fight.
+    #[test]
+    fn goopy_growth_persists_across_combat_round_trip() {
+        use sts2_core::cards::{CardId, EnchantmentId};
+
+        crate::cards::dispatch::ensure_installed();
+
+        let defend = || {
+            let mut c = crate::cards::spec_index::card_pod_from_id(CardId::DefendIronclad, false)
+                .expect("defend spec");
+            c.set_enchantment(EnchantmentId::Goopy, 1);
+            c
+        };
+        let mut rs = fresh_run();
+        rs.master_deck.push(defend());
+        rs.master_deck.push(defend());
+
+        let mut state = enter_combat(&rs, select_first(act1_normal_pool()));
+        let goopy: Vec<usize> = state
+            .cards
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.has_enchantment(EnchantmentId::Goopy))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(goopy.len(), 2, "both Goopy Defends cloned into combat");
+        // The arena holds the deck reversed: arena[goopy[1]] is master[0].
+        let first_deck_card = state.cards[goopy[1]].uid;
+        for _ in 0..2 {
+            sts2_core::enchantment_hooks::dispatch_after_card_played(&mut state, first_deck_card);
+        }
+        // A mid-combat clone of a Goopy card, grown far past both deck copies.
+        let mut clone = state.cards[goopy[0]];
+        clone.uid = sts2_core::CardUid::new(u32::try_from(state.cards.len() + 1).expect("u32"))
+            .expect("nz");
+        clone.set_enchantment(EnchantmentId::Goopy, 9);
+        state.cards.push(clone);
+
+        exit_combat(&mut rs, &state);
+        assert_eq!(
+            rs.master_deck[0].enchantment(EnchantmentId::Goopy),
+            3,
+            "two plays: 1 -> 3"
+        );
+        assert_eq!(
+            rs.master_deck[1].enchantment(EnchantmentId::Goopy),
+            1,
+            "the unplayed Defend keeps its amount; the clone's growth is not its own"
+        );
+
+        let state2 = enter_combat(&rs, select_first(act1_normal_pool()));
+        let mut amounts: Vec<i32> = state2
+            .cards
+            .iter()
+            .map(|c| c.enchantment(EnchantmentId::Goopy))
+            .filter(|&a| a > 0)
+            .collect();
+        amounts.sort_unstable();
+        assert_eq!(amounts, [1, 3], "combat 2 starts from the grown deck copy");
     }
 
     /// Bead `sts2-rs-nfoh0`: ForbiddenGrimoirePower.AfterCombatEnd. A player

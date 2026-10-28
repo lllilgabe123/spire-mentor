@@ -806,14 +806,57 @@ impl PyCombatState {
     /// false-positive `STATE_DRIFT` in the parity-fuzz harness. The
     /// underlying `sts2_core::apply` returns a `StepResult` that is
     /// dropped because this binding doesn't surface it yet.
-    #[pyo3(signature = (action))]
-    fn apply(&mut self, action: &Bound<'_, PyAny>) -> PyResult<()> {
+    ///
+    /// `teammate_chooser(ally, choice, actions)` answers the co-op
+    /// teammates' choices the action leads to (a whole co-op fight runs their
+    /// turn starts inside ours): `choice` as `pending_choice()` shows it,
+    /// `actions` the legal `choose` dicts; it returns an index into
+    /// `actions`, a `choose` dict with any selection the choice allows, or
+    /// `None` for the engine's own pick. For replaying recorded co-op fights.
+    #[pyo3(signature = (action, teammate_chooser = None))]
+    fn apply(
+        &mut self,
+        action: &Bound<'_, PyAny>,
+        teammate_chooser: Option<Py<PyAny>>,
+    ) -> PyResult<()> {
         let dict = action.downcast::<PyDict>().map_err(|_| {
             pyo3::exceptions::PyValueError::new_err("apply: expected a dict in bridge action shape")
         })?;
         let mapped = parse_bridge_action(dict)?;
-        let _ = core_apply(&mut self.inner, mapped);
-        Ok(())
+        let inner = &mut self.inner;
+        with_py_seat_chooser(teammate_chooser, || {
+            let _ = core_apply(inner, mapped);
+        })
+    }
+
+    /// Apply an action as co-op teammate `ally` (`$.allies[ally]`): the same
+    /// dict shape as [`Self::apply`], with `card_index` into THEIR hand. A
+    /// choice the action opens is answered on the spot, as in their own
+    /// turn (`sts2_core::coop::apply_as`), by `teammate_chooser` as in
+    /// [`Self::apply`] when given. For replaying recorded co-op fights.
+    #[pyo3(signature = (ally, action, teammate_chooser = None))]
+    fn apply_as_ally(
+        &mut self,
+        ally: usize,
+        action: &Bound<'_, PyAny>,
+        teammate_chooser: Option<Py<PyAny>>,
+    ) -> PyResult<()> {
+        if ally >= self.inner.allies.len() {
+            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "apply_as_ally: no teammate {ally} (there are {})",
+                self.inner.allies.len()
+            )));
+        }
+        let dict = action.downcast::<PyDict>().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(
+                "apply_as_ally: expected a dict in bridge action shape",
+            )
+        })?;
+        let mapped = parse_bridge_action(dict)?;
+        let inner = &mut self.inner;
+        with_py_seat_chooser(teammate_chooser, || {
+            let _ = sts2_core::coop::apply_as(inner, ally, mapped);
+        })
     }
 
     /// Run the engine's structural invariant suite against the current
@@ -2431,6 +2474,66 @@ impl PyCombatState {
             source_pile: Some(kind),
         })
     }
+}
+
+/// Run `body` with the Python `chooser` (if any) answering the co-op
+/// teammates' choices ([`sts2_core::coop::SeatChooser`]):
+/// `chooser(ally, choice, actions)` sees the open choice as `pending_choice()`
+/// shows it and the legal `choose` actions, and returns an index into them, a
+/// `choose` action dict (any selection the choice allows), or `None` for the
+/// engine's own pick. An exception the chooser raises leaves that pick to the
+/// engine and is re-raised once `body` is done.
+fn with_py_seat_chooser(chooser: Option<Py<PyAny>>, body: impl FnOnce()) -> PyResult<()> {
+    let Some(chooser) = chooser else {
+        body();
+        return Ok(());
+    };
+    let failed: std::rc::Rc<std::cell::RefCell<Option<PyErr>>> = std::rc::Rc::default();
+    let seen = std::rc::Rc::clone(&failed);
+    let ask: sts2_core::coop::SeatChooser = Box::new(move |state, ally, options, actions| {
+        Python::with_gil(|py| {
+            let answer = (|| -> PyResult<Option<Action>> {
+                // A curse pick opens no choice: its options alone.
+                let choice = if let Some(pc) = state.pending_choice.as_ref() {
+                    sts2_wire::emit::combat::pending_choice_to_value(pc, state)
+                } else {
+                    let cards = options
+                        .iter()
+                        .map(|o| sts2_wire::emit::combat::choice_option_to_value(o, state))
+                        .collect::<Vec<_>>();
+                    serde_json::json!({ "cards": cards })
+                };
+                let legal = serde_json::Value::Array(
+                    actions
+                        .iter()
+                        .map(sts2_wire::emit::combat_action_to_value)
+                        .collect(),
+                );
+                let args = (ally, value_to_py(py, &choice)?, value_to_py(py, &legal)?);
+                let answer = chooser.call1(py, args)?;
+                let answer = answer.bind(py);
+                if answer.is_none() {
+                    return Ok(None);
+                }
+                if let Ok(i) = answer.extract::<usize>() {
+                    return Ok(actions.get(i).cloned());
+                }
+                let dict = answer.downcast::<PyDict>().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err(
+                        "teammate_chooser: return an index into actions, a choose action dict or None",
+                    )
+                })?;
+                parse_bridge_action(dict).map(Some)
+            })();
+            answer.unwrap_or_else(|e| {
+                seen.borrow_mut().get_or_insert(e);
+                None
+            })
+        })
+    });
+    sts2_core::coop::with_seat_chooser(ask, body);
+    let failure = failed.borrow_mut().take();
+    failure.map_or(Ok(()), Err)
 }
 
 /// Render an [`Action`] as a bridge-shape Python dict — the shape

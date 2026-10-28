@@ -145,6 +145,12 @@ public static class SimStateExtractor
         // that misses is not evidence of anything. Same block, same names, as
         // the headless runner emits; the mirror's restore path is shared.
         msg["rng"] = RngState(runState, player);
+        // Co-op: the same block for a replay that starts AT this board
+        // (`coop_replay`), where the counters are exact. Kept off `rng`, which
+        // the advisor reads as "the world owns the dice": live, teammates draw
+        // from the shared streams between our decisions.
+        if (SimMp.IsMultiplayer)
+            msg["coop_rng"] = RngState(runState, player, multiplayer: true);
         // Co-op (PROTOCOL.md s1): the advisor plans for the local player
         // only; this says how many others share the fight and the map. Absent
         // (every mod before the field) means 1.
@@ -167,11 +173,11 @@ public static class SimStateExtractor
     /// each player's own streams are seeded by slot, so no lineage we could
     /// send would hold.
     /// </summary>
-    private static Dictionary<string, object?> RngState(RunState? runState, Player? player)
+    private static Dictionary<string, object?> RngState(RunState? runState, Player? player, bool multiplayer = false)
     {
         var d = new Dictionary<string, object?>();
         var rng = runState?.Rng;
-        if (rng == null || SimMp.IsMultiplayer) return d;
+        if (rng == null || SimMp.IsMultiplayer != multiplayer) return d;
         try
         {
             // Built LOCALLY and published as a pair. A partial block here is
@@ -479,7 +485,52 @@ public static class SimStateExtractor
             data["valid_target_indices"] = ComputeValidTargetIndices(card);
         }
 
+        int? returnRound = ReturnIfPlayedRound(card);
+        if (returnRound != null)
+        {
+            data["combat_vars"] = new Dictionary<string, object?>
+            {
+                ["return_if_played_round"] = returnRound,
+            };
+        }
+
         return data;
+    }
+
+    /// <summary>
+    /// Bolas and Thrumming Hatchet come back to hand at a turn start when they
+    /// were played on the owner's previous turn (`BeforeHandDraw`:
+    /// `CardPlaysFinished.Any(e => e.HappenedLastPlayerTurn(Owner) &&
+    /// e.CardPlay.Card == this)`). The engine keeps that as the round of the
+    /// play (`return_if_played_round`), which it cannot see on a rebuilt
+    /// board: the round this card was played this turn or last, else null.
+    /// </summary>
+    private static int? ReturnIfPlayedRound(CardModel card)
+    {
+        string id = SafeCardId(card);
+        if (id != "BOLAS" && id != "THRUMMING_HATCHET")
+            return null;
+        try
+        {
+            CombatState? state = CombatManager.Instance?.DebugOnlyGetState();
+            CombatHistory? history = CombatManager.Instance?.History;
+            if (state == null || history == null)
+                return null;
+            foreach (CardPlayFinishedEntry e in history.CardPlaysFinished)
+            {
+                if (!ReferenceEquals(e.CardPlay?.Card, card))
+                    continue;
+                if (e.HappenedThisTurn(state))
+                    return state.RoundNumber;
+                if (card.Owner != null && e.HappenedLastPlayerTurn(card.Owner))
+                    return state.RoundNumber - 1;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"[SimStateExtractor] Could not read {id}'s last play: {ex.Message}");
+        }
+        return null;
     }
 
     private static List<int> ComputeValidTargetIndices(CardModel card)
@@ -729,6 +780,11 @@ public static class SimStateExtractor
     private static readonly System.Reflection.FieldInfo? PermafrostLatch =
         LatchField("Permafrost", "_activatedThisCombat");
 
+    // First-HP-loss-this-combat draw 3 (a co-op replay drew it again on the
+    // next hit). Same allowlist entry as RunSimulator's.
+    private static readonly System.Reflection.FieldInfo? CentennialPuzzleLatch =
+        LatchField("CentennialPuzzle", "_usedThisCombat");
+
     private static System.Reflection.FieldInfo? LatchField(string typeName, string fieldName)
     {
         try
@@ -752,6 +808,7 @@ public static class SimStateExtractor
                 "VAMBRACE" => VambraceLatch,
                 "RUINED_HELMET" => RuinedHelmetLatch,
                 "PERMAFROST" => PermafrostLatch,
+                "CENTENNIAL_PUZZLE" => CentennialPuzzleLatch,
                 _ => null,
             };
             if (latch == null) return null;
@@ -767,7 +824,7 @@ public static class SimStateExtractor
     /// bespoke [SavedProperty] counter fields (PenNib.AttacksPlayed,
     /// Girya.TimesLifted, etc -- see phase1-decomp.md section 4). This
     /// covers every relic with a visible counter, not just a hardcoded list --
-    /// plus the two counter-less once-per-combat latches, see
+    /// plus the counter-less once-per-combat latches, see
     /// <see cref="SafeRelicCounter"/>.
     /// </summary>
     public static Dictionary<string, object?> SerializeRelic(RelicModel relic)
@@ -1002,6 +1059,10 @@ public static class SimStateExtractor
         var data = new Dictionary<string, object?>
         {
             ["id"] = SafeCreatureId(creature),
+            // The creature's id within this combat: what the combat log's rows
+            // name it by (`uid`), so a replay can find a target C# has since
+            // dropped from its enemy list.
+            ["combat_id"] = creature.CombatId,
             ["name"] = SafeString(() => creature.Name) ?? "UNKNOWN",
             ["side"] = creature.Side.ToString(),
             ["is_player"] = creature.IsPlayer,

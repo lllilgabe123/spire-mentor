@@ -1,17 +1,17 @@
 {
  "alternative": {
   "error": "verify arm hit the 12-step cap without ending",
-  "label": "Buy Inflame",
+  "label": "Choose: Small Capsule",
   "over": false,
   "steps": 12,
   "won": false
  },
- "decision": "shop",
- "node_id": 47,
+ "decision": "event_choice",
+ "node_id": 0,
  "note": "inconclusive — a continuation didn't finish; one agent-played continuation per line (same-seeded combat search) — a paired spot check, not a probability",
  "played": {
   "error": "verify arm hit the 12-step cap without ending",
-  "label": "Buy Vulnerable Potion",
+  "label": "Choose: Booming Conch",
   "over": false,
   "steps": 12,
   "won": false

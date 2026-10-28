@@ -1081,11 +1081,54 @@ pub fn combat_state_to_value(state: &CombatState) -> Result<Value, EmitError> {
                     "hand".to_owned(),
                     pile_to_value(state, &a.hand, &state.cards, &format!("{path}.hand"))?,
                 );
+                // The rest of a whole seat (a full co-op fight), when there is any:
+                // omitted otherwise, so an advisor board's wire is unchanged.
+                for (key, pile) in [
+                    ("draw_pile", a.draw.as_slice()),
+                    ("discard_pile", a.discard.as_slice()),
+                    ("exhaust_pile", a.exhaust.as_slice()),
+                    ("play_pile", a.play.as_slice()),
+                ] {
+                    if !pile.is_empty() {
+                        m.insert(
+                            key.to_owned(),
+                            pile_to_value(state, pile, &state.cards, &format!("{path}.{key}"))?,
+                        );
+                    }
+                }
+                if a.stars != 0 {
+                    set(&mut m, "stars", i32::from(a.stars));
+                }
+                if !a.potions.is_empty() {
+                    let list = a.potions.iter().map(|k| val(k.python_name())).collect();
+                    m.insert("potions".to_owned(), Value::Array(list));
+                }
+                let relics = &state.coop.stash[i].relics;
+                if !relics.is_empty() {
+                    let list = relics
+                        .iter()
+                        .map(|r| {
+                            let mut rd = obj();
+                            set(&mut rd, "id", r.kind.python_name());
+                            if r.counter != 0 {
+                                set(&mut rd, "counter", r.counter);
+                            }
+                            Value::Object(rd)
+                        })
+                        .collect();
+                    m.insert("relics".to_owned(), Value::Array(list));
+                }
                 set(&mut m, "ended_turn", state.coop.to_play & (1 << i) == 0);
             }
             allies.push(Value::Object(m));
         }
         d.insert("allies".to_owned(), Value::Array(allies));
+        if state.coop.full {
+            set(&mut d, "coop_full", true);
+            if state.coop.seat_index > 0 {
+                set(&mut d, "coop_seat_index", state.coop.seat_index);
+            }
+        }
     }
 
     // --- rng / ascension ---

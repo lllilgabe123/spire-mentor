@@ -77,7 +77,7 @@
    "label": "Started Ironclad (seed 1, A0, heuristic)",
    "parent_id": null,
    "turn": null,
-   "value": 0.9062
+   "value": 0.9601
   },
   {
    "act": 1,
@@ -96,7 +96,7 @@
    "label": "Choose: Booming Conch",
    "parent_id": 0,
    "turn": null,
-   "value": 0.9099
+   "value": 1.014
   },
   {
    "act": 1,
@@ -982,7 +982,7 @@
    "label": "Play Strike → Fuzzy Wurm Crawler",
    "parent_id": 18,
    "turn": null,
-   "value": 0.9046
+   "value": 1.0124
   },
   {
    "act": 1,
@@ -1826,7 +1826,7 @@
    "label": "Play Strike → Shrinker Beetle",
    "parent_id": 35,
    "turn": null,
-   "value": 0.8704
+   "value": 0.973
   },
   {
    "act": 1,
@@ -2169,7 +2169,7 @@
    "label": "Play Strike → Nibbit",
    "parent_id": 43,
    "turn": null,
-   "value": 0.8342
+   "value": 0.9414
   },
   {
    "act": 1,
@@ -2203,7 +2203,7 @@
    "label": "Map → (1,4)",
    "parent_id": 45,
    "turn": null,
-   "value": 0.8081
+   "value": 0.9123
   },
   {
    "act": 1,
@@ -2222,7 +2222,7 @@
    "label": "Buy Body Slam",
    "parent_id": 46,
    "turn": null,
-   "value": 0.7871
+   "value": 0.888
   },
   {
    "act": 1,
@@ -2242,7 +2242,7 @@
    "label": "Buy Vulnerable Potion",
    "parent_id": 47,
    "turn": null,
-   "value": 0.8235
+   "value": 0.9154
   },
   {
    "act": 1,

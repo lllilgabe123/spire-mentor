@@ -75,9 +75,12 @@ const FOGMOG_ILLUSION_SLOT: u8 = 0;
 /// `await CardPileCmd.AddToCombatAndPreview<Wound>(targets, PileType.Discard, 3, addedByPlayer: false)`.
 fn vantom_dismember_effect(state: &mut CombatState, _owner: CreatureUid) {
     use sts2_core::card_effects::PileKind;
-    for _ in 0..3 {
-        let _ = super::super::cards::status::spawn_wound(state, PileKind::Discard);
-    }
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        for _ in 0..3 {
+            let _ = super::super::cards::status::spawn_wound(state, PileKind::Discard);
+        }
+    });
 }
 
 /// Bead `sts2-rs-8ukqd` (bug C): PhrogParasite INFECT adds 3 Infection
@@ -88,9 +91,12 @@ fn vantom_dismember_effect(state: &mut CombatState, _owner: CreatureUid) {
 /// the card add lives here, same shape as [`vantom_dismember_effect`].
 fn phrog_parasite_infect_effect(state: &mut CombatState, _owner: CreatureUid) {
     use sts2_core::card_effects::PileKind;
-    for _ in 0..3 {
-        let _ = super::super::cards::status::spawn_infection(state, PileKind::Discard);
-    }
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        for _ in 0..3 {
+            let _ = super::super::cards::status::spawn_infection(state, PileKind::Discard);
+        }
+    });
 }
 
 /// `InfestedPower.AfterDeath` — the PhrogParasite elite's second phase.
@@ -188,9 +194,12 @@ pub fn infested_after_death_spawn(state: &mut CombatState, _owner: CreatureUid) 
 /// surfaced by parity-fuzz `discard_count` drift on FOGMOG_NORMAL.
 fn eye_with_teeth_distract_effect(state: &mut CombatState, _owner: CreatureUid) {
     use sts2_core::card_effects::PileKind;
-    for _ in 0..3 {
-        let _ = super::super::cards::status::spawn_dazed(state, PileKind::Discard);
-    }
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        for _ in 0..3 {
+            let _ = super::super::cards::status::spawn_dazed(state, PileKind::Discard);
+        }
+    });
 }
 
 /// Bead `sts2-rs-r8x8h`: Vantom Prepare applies +2 Strength to self.
@@ -235,6 +244,14 @@ fn fogmog_swipe_effect(state: &mut CombatState, owner: CreatureUid) {
 /// `PowerKind::Constrict` arm in `hooks::after_turn_end`). The leading
 /// `Intent::Debuff` is telegraph-only; the application lives here.
 fn slithering_strangler_constrict_effect(state: &mut CombatState, owner: CreatureUid) {
+    // Co-op: each player's Constrict records this strangler.
+    sts2_core::coop::each_player(state, |state| {
+        slithering_strangler_constrict_effect_seated(state, owner);
+    });
+}
+
+/// [`slithering_strangler_constrict_effect`] for the seated player alone.
+fn slithering_strangler_constrict_effect_seated(state: &mut CombatState, owner: CreatureUid) {
     apply_power_to_player_via_legacy_surface(state, PowerKind::Constrict, 3);
     // Record this strangler as the Constrict applier so its death removes
     // the player's Constrict — C# `ConstrictPower.AfterDeath`
@@ -1822,6 +1839,83 @@ pub fn create_kin_follower_ai(slot: KinFollowerSlot) -> MonsterAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Us and one teammate seat on the enemy turn of round 2 (a whole co-op
+    /// fight), one strangler.
+    fn coop_board() -> (CombatState, CreatureUid) {
+        crate::cards::dispatch::install_default_registry();
+        let mut state = CombatState::default();
+        state.player.current_hp = 50;
+        state.player.max_hp = 50;
+        state.init_player_creature();
+        let owner = state.spawn_enemy(sts2_core::MonsterKind::SlitheringStrangler);
+        state.allies.push(sts2_core::PlayerCombatState {
+            current_hp: 40,
+            max_hp: 60,
+            ..sts2_core::PlayerCombatState::default()
+        });
+        sts2_core::coop::open_seats(&mut state);
+        state.coop.full = true;
+        state.round = 2;
+        (state, owner)
+    }
+
+    /// Each player's powers of `kind`, as (amount, applier), seat 0 first.
+    fn seats_powers(
+        state: &mut CombatState,
+        kind: PowerKind,
+    ) -> Vec<Vec<(i32, Option<CreatureUid>)>> {
+        let mut out = Vec::new();
+        for seat in 0..=state.allies.len() {
+            if seat > 0 {
+                sts2_core::coop::swap_seat(state, seat - 1);
+            }
+            out.push(
+                state
+                    .player_power_uids()
+                    .iter()
+                    .filter_map(|u| state.powers.get_by_id(u.0))
+                    .filter(|p| p.kind == kind)
+                    .map(|p| (p.amount, p.applier))
+                    .collect(),
+            );
+            if seat > 0 {
+                sts2_core::coop::swap_seat(state, seat - 1);
+            }
+        }
+        out
+    }
+
+    /// C# monsters target every living player: a debuff lands on each, once.
+    #[test]
+    fn a_monster_debuff_lands_on_every_player_once() {
+        let (mut state, owner) = coop_board();
+        slithering_strangler_constrict_effect(&mut state, owner);
+        assert_eq!(
+            seats_powers(&mut state, PowerKind::Constrict),
+            vec![vec![(3, Some(owner))], vec![(3, Some(owner))]],
+            "each player's own Constrict, stamped with the strangler"
+        );
+        assert_eq!(state.coop.seated, 0);
+        assert!(!state.coop.fanning);
+    }
+
+    /// A status-card move adds its cards to every player's piles.
+    #[test]
+    fn a_status_move_adds_cards_for_every_player() {
+        let (mut state, owner) = coop_board();
+        eye_with_teeth_distract_effect(&mut state, owner);
+        assert_eq!(state.player.discard.len(), 3);
+        assert_eq!(state.allies[0].discard.len(), 3);
+
+        let (mut dead, owner) = coop_board();
+        dead.allies[0].current_hp = 0;
+        eye_with_teeth_distract_effect(&mut dead, owner);
+        assert!(
+            dead.allies[0].discard.is_empty(),
+            "a dead player is not targeted"
+        );
+    }
 
     /// Smoke test: every ctor produces an AI whose initial move can be
     /// fetched without panicking.

@@ -719,6 +719,9 @@ pub struct PpoPolicy {
     /// from `STS2_RUNAI_PPO_GROUP_DECODE` (default ON, `0` restores
     /// the plain per-candidate argmax) — see [`grouped_argmax`].
     group_decode: bool,
+    /// Experiment-only overrides of the net's pick ([`RunNudge`]), from
+    /// `STS2_RUNAI_RUN_NUDGE`. Default: none.
+    nudge: RunNudge,
 }
 
 #[cfg(feature = "ppo")]
@@ -802,6 +805,7 @@ impl PpoPolicy {
             group_decode: group_decode_enabled(
                 std::env::var("STS2_RUNAI_PPO_GROUP_DECODE").ok().as_deref(),
             ),
+            nudge: RunNudge::parse(std::env::var("STS2_RUNAI_RUN_NUDGE").ok().as_deref()),
         }
     }
 
@@ -906,12 +910,15 @@ impl PpoPolicy {
                 obs.total_floor,
             )
         })?;
+        let mut probs = probs;
+        self.nudge.bias_skip(rm, phase, &masked, &mut probs);
         let argmax = if self.group_decode {
             grouped_argmax(&action_descs, &probs)
         } else {
             argmax_first(&probs)
         }
         .expect("probs is non-empty (masked.len() >= 2)");
+        let argmax = self.nudge.smith_override(rm, phase, &masked, argmax);
         Ok(Some((masked, probs, value, argmax)))
     }
 
@@ -1004,6 +1011,105 @@ fn argmax_first(xs: &[f32]) -> Option<usize> {
         }
     }
     best.map(|(i, _)| i)
+}
+
+/// Experiment-only nudges of the run policy toward strong human players'
+/// habits (`docs/experiments/2026-10-24-pro-run-decisions.md`, phase B).
+/// Parsed from `STS2_RUNAI_RUN_NUDGE`, `;`-separated:
+///
+/// - `skip=B` or `skip=B1,B2,B3`: add `B` (per act 1..3) to the log-prob of
+///   skipping a card reward, then renormalize. The returned `probs` are the
+///   nudged ones, so telemetry shows what was actually decoded.
+/// - `smith_hp=T`: at a rest site, when the net picks Rest but HP/max HP is
+///   at least `T` and Smith is enabled, take Smith instead.
+///
+/// Unset or empty means no nudge. A malformed value panics: a silently
+/// ignored arm setting would gate the baseline against itself.
+#[cfg(feature = "ppo")]
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RunNudge {
+    skip_bias: Option<[f32; 3]>,
+    smith_hp: Option<f32>,
+}
+
+#[cfg(feature = "ppo")]
+impl RunNudge {
+    #[must_use]
+    pub fn parse(raw: Option<&str>) -> Self {
+        let mut out = Self::default();
+        for part in raw
+            .unwrap_or("")
+            .split(';')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        {
+            let (key, val) = part
+                .split_once('=')
+                .unwrap_or_else(|| panic!("STS2_RUNAI_RUN_NUDGE: `{part}` is not key=value"));
+            let nums: Vec<f32> = val
+                .split(',')
+                .map(|v| {
+                    v.trim().parse().unwrap_or_else(|_| {
+                        panic!("STS2_RUNAI_RUN_NUDGE: `{v}` in `{part}` is not a number")
+                    })
+                })
+                .collect();
+            match (key.trim(), nums.as_slice()) {
+                ("skip", [b]) => out.skip_bias = Some([*b; 3]),
+                ("skip", [a, b, c]) => out.skip_bias = Some([*a, *b, *c]),
+                ("smith_hp", [t]) => out.smith_hp = Some(*t),
+                _ => panic!("STS2_RUNAI_RUN_NUDGE: unknown or mis-sized setting `{part}`"),
+            }
+        }
+        out
+    }
+
+    fn bias_skip(&self, rm: &RunManager, phase: Phase, actions: &[RunAction], probs: &mut [f32]) {
+        let Some(bias) = self.skip_bias else { return };
+        if phase != Phase::CardReward {
+            return;
+        }
+        let Some(i) = actions
+            .iter()
+            .position(|a| matches!(a, RunAction::PickCardReward { idx: None }))
+        else {
+            return;
+        };
+        let act = usize::from(rm.run_state.act_index.clamp(1, 3)) - 1;
+        probs[i] *= bias[act].exp();
+        let total: f32 = probs.iter().sum();
+        for p in probs.iter_mut() {
+            *p /= total;
+        }
+    }
+
+    fn smith_override(
+        &self,
+        rm: &RunManager,
+        phase: Phase,
+        actions: &[RunAction],
+        argmax: usize,
+    ) -> usize {
+        let Some(threshold) = self.smith_hp else {
+            return argmax;
+        };
+        if phase != Phase::RestSite || actions[argmax] != (RunAction::RestOption { idx: 0 }) {
+            return argmax;
+        }
+        let rs = &rm.run_state;
+        let smith_enabled = matches!(
+            rs.rest_site_options().get(1),
+            Some(sts2_core::runstate::RestSiteOption::Smith { enabled: true })
+        );
+        if !smith_enabled || f64::from(rs.current_hp) < f64::from(threshold) * f64::from(rs.max_hp)
+        {
+            return argmax;
+        }
+        actions
+            .iter()
+            .position(|a| *a == RunAction::RestOption { idx: 1 })
+            .unwrap_or(argmax)
+    }
 }
 
 /// `STS2_RUNAI_PPO_GROUP_DECODE` resolver: default ON, `"0"` restores
@@ -1353,14 +1459,15 @@ mod combat_fallback_tests {
         let net = PpoNet::load(&path).unwrap_or_else(|e| panic!("load onnx: {e}"));
         let mut policy = PpoPolicy {
             net: Arc::new(net),
-            // The committed champions are all at the default schema; pinning
-            // it here (rather than reading the environment) keeps this test
-            // independent of whatever STS2_PPO_FEATURES the runner exports.
-            features: crate::ppo::features::Features::default(),
+            // The schema the manifest records for this champion (not the
+            // environment), so the test is independent of whatever
+            // STS2_PPO_FEATURES the runner exports.
+            features: super::super::net::features_for(CharacterId::Ironclad),
             heuristic: HeuristicPolicy::new(),
             peak: super::TokenPeak::default(),
             last_eval: None,
             group_decode: true,
+            nudge: super::RunNudge::default(),
         };
 
         // Warm up to Phase::Combat with the heuristic (never the policy
@@ -1388,5 +1495,36 @@ mod combat_fallback_tests {
             "returned index {idx} out of bounds for {} actions",
             actions.len()
         );
+    }
+}
+
+#[cfg(all(test, feature = "ppo"))]
+mod run_nudge_tests {
+    use super::RunNudge;
+
+    #[test]
+    fn unset_or_empty_is_no_nudge() {
+        assert_eq!(RunNudge::parse(None), RunNudge::default());
+        assert_eq!(RunNudge::parse(Some(" ")), RunNudge::default());
+    }
+
+    #[test]
+    fn parses_per_act_skip_and_smith_threshold() {
+        let n = RunNudge::parse(Some("skip=4.3,3.6,4.4; smith_hp=0.5"));
+        assert_eq!(n.skip_bias, Some([4.3, 3.6, 4.4]));
+        assert_eq!(n.smith_hp, Some(0.5));
+        assert_eq!(RunNudge::parse(Some("skip=2")).skip_bias, Some([2.0; 3]));
+    }
+
+    #[test]
+    #[should_panic(expected = "mis-sized")]
+    fn two_skip_values_panic() {
+        let _ = RunNudge::parse(Some("skip=1,2"));
+    }
+
+    #[test]
+    #[should_panic(expected = "not a number")]
+    fn a_typo_panics_instead_of_running_the_baseline() {
+        let _ = RunNudge::parse(Some("smith_hp=half"));
     }
 }

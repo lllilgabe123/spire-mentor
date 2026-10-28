@@ -1137,6 +1137,7 @@ struct MctsKnobOverrides {
     tt_hash_v2: Option<bool>,
     net_expand_order: Option<bool>,
     fpu_reduction: Option<f32>,
+    root_sequential_halving: Option<bool>,
     effective_incoming: Option<bool>,
     removed_counts_forms: Option<bool>,
     win_hp_carry: Option<f32>,
@@ -1159,7 +1160,8 @@ const MCTS_OVERRIDE_KNOB_NAMES: &str = "chance_widening_c, chance_widening_alpha
     combat decisions, GH #830), tt_hash_v2 (bool: transposition key with the potion belt and \
     uid-free powers, GH #830), net_expand_order (true: order non-root expansions by the playout \
     net, GH #830 rung 4), fpu_reduction (f32: price an unexpanded action at parent_q - r instead \
-    of +inf), effective_incoming (true: heuristic playouts and proven-lost scoring read enemy \
+    of +inf), root_sequential_halving (true: allocate the root budget by Sequential Halving, \
+    UCT below), effective_incoming (true: heuristic playouts and proven-lost scoring read enemy \
     attacks at their displayed number, GH #830), removed_counts_forms (true: the loss band's \
     enemy-HP-removed term counts multi-form / reviving enemies' remaining forms, GH #830), \
     win_hp_carry / win_potion_carry (f32 in [0, 1]: how much of a won fight's end HP / held \
@@ -1250,6 +1252,9 @@ impl MctsKnobOverrides {
         if let Some(v) = self.fpu_reduction {
             config.fpu_reduction = Some(v);
         }
+        if let Some(v) = self.root_sequential_halving {
+            config.root_sequential_halving = v;
+        }
         if let Some(v) = self.effective_incoming {
             config.effective_incoming = v;
         }
@@ -1295,6 +1300,7 @@ impl MctsKnobOverrides {
             tt_hash_v2,
             net_expand_order,
             fpu_reduction,
+            root_sequential_halving,
             effective_incoming,
             removed_counts_forms,
             win_hp_carry,
@@ -1327,6 +1333,7 @@ impl MctsKnobOverrides {
             tt_hash_v2: tt_hash_v2.or(fallback.tt_hash_v2),
             net_expand_order: net_expand_order.or(fallback.net_expand_order),
             fpu_reduction: fpu_reduction.or(fallback.fpu_reduction),
+            root_sequential_halving: root_sequential_halving.or(fallback.root_sequential_halving),
             effective_incoming: effective_incoming.or(fallback.effective_incoming),
             removed_counts_forms: removed_counts_forms.or(fallback.removed_counts_forms),
             win_hp_carry: win_hp_carry.or(fallback.win_hp_carry),
@@ -1482,6 +1489,9 @@ fn parse_mcts_overrides(env_value: Option<&str>) -> MctsKnobOverrides {
             "tt_hash_v2" => out.tt_hash_v2 = Some(bool_of(key, val)),
             "net_expand_order" => out.net_expand_order = Some(bool_of(key, val)),
             "fpu_reduction" => out.fpu_reduction = Some(f32_of(key, val)),
+            "root_sequential_halving" => {
+                out.root_sequential_halving = Some(bool_of(key, val));
+            }
             "effective_incoming" => out.effective_incoming = Some(bool_of(key, val)),
             "removed_counts_forms" => out.removed_counts_forms = Some(bool_of(key, val)),
             "chance_closed_stops_widening" => {
@@ -3856,6 +3866,7 @@ mod tests {
             "leaf_playouts",
             "net_expand_order",
             "fpu_reduction",
+            "root_sequential_halving",
             "effective_incoming",
             "removed_counts_forms",
         ] {
@@ -4255,6 +4266,36 @@ mod tests {
         parse_mcts_overrides(Some("c_puct=2.5")).apply(&mut untouched);
         assert!(!untouched.net_expand_order);
         assert_eq!(untouched.fpu_reduction, None);
+    }
+
+    /// `root_sequential_halving` parses into its slot and `apply` writes that
+    /// field alone; unmentioned, the deployed UCT root allocation stays.
+    #[test]
+    fn mcts_knob_overrides_apply_root_sequential_halving() {
+        let parsed = parse_mcts_overrides(Some("root_sequential_halving=1"));
+        assert_eq!(parsed.root_sequential_halving, Some(true));
+
+        let deployed = mcts_config_for(
+            resolve_hidden_info(None),
+            1000,
+            7,
+            COMBAT_ROLLOUT_DEPTH,
+            MctsConfig::default().terminal_eval_mode,
+        );
+        assert!(
+            !deployed.root_sequential_halving,
+            "base dialect is UCT at the root"
+        );
+
+        let mut config = deployed;
+        parsed.apply(&mut config);
+        let mut expected = deployed;
+        expected.root_sequential_halving = true;
+        assert_eq!(format!("{config:?}"), format!("{expected:?}"));
+
+        let mut untouched = deployed;
+        parse_mcts_overrides(Some("c_puct=2.5")).apply(&mut untouched);
+        assert!(!untouched.root_sequential_halving);
     }
 
     /// `net_expand_order` is a bool knob: anything else fails loudly.

@@ -661,7 +661,7 @@ fn on_card_played_stub(state: &mut CombatState, card_uid: CardUid) {
 
 /// Fire enchantment `after_card_played` for a card whose effect has
 /// fully resolved. Marks first-play-only enchantments (Swift / Sown /
-/// Vigorous / Glam) as consumed and ticks Goopy's exhaust scaling.
+/// Vigorous / Glam) as consumed and ticks Goopy's amount.
 ///
 /// Python entry: `enchantments.py:184` — `after_card_played(card)`.
 pub fn dispatch_after_card_played(state: &mut CombatState, card_uid: CardUid) {
@@ -683,7 +683,10 @@ pub fn dispatch_after_card_played(state: &mut CombatState, card_uid: CardUid) {
 /// if card.has_enchantment(name): card.combat_vars[_used_key(name)] = 1`
 /// at `enchantments.py:184-194`.
 ///
-/// Pending (Wave 4+): Goopy exhaust scaling tick.
+/// **GH #952:** Goopy's amount grows by one per play (C# `Goopy.AfterCardPlayed`:
+/// `base.Amount++`), so each later play's [`enchant_block_additive`] reads the
+/// grown value. The deck copy's half (`DeckVersion.Enchantment.Amount++`) is
+/// folded back at `exit_combat` (sts2-content `run_bridge`).
 #[inline]
 fn after_card_played_stub(state: &mut CombatState, card_uid: CardUid) {
     let idx = (card_uid.get() as usize).saturating_sub(1);
@@ -704,6 +707,10 @@ fn after_card_played_stub(state: &mut CombatState, card_uid: CardUid) {
         bits |= SOWN_USED_BIT;
     }
     card.set_combat_var(VarKey::Generic, bits);
+    if card.has_enchantment(EnchantmentId::Goopy) {
+        let amount = card.enchantment(EnchantmentId::Goopy);
+        card.set_enchantment(EnchantmentId::Goopy, amount.saturating_add(1));
+    }
 }
 
 // ---------------------------------------------------------------------------

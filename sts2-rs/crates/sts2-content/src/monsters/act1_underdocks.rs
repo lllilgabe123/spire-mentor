@@ -1061,9 +1061,12 @@ pub fn create_gremlin_merc_ai() -> MonsterAi {
 fn haunted_ship_haunt_effect(state: &mut CombatState, _owner: sts2_core::CreatureUid) {
     use sts2_core::card_effects::PileKind;
     apply_power_to_player_via_legacy_surface(state, PowerKind::Weak, 3);
-    for _ in 0..5 {
-        let _ = super::super::cards::status::spawn_dazed(state, PileKind::Discard);
-    }
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        for _ in 0..5 {
+            let _ = super::super::cards::status::spawn_dazed(state, PileKind::Discard);
+        }
+    });
 }
 
 /// `HauntedShip` (v0.107.1) — HAUNT (initial) → SWIPE → STOMP → SWIPE → …
@@ -2000,7 +2003,8 @@ fn waterfall_giant_siphon_effect(state: &mut CombatState, owner: sts2_core::Crea
         15,
         10,
     );
-    state.creature_heal(owner, heal);
+    // `SiphonHeal * Players.Count` (WaterfallGiant.cs:267).
+    state.creature_heal(owner, heal * sts2_core::coop::player_count(state));
     sts2_core::card_effects::apply_power_to_creature(state, owner, PowerKind::SteamEruption, 3);
 }
 
@@ -2422,15 +2426,21 @@ fn soul_fysh_beckon_effect(state: &mut CombatState, _owner: sts2_core::CreatureU
     // Beckon in the wrong slot and left the `shuffle` cursor one read behind
     // C# for the rest of the combat, so the next reshuffle dealt a different
     // hand. Found by the Underdocks encounter sweep (GH #544).
-    crate::cards::status::spawn_beckon_into_draw_at_random(state);
-    crate::cards::status::spawn_beckon(state, sts2_core::card_effects::PileKind::Discard);
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        crate::cards::status::spawn_beckon_into_draw_at_random(state);
+        crate::cards::status::spawn_beckon(state, sts2_core::card_effects::PileKind::Discard);
+    });
 }
 
 /// SoulFysh GAZE_MOVE status leg: add 1 Beckon status card to Discard
 /// (alongside its 7-damage attack). Mirrors C# `SoulFysh.cs::GazeMove`
 /// `StatusIntent(GazeMoveAmount=1)` → one Beckon to the Discard pile.
 fn soul_fysh_gaze_effect(state: &mut CombatState, _owner: sts2_core::CreatureUid) {
-    crate::cards::status::spawn_beckon(state, sts2_core::card_effects::PileKind::Discard);
+    // Co-op: every player the move targets gets these cards.
+    sts2_core::coop::each_player(state, |state| {
+        crate::cards::status::spawn_beckon(state, sts2_core::card_effects::PileKind::Discard);
+    });
 }
 
 /// SoulFysh FADE_MOVE: become intangible — Intangible(2) to self. Mirrors

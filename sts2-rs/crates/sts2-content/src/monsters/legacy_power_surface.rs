@@ -68,11 +68,19 @@ fn push_new_player_power(state: &mut CombatState, kind: PowerKind, amount: i32) 
 /// Guards `amount <= 0`: this is the positive-only path used by debuffs like
 /// Weak / Vulnerable / Frail. For signed *stat* powers use
 /// [`apply_signed_power_to_player`]. Bead `sts2-rs-fad0f`.
+///
+/// Co-op: lands on every player the enemy turn reaches
+/// ([`sts2_core::coop::each_player`]).
 pub(crate) fn apply_power_to_player_via_legacy_surface(
     state: &mut CombatState,
     kind: PowerKind,
     amount: i32,
 ) {
+    sts2_core::coop::each_player(state, |state| apply_to_seated(state, kind, amount));
+}
+
+/// [`apply_power_to_player_via_legacy_surface`] for the seated player alone.
+fn apply_to_seated(state: &mut CombatState, kind: PowerKind, amount: i32) {
     if amount <= 0 {
         return;
     }
@@ -122,7 +130,15 @@ fn record_player_power_row(state: &mut CombatState, kind: PowerKind, amount: i32
 /// `card_effects::apply_signed_attr_power`) — the older merge left a dead
 /// 0-amount power behind, so the player carried one MORE power than C#
 /// (`powers.len` cs N vs rs N+1). Bead `sts2-rs-96y80`.
+///
+/// Co-op: lands on every player the enemy turn reaches
+/// ([`sts2_core::coop::each_player`]).
 pub(crate) fn apply_signed_power_to_player(state: &mut CombatState, kind: PowerKind, amount: i32) {
+    sts2_core::coop::each_player(state, |state| apply_signed_to_seated(state, kind, amount));
+}
+
+/// [`apply_signed_power_to_player`] for the seated player alone.
+fn apply_signed_to_seated(state: &mut CombatState, kind: PowerKind, amount: i32) {
     if amount == 0 {
         return;
     }

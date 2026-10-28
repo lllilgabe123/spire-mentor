@@ -27,9 +27,9 @@
 {"i": 26, "method": "POST", "route": "/api/live/action", "body": {"action": "end_turn", "args": {}}, "status": 200, "sha256": "786d25ab0843bc90ed49246cf7231315ce8c2f706e8f10ca63ba450a681043a1", "decision": "combat_play"}
 {"i": 27, "method": "POST", "route": "/api/live/action", "body": {"action": "play_card", "args": {"card_index": 0}}, "status": 200, "sha256": "aef6211a3ad1c05681abae54790d33607f630c3d3ba1068adb4629d9368b7ac5", "decision": "combat_play"}
 {"i": 28, "method": "POST", "route": "/api/live/autobattle/advance", "body": null, "status": 200, "sha256": "a9d4720b7cac2ac1398fef5c7a88e0015d4567c5157427b7f20764c44b7afc0c", "decision": "card_reward"}
-{"i": 29, "method": "POST", "route": "/api/live/ppo-policy", "body": null, "status": 200, "sha256": "caf77139ff76430148522dada4dc06c86081069e7eb743e895a034e5ad58f883", "decision": null}
+{"i": 29, "method": "POST", "route": "/api/live/ppo-policy", "body": null, "status": 200, "sha256": "ce8e8b2c5e11e70253e6c40184060b43a9a803967329811d36fd10ed91d09b84", "decision": null}
 {"i": 30, "method": "POST", "route": "/api/live/action", "body": {"action": "select_card_reward", "args": {"card_index": 0}}, "status": 200, "sha256": "3a8460518a4faeecfd99c9f56ceb781cfbaa0afb79cc84f7fd3fa3d58b4a80be", "decision": "map_select"}
-{"i": 31, "method": "GET", "route": "/api/live/autobattle/verdict", "body": null, "status": 200, "sha256": "958f9971cff235bba299b7436e7649a010ac749a43fd32a9593a69a03ffdd5e0", "decision": null}
+{"i": 31, "method": "GET", "route": "/api/live/autobattle/verdict", "body": null, "status": 200, "sha256": "77d2d82dbb06e6f860ca0d42ed66f97e5a7ad9dc48983bbaca16a5e73bc7ef7c", "decision": null}
 {"i": 32, "method": "POST", "route": "/api/live/action", "body": {"action": "select_map_node", "args": {"col": 0, "row": 3}}, "status": 200, "sha256": "e02fbd4ffdf370c444ccaeb98ab2a847a1536d248f90dc6c56a644f470b3759a", "decision": "combat_play"}
 {"i": 33, "method": "POST", "route": "/api/live/action", "body": {"action": "use_potion", "args": {"potion_index": 0, "target_index": 0}}, "status": 200, "sha256": "7c5307332345bb562b24a991da44f52ebb828b28b80386c2cd7d9143dcf62481", "decision": "combat_play"}
 {"i": 34, "method": "POST", "route": "/api/live/action", "body": {"action": "play_card", "args": {"card_index": 0, "target_index": 0}}, "status": 200, "sha256": "e4c21b1709343a48570610bf59449f0951796ad66fc4f760f1bb06328488c93f", "decision": "combat_play"}
@@ -44,7 +44,7 @@
 {"i": 43, "method": "POST", "route": "/api/live/action", "body": {"action": "select_map_node", "args": {"col": 1, "row": 4}}, "status": 200, "sha256": "d18bd1fb72d41a7ef393aa8f6435e37c0cb3c5a3db23e2e1ab74ef65dcd9d61d", "decision": "shop"}
 {"i": 44, "method": "POST", "route": "/api/live/hint", "body": {"config": {"sims": 48, "seed": 1, "threads": 1, "c_puct": 2.5, "depth": 200, "hidden_info": "beliefdraw", "draw_widening_c": 2.0}}, "status": 409, "sha256": "9928f6020351dc38ef9a45fbe0e49372ffe5adbadc3ec296e25a9e7a54ac74a6", "decision": null}
 {"i": 45, "method": "POST", "route": "/api/live/choice-ranker", "body": {"config": {"sims": 48, "seed": 1, "threads": 1, "c_puct": 2.5, "depth": 200, "hidden_info": "beliefdraw", "draw_widening_c": 2.0}}, "status": 409, "sha256": "b0223270796e760b97a371ba0d2e2633cefa92e80eb34768463bbb36cb54e1ce", "decision": null}
-{"i": 46, "method": "POST", "route": "/api/live/ppo-policy", "body": null, "status": 200, "sha256": "b8eaae29b975d1534e9f6130be2a0723416c448e5379450a1413152e4f656f84", "decision": null}
+{"i": 46, "method": "POST", "route": "/api/live/ppo-policy", "body": null, "status": 200, "sha256": "6e296eb16b8b5345170b2dffc6233f203860d670d2ef34a83f903525bcea586f", "decision": null}
 {"i": 47, "method": "POST", "route": "/api/live/action", "body": {"action": "buy_card", "args": {"card_index": 0}}, "status": 200, "sha256": "546367dcd220abc769349ba54dfe2cb3008e50e51b7481082f0bb642827b858b", "decision": "shop"}
 {"i": 48, "method": "POST", "route": "/api/live/last-move-regret", "body": {"config": {"sims": 24, "seed": 2, "threads": 1, "c_puct": 2.5, "depth": 200, "hidden_info": "beliefdraw", "draw_widening_c": 2.0}}, "status": 409, "sha256": "80b5d4a785c10a39b09785b5f26b69b9ee284728b365c2a82403c00f08f9945f", "decision": null}
 {"i": 49, "method": "POST", "route": "/api/live/action", "body": {"action": "buy_potion", "args": {"potion_index": 2}}, "status": 200, "sha256": "b70abfa7c7f197e2caa0136fc2c9759cf3bf5a425a558e78ce65f5f043ec82e7", "decision": "shop"}
@@ -61,10 +61,10 @@
 {"i": 60, "method": "POST", "route": "/api/live/autobattle/step", "body": null, "status": 200, "sha256": "61a5b70c03050bc27aad1c0fc2da7040f53c6ebfda6fa214095795439869c856", "decision": "combat_play"}
 {"i": 61, "method": "POST", "route": "/api/live/ppo-policy", "body": null, "status": 409, "sha256": "adeba819d2d6c74b673641fcf1229f97096dca6243062b5ba7025e4d5ae7bffb", "decision": null}
 {"i": 62, "method": "POST", "route": "/api/live/action", "body": {"action": "end_turn", "args": {}}, "status": 200, "sha256": "3e8c3eda85a9443a30255415552c0770906bb8557450b8eeb37ccb08132c86ba", "decision": "combat_play"}
-{"i": 63, "method": "GET", "route": "/api/live/timeline", "body": null, "status": 200, "sha256": "975a6d911632d3927c745babc2dcdf64ee742f40ea4643cc3e003f60f3b14cc0", "decision": null}
+{"i": 63, "method": "GET", "route": "/api/live/timeline", "body": null, "status": 200, "sha256": "e5075618b696991e1daecc474e0edc771cd3fb3966d2b0968109dce0ba0066d6", "decision": null}
 {"i": 64, "method": "POST", "route": "/api/live/autobattle/step", "body": null, "status": 200, "sha256": "7eed61c1d30a1502bfc3b8050bc4b0d6fad736a9f33c84ad585826fa9f1d80c8", "decision": "combat_play"}
 {"i": 65, "method": "POST", "route": "/api/live/action", "body": {"action": "play_card", "args": {"card_index": 0}}, "status": 200, "sha256": "02ed9f9de7024708870704a31b1ae91b3973a1ee84c327a2b1bcf148aea97b25", "decision": "combat_play"}
-{"i": 66, "method": "GET", "route": "/api/live/timeline", "body": null, "status": 200, "sha256": "f27a4dc0b1827a6553b813f320ad7027e279f9a34f22f0f67c2f021eed0f8445", "decision": null}
+{"i": 66, "method": "GET", "route": "/api/live/timeline", "body": null, "status": 200, "sha256": "f12e4189d547e693b7fa0d6aba15e7a046ac74927304ff7f32143d9c43643429", "decision": null}
 {"i": 67, "method": "POST", "route": "/api/live/seek", "body": {"node_id": 55}, "status": 200, "sha256": "86d5709b2a784141ff76033971f5bc898a52e49fe3bd70fd83ce05a556c8f730", "decision": "combat_play"}
 {"i": 68, "method": "POST", "route": "/api/live/autobattle/step", "body": null, "status": 200, "sha256": "932056c909becac4f8a002f24f269cf75139f9cf0890eda7d7731ad4b7ae3b15", "decision": "combat_play"}
 {"i": 69, "method": "POST", "route": "/api/live/action", "body": {"action": "play_card", "args": {"card_index": 0, "target_index": 0}}, "status": 200, "sha256": "80a83e6316501a5dcfc8c876b19f11ca79cc981c253f1f660fdff01d1dc74e2a", "decision": "combat_play"}
@@ -81,8 +81,8 @@
 {"i": 80, "method": "POST", "route": "/api/live/auto-action", "body": null, "status": 409, "sha256": "8aeb877b1b3453e271ea7e45e2781190d904c81c3bcbd9d9f63e051c0f393e7b", "decision": null}
 {"i": 81, "method": "GET", "route": "/api/live/deck-analysis", "body": null, "status": 200, "sha256": "1695ceb6e7ae9e59090c3ab7327cf87c1aaf9a974f70fe661dedec30b2aebe6f", "decision": null}
 {"i": 82, "method": "POST", "route": "/api/live/ppo-policy", "body": null, "status": 409, "sha256": "adeba819d2d6c74b673641fcf1229f97096dca6243062b5ba7025e4d5ae7bffb", "decision": null}
-{"i": 83, "method": "POST", "route": "/api/live/wpa-review", "body": {"config": {"top_k": 1}}, "status": 200, "sha256": "886fd6b1d8eabb4cebae1cff03f0ed5323384d38ef410e9a5add04d2ea75af91", "decision": null}
-{"i": 84, "method": "POST", "route": "/api/live/wpa-verify", "body": {"node_id": 47, "max_steps": 12, "max_seconds": 3600.0}, "status": 200, "sha256": "2194045b5d9677166e1c6c4052599c058fbe2bbefc7751200894f0f43a920e05", "decision": null}
+{"i": 83, "method": "POST", "route": "/api/live/wpa-review", "body": {"config": {"top_k": 1}}, "status": 200, "sha256": "14ab1ffefacf85baf82a7188e220a5929e15c296f790b98a3f46270f4314be72", "decision": null}
+{"i": 84, "method": "POST", "route": "/api/live/wpa-verify", "body": {"node_id": 0, "max_steps": 12, "max_seconds": 3600.0}, "status": 200, "sha256": "4cb2e3643894ecc9afe461625d9c0330b57a6e120b6f8bea045c1ab25234a337", "decision": null}
 {"i": 85, "method": "POST", "route": "/api/live/action", "body": {"action": "play_card", "args": {"card_index": 0, "target_index": 1}}, "status": 200, "sha256": "4791fee7ee69c6d99ea5c83b2f5f18b020b4bf44a777d1c98af0af9c60f6b03e", "decision": "combat_play"}
 {"i": 86, "method": "POST", "route": "/api/live/action", "body": {"action": "play_card", "args": {"card_index": 0, "target_index": 1}}, "status": 200, "sha256": "a6d99eb480b558ac8b5a493120e77961e079fdbc55713700537ae553e3b98fb8", "decision": "combat_play"}
 {"i": 87, "method": "POST", "route": "/api/live/action", "body": {"action": "end_turn", "args": {}}, "status": 200, "sha256": "6ae63327a901174d45d15b8a196f81774ca35a5ba401e1150949106e338dfdf8", "decision": "combat_play"}
@@ -99,7 +99,7 @@
 {"i": 98, "method": "POST", "route": "/api/live/action", "body": {"action": "end_turn", "args": {}}, "status": 200, "sha256": "6adf9e891a600cd5eac9b53d3ff6b114f49233aac964e9c74871ad37ec8d2bc8", "decision": "combat_play"}
 {"i": 99, "method": "POST", "route": "/api/live/save", "body": {"name": "golden mid"}, "status": 200, "sha256": "2e7ae27263d081cc85223d3655ce2e252fa96e06b39c10228e1a591bf6ab92c7", "decision": null}
 {"i": 100, "method": "POST", "route": "/api/live/ppo-policy", "body": null, "status": 409, "sha256": "adeba819d2d6c74b673641fcf1229f97096dca6243062b5ba7025e4d5ae7bffb", "decision": null}
-{"i": 101, "method": "POST", "route": "/api/live/wpa-review", "body": {"config": {"top_k": 3}}, "status": 200, "sha256": "0c3c4b9a7c2e1c363498cc45e65417ffda47809627a7887000ea128d239def97", "decision": null}
+{"i": 101, "method": "POST", "route": "/api/live/wpa-review", "body": {"config": {"top_k": 3}}, "status": 200, "sha256": "74a215116aa1a45b5dba0bbc1b3c2e88414b812facf052f69c5c6452bc2b7d19", "decision": null}
 {"i": 102, "method": "POST", "route": "/api/live/action", "body": {"action": "play_card", "args": {"card_index": 0, "target_index": 1}}, "status": 200, "sha256": "6ba499fbc371f4322096afac81827f2f05946de697d8dfc6316527012396b13a", "decision": "card_reward"}
 {"i": 103, "method": "GET", "route": "/api/saves", "body": null, "status": 200, "sha256": "5d58cdc3cf85d4ff0c152f3da462f86b5180c078845359f0306cefc930b062d7", "decision": null}
 {"i": 104, "method": "POST", "route": "/api/live/action", "body": {"action": "select_card_reward", "args": {"card_index": 0}}, "status": 200, "sha256": "593b3af01a77abca799a99e587c43a78bdb5d2577873d995c22ec282f49574ea", "decision": "map_select"}
@@ -124,19 +124,19 @@
 {"i": 123, "method": "POST", "route": "/api/live/run-mode-step", "body": null, "status": 200, "sha256": "bfa367ba61b8921cdcbb316a485a0a507fd212e96e1cd1c4ebdd7c63b4a2a533", "decision": "game_over"}
 {"i": 124, "method": "POST", "route": "/api/live/quit", "body": null, "status": 200, "sha256": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93", "decision": null}
 {"i": 125, "method": "GET", "route": "/api/runs", "body": null, "status": 200, "sha256": "d6110096a127b7eee10f51590e33666659472a30efc9508f9e97d3e679002b0a", "decision": null}
-{"i": 126, "method": "GET", "route": "/api/runs/stat?path=<work>/logs/20260101_000000_Ironclad_1.jsonl", "body": null, "status": 200, "sha256": "d606a6e09e6591cda0061acda3cc31a0e13e9de2c5b00758220e223bdd12740e", "decision": null}
+{"i": 126, "method": "GET", "route": "/api/runs/stat?path=<work>/logs/20260101_000000_Ironclad_1.jsonl", "body": null, "status": 200, "sha256": "afbce9974c61a6e5369debcd16c2cea2036bba3c94dc9fe6c9add28f0ff19553", "decision": null}
 {"i": 127, "method": "POST", "route": "/api/load", "body": {"path": "<work>/logs/20260101_000000_Ironclad_1.jsonl"}, "status": 200, "sha256": "6fdc666fecf1479f5897caa4aa40e7ce446c7ea7399b338472f337c679994a27", "decision": null}
 {"i": 128, "method": "GET", "route": "/api/timeline", "body": null, "status": 200, "sha256": "8f9ae6c4659e7cf7d5293f47c9ce252670a24bef6c80e06752d4eeb5dcb8aa48", "decision": null}
 {"i": 129, "method": "GET", "route": "/api/map", "body": null, "status": 200, "sha256": "a269c2aa49d554ecbe7ebc1db9c12dda4b0b37cd5ef4e5965baaac39c71e4dfb", "decision": null}
 {"i": 130, "method": "GET", "route": "/api/timeline", "body": null, "status": 200, "sha256": "8f9ae6c4659e7cf7d5293f47c9ce252670a24bef6c80e06752d4eeb5dcb8aa48", "decision": null}
-{"i": 131, "method": "GET", "route": "/api/step/0", "body": null, "status": 200, "sha256": "4cf5011c69d4ae9cadbd1b4ecb1910e9157267bfd989b42f1addc73267f2e152", "decision": null}
+{"i": 131, "method": "GET", "route": "/api/step/0", "body": null, "status": 200, "sha256": "04b6a3c7ce334ee1af408a05937e71bcc1e4033b40790bb4bb6be2a05de6fca4", "decision": null}
 {"i": 132, "method": "GET", "route": "/api/step/2", "body": null, "status": 200, "sha256": "9f0e90e16bed1793e1e0310744ad41d3a7b6296b74358ef1df35957391902937", "decision": null}
 {"i": 133, "method": "GET", "route": "/api/step/45", "body": null, "status": 200, "sha256": "159b7cf29030e30b8d1402aafab251d99c602383f6bf426fc9bcd4783399d1a9", "decision": null}
 {"i": 134, "method": "GET", "route": "/api/step/90", "body": null, "status": 200, "sha256": "34bd52f45835f1026d30074388ba47f09219fc6b377d388e6e15418bdacc1a2d", "decision": null}
 {"i": 135, "method": "GET", "route": "/api/step/90/deck-analysis", "body": null, "status": 200, "sha256": "99115fc99ac325b5f7a63a15b5e4443bfa73c88ecbe883d5c279de3cbf23b33c", "decision": null}
 {"i": 136, "method": "GET", "route": "/api/step/96", "body": null, "status": 404, "sha256": "15167049f4fbc4f8b2d58dbb4e84e3c6b9866aa284400f446b5885a06d320812", "decision": null}
 {"i": 137, "method": "GET", "route": "/api/deck/trend", "body": null, "status": 200, "sha256": "434c7c6721ffcf33320f62f8b8b61e6b01f185904fda9a613bc7dc4f8bd90afe", "decision": null}
-{"i": 138, "method": "POST", "route": "/api/wpa-review", "body": {"config": {"top_k": 3}}, "status": 200, "sha256": "b5d88a428f8bcff87b49605a0dba79bf6d4ad5b9a3bc29ca8a26ad4431879e9b", "decision": null}
+{"i": 138, "method": "POST", "route": "/api/wpa-review", "body": {"config": {"top_k": 3}}, "status": 200, "sha256": "d4e2a3a076062c30d1e02f20e600e706369d9d78087b812f56017c60acaec4a3", "decision": null}
 {"i": 139, "method": "POST", "route": "/api/recommend", "body": {"idx": 2, "config": {"sims": 48, "seed": 1, "threads": 1, "c_puct": 2.5, "depth": 200, "hidden_info": "beliefdraw", "draw_widening_c": 2.0}}, "status": 200, "sha256": "df7b281ddfc0b22db261b22df9ab99a7578c9787ac723aab6fac84fd323e1399", "decision": null}
 {"i": 140, "method": "POST", "route": "/api/search_tree", "body": {"idx": 2, "config": {"sims": 48, "seed": 1, "threads": 1, "c_puct": 2.5, "depth": 200, "hidden_info": "beliefdraw", "draw_widening_c": 2.0}}, "status": 200, "sha256": "db129006a0c0c5dd69d205809ead805a513cad1c52ac4ac49fcd94784835d192", "decision": null}
 {"i": 141, "method": "POST", "route": "/api/search_tree", "body": {"idx": 0, "config": {"sims": 48, "seed": 1, "threads": 1, "c_puct": 2.5, "depth": 200, "hidden_info": "beliefdraw", "draw_widening_c": 2.0}}, "status": 409, "sha256": "d9b6fdf30ebb8873230c241c9b3a15416deb4f07a623855c585aa4a13ce2170a", "decision": null}
@@ -144,5 +144,5 @@
 {"i": 143, "method": "GET", "route": "/api/mcts-runs", "body": null, "status": 200, "sha256": "efd88b03d7ab9a75d3925f35ab6b4ca23a64e77fe409e8cdefad9a9c6a16b98d", "decision": null}
 {"i": 144, "method": "GET", "route": "/api/mcts-runs/aggregate", "body": null, "status": 200, "sha256": "c52bf62cb9c63d86f30f5aa518ee319e5377a53550d594655f11be66a27998fe", "decision": null}
 {"i": 145, "method": "POST", "route": "/api/live/from_replay", "body": {"idx": 2}, "status": 200, "sha256": "747abd760de421e713e700586c88acbda9b6f7099f2ac8e8e6d4719bb940909d", "decision": "combat_play"}
-{"i": 146, "method": "GET", "route": "/api/live/timeline", "body": null, "status": 200, "sha256": "8f28af5ca502e9ddccc66a748e9ad2059f0ebd3bc173721a66e336b009b6780c", "decision": null}
+{"i": 146, "method": "GET", "route": "/api/live/timeline", "body": null, "status": 200, "sha256": "b6b84b7c748f039c7aa8057805b6ebaa5bccd0475bad73d37fdc9eb7153f6196", "decision": null}
 {"i": 147, "method": "GET", "route": "/api/live/state", "body": null, "status": 200, "sha256": "747abd760de421e713e700586c88acbda9b6f7099f2ac8e8e6d4719bb940909d", "decision": "combat_play"}

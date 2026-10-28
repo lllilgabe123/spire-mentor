@@ -397,7 +397,16 @@ fn ppo_panel_values_and_wpa_with_the_champion() {
     )
     .unwrap_err();
     assert_eq!(e, 404);
-    let leaf = tl["active_leaf"].as_u64().unwrap();
+    // A node with no follow-up move. Not `active_leaf`: when the turning
+    // point verified above IS the active leaf, the two continuation branches
+    // it adds hang off it, so it is no longer childless.
+    let leaf = tl["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["child_ids"].as_array().is_some_and(Vec::is_empty))
+        .and_then(|n| n["id"].as_u64())
+        .expect("a childless node");
     let e = wb
         .call("POST", "/api/live/wpa-verify", &json!({"node_id": leaf}))
         .unwrap_err();

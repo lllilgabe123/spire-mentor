@@ -383,6 +383,11 @@ def _translate_card(card: dict[str, Any], index: int, *, hand: bool = False) -> 
         stacks = card.get("affliction_stacks", card.get("affliction_amount"))
         if isinstance(stacks, int):
             out["affliction_stacks"] = stacks
+    # Per-instance combat scratch the mod disclosed (``combat_vars``, the
+    # engine's ``VarKey`` wire names): forwarded for ``sts2_hint.adapter``.
+    combat_vars = card.get("combat_vars")
+    if isinstance(combat_vars, dict) and combat_vars:
+        out["combat_vars"] = dict(combat_vars)
     if hand:
         kws = _keywords_for_hand_card(card)
         if kws:
@@ -515,6 +520,11 @@ def _translate_enemy(enemy: dict[str, Any], index: int) -> dict[str, Any]:
     curse_counter = enemy.get("curse_of_knowledge_counter")
     if isinstance(curse_counter, int) and not isinstance(curse_counter, bool):
         out["curse_of_knowledge_counter"] = curse_counter
+    # C# ``Creature.CombatId`` (newer mods): what a combat-log row names its
+    # target by, so a co-op replay can find it (``coop_replay``).
+    combat_id = enemy.get("combat_id")
+    if isinstance(combat_id, int) and not isinstance(combat_id, bool):
+        out["combat_id"] = combat_id
     return out
 
 
@@ -723,9 +733,31 @@ def to_headless_combat_play(state: dict[str, Any]) -> dict[str, Any]:
                 hand=ally_hand,
                 ended_turn=bool(a.get("ended_turn")),
             )
+            # The rest of the seat (newer mods), for replaying a recorded fight
+            # as a whole co-op fight: piles numbered after the hand, relics,
+            # stars. Absent on older mods, which leaves the advisor's board as
+            # it was.
+            for key in ("draw_pile", "discard_pile", "exhaust_pile", "play_pile"):
+                cards = (a.get(key) or {}).get("cards")
+                if isinstance(cards, list):
+                    ally[key], next_idx = _translate_pile(cards, next_idx)
+            if isinstance(a.get("relics"), list):
+                ally["relics"] = [_translate_relic(r) for r in a["relics"]]
+            if isinstance(a.get("stars"), int):
+                ally["stars"] = a["stars"]
+            if isinstance(a.get("potions"), list):
+                ally["potions"] = a["potions"]
+        if a.get("net_id") is not None:
+            ally["net_id"] = str(a["net_id"])
         allies.append(ally)
     if allies:
         out["allies"] = allies
+        # Who we are on the combat log's card-play rows (``owner``): the key a
+        # recorded fight is replayed seat by seat with (``coop_replay``).
+        if player.get("net_id") is not None:
+            out["net_id"] = str(player["net_id"])
+        if isinstance(player.get("seat_index"), int):
+            out["seat_index"] = player["seat_index"]
 
     # The run's RNG position, from the bridge envelope
     # (``SimStateExtractor.ApplyEnvelope``): the once-hashed master seed every
@@ -747,6 +779,17 @@ def to_headless_combat_play(state: dict[str, Any]) -> dict[str, Any]:
         and rng["counters"]
     ):
         out["rng"] = {"run_seed": rng["run_seed"], "counters": rng["counters"]}
+    # Co-op: the same block under its own key (never ``rng``: live, the
+    # teammates draw from the shared streams between our decisions), for a
+    # replay that starts at this board (``coop_replay``).
+    coop_rng = state.get("coop_rng")
+    if (
+        isinstance(coop_rng, dict)
+        and isinstance(coop_rng.get("run_seed"), int)
+        and isinstance(coop_rng.get("counters"), dict)
+        and coop_rng["counters"]
+    ):
+        out["coop_rng"] = {"run_seed": coop_rng["run_seed"], "counters": coop_rng["counters"]}
 
     # Regent stars (headless emits a top-level ``stars``; the bridge carries
     # it on ``player`` since the 2026-08-02 dialect audit, deploy-pending).

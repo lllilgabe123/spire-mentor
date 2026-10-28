@@ -360,6 +360,10 @@ class WorkbenchRunLogger:
         #: and the death autopsy (built after the run end closed it) is
         #: appended to it.
         self._closed_log: GameLogger | None = None
+        #: Combat-log rows of decisions that wrote no ``state`` line (a
+        #: repeated board): they ride on the next one, so the rows of a fight
+        #: stay complete (``coop_replay`` replays plays from them).
+        self._pending_rows: list[dict[str, Any]] = []
         self._lock = threading.RLock()
 
     @property
@@ -439,6 +443,7 @@ class WorkbenchRunLogger:
                 return None
             sig = self._signature(msg)
             if sig == self._last_sig:
+                self._pending_rows.extend(msg.get("combat_log") or [])
                 return None
             if advice_for == "combat_action":
                 state = to_headless_combat_play({**msg, "type": "combat_action"})
@@ -449,6 +454,7 @@ class WorkbenchRunLogger:
             else:
                 builder = _BUILDERS.get(advice_for)
                 if builder is None:
+                    self._pending_rows.extend(msg.get("combat_log") or [])
                     return None
                 state = builder(msg)
             # The game's own combat-log rows for this decision, as the mod sent
@@ -458,7 +464,8 @@ class WorkbenchRunLogger:
             # formatter a simulated run uses. Also stamp the character id: the
             # rows that name no creature (draws, generated cards, potions) need
             # it to say "The Ironclad" rather than "Player".
-            rows = msg.get("combat_log") or []
+            rows = self._pending_rows + list(msg.get("combat_log") or [])
+            self._pending_rows = []
             if rows:
                 state["combat_log_raw"] = list(rows)
             character = (msg.get("run_state") or {}).get("character")
