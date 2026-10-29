@@ -1052,6 +1052,9 @@ def compute_screen_advice(
             # always render, so degrade to the unranked shape.
             logger.warning("run-policy inference failed for %s: %s", advice_for, exc)
             return _unranked(state, f"{advice_for}: run-policy inference failed ({exc})")
+    # Personal build: never take Fight Me in co-op (realgame_wishlist.COOP_BANNED).
+    if advice_for in ("card_reward", "shop", "card_bundle"):
+        probs = realgame_wishlist.coop_veto(state, decision.labels, list(probs))
 
     def _option_index(response: dict[str, Any], fallback: int) -> int:
         # card_reward answers with a bare `index`; card_select with an

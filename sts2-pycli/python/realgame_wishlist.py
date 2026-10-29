@@ -99,7 +99,34 @@ def ranked_pool(state: dict[str, Any], character: str, policy: Any,
     # The pick head scores cards one at a time; it does not see Bulk Up
     # switching off an orb deck, so leave those out of the list.
     banned = ORB_SLOT_LOSS if orb_cards(state) >= ORB_DECK_MIN else set()
+    if is_coop(state):
+        banned = banned | COOP_BANNED
     return [r for r in rows if r[2] > skip and r[0] not in banned]
+
+
+#: Cards never to take in co-op: teammates hate Fight Me (user rule,
+#: 2026-10-29). Kept out of the wishlist, the give tips and the card-reward
+#: and shop picks (`coop_veto`).
+COOP_BANNED = {"FIGHT_ME"}
+
+
+def is_coop(state: dict[str, Any]) -> bool:
+    return int(state.get("player_count") or 1) >= 2
+
+
+def coop_veto(state: dict[str, Any], labels: list[str], probs: list[float]) -> list[float]:
+    """``probs`` with every co-op-banned card's option set to 0 and the rest
+    renormalised (unchanged outside co-op, or when nothing else is left)."""
+    if not is_coop(state):
+        return probs
+    names = {_name(cid).lower() for cid in COOP_BANNED}
+    # A shop's "remove Fight Me" stays allowed: only taking one is vetoed.
+    out = [0.0 if any(n in str(lbl).lower() for n in names) and "remove" not in str(lbl).lower() else p
+           for lbl, p in zip(labels, probs)]
+    total = sum(out)
+    if total <= 0 or len(out) != len(probs):
+        return probs
+    return [p / total for p in out]
 
 
 def _name(cid: str) -> str:
@@ -186,30 +213,11 @@ def ranked_relics(state: dict[str, Any], character: str, policy: Any) -> dict[st
     return out
 
 
-def timing(state: dict[str, Any]) -> str:
-    """When a card or relic you add yourself matches what the game could
-    have dropped here. Rewards follow the room you are in: normal fights
-    give cards (Rares are rare there), elites a relic and better cards, the
-    boss a Rare card, chests a relic, the merchant anything."""
-    room = str(state.get("room_type") or "")
-    kind = str(state.get("type") or "")
-    if kind == "shop" or room == "Shop":
-        return "Now fits: any card or relic (shop)"
-    if room == "Elite":
-        return "Now fits: a relic + a card, Rare OK (elite reward)"
-    if room == "Boss":
-        return "Now fits: a Rare card (boss reward)"
-    if room == "Treasure":
-        return "Now fits: one relic (chest)"
-    if room == "Monster" and kind in ("card_reward", "combat_rewards", "rewards"):
-        return "Now fits: a Common/Uncommon card (fight reward)"
-    return "Natural times: cards after a fight (Rare after elite/boss) · relics after an elite, chest or shop"
-
-
-#: Four cards to add at the start of a run, per character: the best package
-#: of the A10 full-run test (E:\SpireMentorTraining\abtests\start_runs.py,
-#: 150 seeds each, played by the shipped AI, 2026-10-27), with its win rate
-#: and the no-extra-cards baseline on the same seeds.
+#: The cards to give yourself over a run, per character: the best package
+#: of the A10 full-run test (abtests/start_runs.py in the training folder,
+#: 150 seeds each, played by the shipped AI, 2026-10-27, cards added at the
+#: start), with its win rate and the no-extra-cards baseline on the same
+#: seeds. `give_now` hands them out one per reward that could drop them.
 START_PACKAGES = {
     "ironclad": (["DOMINATE", "FIGHT_ME", "COLOSSUS", "BATTLE_TRANCE"], 40, 13),
     "silent": (["AFTERIMAGE", "BOUNCING_FLASK", "NOXIOUS_FUMES", "FOOTWORK"], 50, 9),
@@ -219,7 +227,8 @@ START_PACKAGES = {
 }
 
 #: The relic that won the most fights per character in the relic test
-#: (abtests/relic_confirmed.json).
+#: (abtests/relic_confirmed.json). Sai and Snecko Eye are Ancient relics:
+#: only an act-start Ancient offers them.
 START_RELICS = {
     "ironclad": "LIZARD_TAIL",
     "silent": "SAI",
@@ -228,7 +237,39 @@ START_RELICS = {
     "regent": "LIZARD_TAIL",
 }
 
-NEXT_GIVE = "Next give: at the next reward screen (after a fight), chest or shop"
+#: What each reward can really hand out: (card rarities, relic rarities,
+#: what the give replaces). One card and at most one relic per reward.
+MOMENTS = {
+    "fight": (("Common", "Uncommon"), (), "instead of this fight's card"),
+    "elite": (("Common", "Uncommon", "Rare"), ("Common", "Uncommon", "Rare"),
+              "instead of this elite's card and relic"),
+    "boss": (("Rare",), (), "instead of this boss's card"),
+    "chest": ((), ("Common", "Uncommon", "Rare"), "instead of the chest's relic"),
+    "shop": (("Common", "Uncommon", "Rare"), ("Common", "Uncommon", "Rare", "Shop"), "as if bought here"),
+    "ancient": ((), ("Ancient",), "instead of the Ancient's offer"),
+}
+
+#: Where a card of each rarity can come from, for the "next give" line,
+#: soonest first.
+WHERE = {
+    "Common": "after a normal fight",
+    "Uncommon": "after a normal fight",
+    "Rare": "after an elite or boss, or at a shop",
+}
+
+#: The same for relics (bosses give none).
+RELIC_WHERE = {
+    "Common": "after an elite, from a chest, or at a shop",
+    "Uncommon": "after an elite, from a chest, or at a shop",
+    "Rare": "after an elite, from a chest, or at a shop",
+    "Shop": "at a shop",
+    "Ancient": "at the next act-start Ancient",
+}
+
+#: (seed, act, floor) -> the give already suggested at that reward, so one
+#: reward hands out one card even across its two screens (reward list,
+#: then card pick) and after you have typed it.
+_GIVEN: dict[tuple[str, int, int], tuple[str | None, str | None]] = {}
 
 
 def _card_cmd(cid: str) -> str:
@@ -237,64 +278,92 @@ def _card_cmd(cid: str) -> str:
     return f"card {cid} Deck"
 
 
-def give_now(state: dict[str, Any], character: str,
-             rows: list[tuple[str, str, float]] | None,
-             relics: dict[str, list[str]]) -> list[str] | None:
-    """Solo only: the card (and relic) to add yourself right now, with the
-    console command to type, or when the next one is due.
-
-    The game's `card` and `relic` commands are networked: in co-op they
-    would change every player's game, so this says nothing there.
-
-    Timing follows the run: the tested starting package on floor 1, then one
-    card at each reward the game hands out (fight: Common/Uncommon, elite: any
-    rarity plus a relic, boss: Rare, chest: a relic, shop: any card)."""
-    if int(state.get("player_count") or 1) >= 2:
-        return None
-    key = character.lower()
-    deck = {str(c.get("id") or "").upper()
-            for c in (state.get("run_state") or {}).get("master_deck") or [] if isinstance(c, dict)}
-    act, floor = int(state.get("act") or 0), int(state.get("floor") or 0)
-    pkg = START_PACKAGES.get(key)
-    if pkg and act <= 1 and floor <= 1:
-        cards, won, base = pkg
-        todo = [c for c in cards if c not in deck]
-        relic = START_RELICS.get(key)
-        if relic and relic in _owned_relics(state):
-            relic = None
-        if todo or relic:
-            cmds = [_card_cmd(c) for c in todo] + ([f"relic add {relic}"] if relic else [])
-            return [f"Give now (run start, A10 test {won}% wins vs {base}%): " + " · ".join(cmds)]
-
+def _moment(state: dict[str, Any]) -> str | None:
     room = str(state.get("room_type") or "")
     kind = str(state.get("type") or "")
-    rows = rows or []
-
-    def top(rarities: tuple[str, ...]) -> str | None:
-        return next((r[0] for r in rows if r[1] in rarities), None)
-
-    def top_relic(rarities: tuple[str, ...]) -> str | None:
-        return next((relics[r][0] for r in rarities if relics.get(r)), None)
-
     reward = kind in ("card_reward", "combat_rewards", "rewards")
     if kind == "shop" or room == "Shop":
-        card, relic = top(("Common", "Uncommon", "Rare")), None
-    elif room == "Elite" and reward:
-        card, relic = top(("Common", "Uncommon", "Rare")), top_relic(("Rare", "Uncommon", "Common"))
-    elif room == "Boss" and reward:
-        card, relic = top(("Rare",)), None
-    elif room == "Treasure":
-        card, relic = None, top_relic(("Rare", "Uncommon", "Common"))
-    elif room == "Monster" and reward:
-        card, relic = top(("Common", "Uncommon")), None
+        return "shop"
+    if room == "Treasure":
+        return "chest"
+    if realgame_ppo._ancient_boss_relic_decision(state) is not None:
+        return "ancient"
+    if reward:
+        return {"Monster": "fight", "Elite": "elite", "Boss": "boss"}.get(room)
+    return None
+
+
+def give_now(state: dict[str, Any], character: str,
+             rows: list[tuple[str, str, float]] | None,
+             relics: dict[str, list[str]]) -> list[str]:
+    """The card (and relic) to add yourself at this point of the map, with
+    the console command, or which one is next and where it can drop.
+
+    Only what this reward could really give: a normal fight a Common or
+    Uncommon card, an elite any card plus a relic, a boss a Rare card, a
+    chest a relic, a shop anything it sells, an act-start Ancient its own
+    relics. The tested package (`START_PACKAGES`) goes first, one card per
+    reward that fits its rarity; then the run AI's top pick for the deck.
+
+    Co-op too: the game sends a `card`/`relic` command to every player's game
+    but runs it for you only, so it changes your deck and nobody else's.
+    Fight Me is never suggested there (`COOP_BANNED`)."""
+    key = character.lower()
+    coop = is_coop(state)
+    banned = COOP_BANNED if coop else set()
+    deck = {str(c.get("id") or "").upper()
+            for c in (state.get("run_state") or {}).get("master_deck") or [] if isinstance(c, dict)}
+    owned = _owned_relics(state)
+    rarity = {cid: r for pool in _pools().values() for cid, r in pool}
+    relic_rarity = {r[0]: r[2] for r in _relic_pool()}
+    plan = [c for c in START_PACKAGES.get(key, ([],))[0] if c not in deck and c not in banned]
+    plan_relic = START_RELICS.get(key)
+    if plan_relic in owned:
+        plan_relic = None
+
+    def next_line(prefix: str) -> list[str]:
+        # The next planned give per kind of drop, soonest first: a Common or
+        # Uncommon at the next fight, a Rare at an elite/boss/shop, the relic
+        # wherever its rarity drops.
+        parts, said = [], set()
+        order = list(WHERE)
+        for c in sorted(plan, key=lambda c: order.index(rarity[c]) if rarity.get(c) in order else len(order)):
+            where = WHERE.get(rarity.get(c, ""), "at a reward")
+            if where not in said:
+                said.add(where)
+                parts.append(f"{_name(c)} {where}")
+        if plan_relic:
+            r = relic_rarity.get(plan_relic, "")
+            parts.append(f"{_name(plan_relic)} relic {RELIC_WHERE.get(r, 'at a reward')}")
+        if not parts:
+            return [f"{prefix}the AI's top pick at your next reward screen (after a fight), chest or shop"]
+        return [prefix + " · ".join(parts)]
+
+    moment = _moment(state)
+    if moment is None:
+        return next_line("Next give: ")
+    spot = (str(state.get("seed") or ""), int(state.get("act") or 0), int(state.get("floor") or 0))
+    card_rar, relic_rar, how = MOMENTS[moment]
+    if spot in _GIVEN:
+        card, relic = _GIVEN[spot]
+        if (card is None or card in deck) and (relic is None or relic in owned):
+            return next_line("Given for this reward. Next: ")
     else:
-        return [NEXT_GIVE]
+        card = next((c for c in plan if rarity.get(c) in card_rar), None)
+        if card is None:
+            card = next((r[0] for r in rows or [] if r[1] in card_rar and r[0] not in banned), None)
+        relic = plan_relic if relic_rarity.get(plan_relic or "") in relic_rar else None
+        if relic is None and relic_rar:
+            relic = next((relics[r][0] for r in relic_rar if relics.get(r)), None)
+        _GIVEN[spot] = (card, relic)
     parts = []
-    if card:
+    if card and card not in deck:
         parts.append(f"{_name(card)} → {_card_cmd(card)}")
-    if relic:
+    if relic and relic not in owned:
         parts.append(f"{_name(relic)} → relic add {relic}")
-    return ["Give now: " + " · ".join(parts)] if parts else [NEXT_GIVE]
+    if not parts:
+        return next_line("Next give: ")
+    return [f"Give now ({how}): " + " · ".join(parts)]
 
 
 def summary(state: dict[str, Any], character: str, policy: Any, per_rarity: int = 3) -> str | None:
@@ -339,11 +408,8 @@ def summary(state: dict[str, Any], character: str, policy: Any, per_rarity: int 
              for rarity, n in (("Common", 2), ("Uncommon", 2), ("Rare", 2), ("Shop", 1)) if relics.get(rarity)]
     if parts:
         lines_out.append("Relics: " + " · ".join(parts))
-    give = give_now(state, character, rows, relics)
-    if give:
-        lines_out.extend(give)
-    elif lines_out:
-        lines_out.append(timing(state))
+    if lines_out:
+        lines_out.extend(give_now(state, character, rows, relics))
     if not lines_out:
         return None
     return "\n".join(lines_out)
